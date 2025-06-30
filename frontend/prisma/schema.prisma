@@ -1,0 +1,162 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Vendor {
+  id          String            @id @default(cuid())
+  name        String
+  website     String?
+  scraperFile String?
+  logo        String?
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+  Products    Product[]
+  Locations   VendorLocations[]
+
+  @@unique([name])
+}
+
+model Category {
+  id        String   @id @default(cuid())
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([name])
+}
+
+model VendorLocations {
+  id        String   @id @default(cuid())
+  name      String
+  address   String
+  city      String
+  country   String
+  phone     String
+  email     String
+  latitude  Float
+  longitude Float
+  vendorId  String
+  vendor    Vendor   @relation(fields: [vendorId], references: [id])
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Brand {
+  id            String         @id @default(cuid())
+  name          String         @unique
+  embedding     Bytes? // Store model embeddings for similarity search
+  products      Product[]
+  productGroups ProductGroup[]
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+}
+
+model Unit {
+  id            String         @id @default(cuid())
+  name          String         @unique
+  products      Product[]
+  productGroups ProductGroup[]
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+}
+
+model ProductName {
+  id            String         @id @default(cuid())
+  name          String         @unique
+  embedding     Bytes? // Store model embeddings for similarity search
+  products      Product[]
+  productGroups ProductGroup[]
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+}
+
+model ProductGroup {
+  id             String       @id @default(cuid())
+  normalizedName String
+  brandId        String?
+  brand          Brand?       @relation(fields: [brandId], references: [id])
+  productNameId  String?
+  productName    ProductName? @relation(fields: [productNameId], references: [id])
+  dosageValue    Decimal?
+  dosageUnit     String?
+  unitId         String?
+  unit           Unit?        @relation(fields: [unitId], references: [id])
+  groupKey       String       @unique
+  productCount   Int          @default(0)
+  products       Product[]
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@index([groupKey])
+}
+
+model Product {
+  id            String   @id @default(cuid())
+  vendorId      String
+  vendor        Vendor   @relation(fields: [vendorId], references: [id])
+  price         Float
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  title         String // Original or cleaned title
+  originalTitle String? // Keep original title if cleaned
+  category      String?
+  description   String?
+  link          String
+  thumbnail     String
+  photos        String
+
+  // New fields for ML-processed data
+  brandId         String?
+  brand           Brand?  @relation(fields: [brandId], references: [id])
+  brandConfidence Float? // Confidence score from ML model
+
+  quantity           Int? // Extracted quantity 
+  quantityConfidence Float? // Confidence score from ML model
+
+  unitId         String?
+  unit           Unit?   @relation(fields: [unitId], references: [id])
+  unitConfidence Float? // Confidence score from ML model
+
+  productNameId         String?
+  productName           ProductName? @relation(fields: [productNameId], references: [id])
+  productNameConfidence Float? // Confidence score from ML model
+
+  titleEmbedding Bytes? // Store model embeddings for similarity search
+  searchVector   Unsupported("tsvector")? // For PostgreSQL full-text search
+
+  // Additional fields from init.sql
+  normalizedName String?
+  productGroupId String?
+  productGroup   ProductGroup? @relation(fields: [productGroupId], references: [id])
+  processedAt    DateTime?
+  searchTokens   String[]
+  dosageValue    Decimal?
+  dosageUnit     String?
+
+  @@unique([title, vendorId], name: "title_vendorId")
+  @@index([searchVector], type: Gin)
+  @@index([productGroupId])
+  @@index([normalizedName])
+  @@index([searchTokens], type: Gin)
+}
+
+model User {
+  id        String   @id @default(cuid())
+  name      String
+  email     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([email])
+}
