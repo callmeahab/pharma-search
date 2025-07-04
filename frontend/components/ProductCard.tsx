@@ -119,17 +119,16 @@ const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
           </div>
         </CardContent>
 
-        {product.prices.length > 1 ? (
-          <CardFooter className="flex flex-col pt-0">
-            <Button
-              variant="outline"
-              className="w-full text-health-primary dark:text-green-400 hover:bg-health-light dark:hover:bg-gray-700/50 dark:hover:text-green-300 border-health-light dark:border-gray-600 mb-2 bg-health-gray/50 dark:bg-gray-800/30"
-              onClick={handleCompareClick}
-            >
-              Compare prices
-            </Button>
-          </CardFooter>
-        ) : null}
+        <CardFooter className="flex flex-col pt-0">
+          <Button
+            variant="outline"
+            disabled={product.prices.length <= 1}
+            className="w-full text-health-primary dark:text-green-400 hover:bg-health-light dark:hover:bg-gray-700/50 dark:hover:text-green-300 border-health-light dark:border-gray-600 mb-2 bg-health-gray/50 dark:bg-gray-800/30"
+            onClick={handleCompareClick}
+          >
+            Compare prices
+          </Button>
+        </CardFooter>
       </Card>
 
       <ProductDetailModal
