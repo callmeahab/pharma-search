@@ -56,8 +56,25 @@ async def search(
     max_price: Optional[float] = Query(None),
     vendor_ids: Optional[List[str]] = Query(None),
     brand_ids: Optional[List[str]] = Query(None),
+    search_type: Optional[str] = Query(
+        "auto", description="Search type: 'auto', 'similarity', or 'database'"
+    ),
 ):
-    """Search for products"""
+    """Search for products
+
+    Args:
+        q: Search query
+        limit: Maximum number of results
+        offset: Offset for pagination
+        min_price: Minimum price filter
+        max_price: Maximum price filter
+        vendor_ids: Filter by vendor IDs
+        brand_ids: Filter by brand IDs
+        search_type: Type of search to perform:
+            - 'auto': Automatically choose best search method (default)
+            - 'similarity': Force similarity-based search
+            - 'database': Force database search (best for exact matches)
+    """
     try:
         filters = {}
         if min_price is not None:
@@ -69,13 +86,23 @@ async def search(
         if brand_ids:
             filters["brand_ids"] = brand_ids
 
+        # Determine if we should force database search
+        force_db_search = search_type == "database"
+
+        # Log search type for debugging
+        logger.info(f"Search query: '{q}', type: {search_type}")
+
         results = await search_engine.search(
             query=q,
             filters=filters if filters else None,
             group_results=True,
             limit=limit,
             offset=offset,
+            force_db_search=force_db_search,
         )
+
+        # Add search metadata to results
+        results["search_type_used"] = "database" if force_db_search else "hybrid"
 
         return results
     except Exception as e:

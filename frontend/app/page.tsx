@@ -11,7 +11,11 @@ import { trackSearch } from "../utils/analytics";
 import { useWishlist } from "../contexts/WishlistContext";
 import { initPriceChecking } from "../utils/priceNotifications";
 import HeroSection from "../components/HeroSection";
-import { searchProducts, getFeaturedProducts } from "../lib/api";
+import {
+  searchProducts,
+  searchAllProducts,
+  getFeaturedProducts,
+} from "../lib/api";
 import {
   SearchResult,
   ProductGroup,
@@ -39,15 +43,20 @@ export default function HomePage() {
   const [searchError, setSearchError] = useState<string | null>(null);
   const [useApiSearch, setUseApiSearch] = useState(false);
 
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(1);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const itemsPerPage = 50;
+
   // Load featured products when no search is active
   const loadFeaturedProducts = async () => {
     setIsLoadingFeatured(true);
     try {
-      const featured = await getFeaturedProducts({ limit: 12 });
+      const featured = await getFeaturedProducts({ limit: 24 });
       setFeaturedProducts(featured);
     } catch (error) {
       console.error("Failed to load featured products:", error);
-      setFeaturedProducts({ groups: [], total: 0, offset: 0, limit: 12 });
+      setFeaturedProducts({ groups: [], total: 0, offset: 0, limit: 24 });
     } finally {
       setIsLoadingFeatured(false);
     }
@@ -57,6 +66,7 @@ export default function HomePage() {
   useEffect(() => {
     console.log("URL search param changed:", urlSearchTerm);
     setSearchTerm(urlSearchTerm);
+    setCurrentPage(1); // Reset to first page on new search
 
     if (urlSearchTerm && urlSearchTerm.trim()) {
       // Use API search for actual queries
@@ -82,23 +92,57 @@ export default function HomePage() {
     }
   }, [wishlist]);
 
-  // API search function
-  const performApiSearch = async (query: string) => {
+  // API search function with pagination support
+  const performApiSearch = async (query: string, loadMore: boolean = false) => {
     if (!query.trim()) return;
 
-    setIsSearching(true);
+    if (!loadMore) {
+      setIsSearching(true);
+      setCurrentPage(1);
+    } else {
+      setIsLoadingMore(true);
+    }
+
     setSearchError(null);
     setUseApiSearch(true);
 
     try {
-      console.log("Performing API search for:", query);
-      const results = await searchProducts(query, { limit: 20 });
-      console.log("API search results:", results);
+      console.log(
+        "Performing API search for:",
+        query,
+        "Page:",
+        loadMore ? currentPage + 1 : 1
+      );
 
-      setApiSearchResults(results);
+      // Let the backend decide the best search type
+      const searchType = "auto";
+
+      const results = await searchProducts(query, {
+        limit: itemsPerPage,
+        offset: loadMore ? currentPage * itemsPerPage : 0,
+        searchType: searchType,
+      });
+
+      console.log("API search results:", results);
+      console.log("Search type used:", results.search_type_used);
+
+      if (loadMore && apiSearchResults) {
+        // Append new results to existing ones
+        setApiSearchResults({
+          ...results,
+          groups: [...apiSearchResults.groups, ...results.groups],
+          offset: 0,
+          limit: apiSearchResults.groups.length + results.groups.length,
+        });
+        setCurrentPage(currentPage + 1);
+      } else {
+        setApiSearchResults(results);
+      }
 
       // Track search with actual result count
-      trackSearch(query, results.total);
+      if (!loadMore) {
+        trackSearch(query, results.total);
+      }
     } catch (error) {
       console.error("API search error:", error);
       setSearchError(
@@ -106,11 +150,21 @@ export default function HomePage() {
       );
 
       // Fallback to featured products when search fails
-      setUseApiSearch(false);
-      setApiSearchResults(null);
-      loadFeaturedProducts();
+      if (!loadMore) {
+        setUseApiSearch(false);
+        setApiSearchResults(null);
+        loadFeaturedProducts();
+      }
     } finally {
       setIsSearching(false);
+      setIsLoadingMore(false);
+    }
+  };
+
+  // Load more results
+  const handleLoadMore = () => {
+    if (searchTerm || selectedCategory) {
+      performApiSearch(searchTerm || selectedCategory || "", true);
     }
   };
 
@@ -119,6 +173,7 @@ export default function HomePage() {
     const handleUrlSearchChanged = (event: CustomEvent<{ term: string }>) => {
       const term = event.detail.term;
       setSearchTerm(term);
+      setCurrentPage(1); // Reset pagination
 
       if (term && term.trim()) {
         // Use API search for actual queries
@@ -148,6 +203,7 @@ export default function HomePage() {
 
   const handleCategorySelect = (category: string | null) => {
     setSelectedCategory(category);
+    setCurrentPage(1); // Reset pagination
 
     if (category) {
       // Perform API search for the selected category
@@ -170,7 +226,15 @@ export default function HomePage() {
     }
   };
 
-  // Removed filterProducts function as we now use API for all data
+  // Calculate if there are more results to load
+  const hasMoreResults =
+    apiSearchResults && apiSearchResults.total > apiSearchResults.groups.length;
+
+  const totalProductsShown = apiSearchResults
+    ? apiSearchResults.groups.flatMap((group) =>
+        convertProductGroupToProducts(group)
+      ).length
+    : 0;
 
   return (
     <div className="min-h-screen flex flex-col bg-health-gray dark:bg-gray-900 transition-colors duration-200">
@@ -195,25 +259,37 @@ export default function HomePage() {
                 ? `${selectedCategory} proizvodi`
                 : "Popularni proizvodi"}
             </h2>
-            <p className="text-sm text-gray-500 dark:text-gray-400">
-              {useApiSearch && apiSearchResults
-                ? `${
-                    apiSearchResults.groups.flatMap((group) =>
-                      convertProductGroupToProducts(group)
-                    ).length
-                  } proizvoda pronađeno`
-                : featuredProducts
-                ? `${
-                    featuredProducts.groups.flatMap((group) =>
-                      convertProductGroupToProducts(group)
-                    ).length
-                  } proizvoda pronađeno`
-                : ""}
-            </p>
+            <div className="text-sm text-gray-500 dark:text-gray-400">
+              {useApiSearch && apiSearchResults ? (
+                <>
+                  <span>{totalProductsShown} proizvoda prikazano</span>
+                  {apiSearchResults.total > totalProductsShown && (
+                    <span> od ukupno {apiSearchResults.total}</span>
+                  )}
+                  {apiSearchResults.search_type_used && (
+                    <span className="ml-2 text-xs">
+                      (
+                      {apiSearchResults.search_type_used === "database"
+                        ? "exact"
+                        : "smart"}{" "}
+                      search)
+                    </span>
+                  )}
+                </>
+              ) : featuredProducts ? (
+                `${
+                  featuredProducts.groups.flatMap((group) =>
+                    convertProductGroupToProducts(group)
+                  ).length
+                } proizvoda pronađeno`
+              ) : (
+                ""
+              )}
+            </div>
           </div>
 
           {useApiSearch ? (
-            isSearching ? (
+            isSearching && !isLoadingMore ? (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 {[...Array(6)].map((_, i) => (
                   <div key={i} className="animate-pulse">
@@ -227,11 +303,54 @@ export default function HomePage() {
                 <p className="text-sm text-red-500 mt-2">{searchError}</p>
               </div>
             ) : apiSearchResults && apiSearchResults.groups.length > 0 ? (
-              <ProductList
-                products={apiSearchResults.groups.flatMap((group) =>
-                  convertProductGroupToProducts(group)
+              <>
+                <ProductList
+                  products={apiSearchResults.groups.flatMap((group) =>
+                    convertProductGroupToProducts(group)
+                  )}
+                />
+
+                {/* Load More Button */}
+                {hasMoreResults && (
+                  <div className="mt-8 text-center">
+                    <button
+                      onClick={handleLoadMore}
+                      disabled={isLoadingMore}
+                      className="px-6 py-3 bg-health-blue text-white rounded-md hover:bg-health-purple transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {isLoadingMore ? (
+                        <span className="flex items-center">
+                          <svg
+                            className="animate-spin -ml-1 mr-3 h-5 w-5 text-white"
+                            xmlns="http://www.w3.org/2000/svg"
+                            fill="none"
+                            viewBox="0 0 24 24"
+                          >
+                            <circle
+                              className="opacity-25"
+                              cx="12"
+                              cy="12"
+                              r="10"
+                              stroke="currentColor"
+                              strokeWidth="4"
+                            ></circle>
+                            <path
+                              className="opacity-75"
+                              fill="currentColor"
+                              d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                            ></path>
+                          </svg>
+                          Učitavanje...
+                        </span>
+                      ) : (
+                        `Učitaj još (${
+                          apiSearchResults.total - totalProductsShown
+                        } preostalo)`
+                      )}
+                    </button>
+                  </div>
                 )}
-              />
+              </>
             ) : (
               <div className="text-center py-12">
                 <p className="text-lg text-gray-600 dark:text-gray-400">

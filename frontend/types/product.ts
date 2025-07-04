@@ -40,6 +40,7 @@ export interface ProductGroup {
 
 export interface SearchResult {
   groups: ProductGroup[];
+  search_type_used?: "auto" | "similarity" | "database";
   total: number;
   offset: number;
   limit: number;

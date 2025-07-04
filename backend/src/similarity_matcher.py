@@ -139,32 +139,70 @@ class SimilarityMatcher:
     ) -> List[Tuple[str, float, str]]:
         """Find similar products using both fuzzy and semantic search"""
 
-        fuzzy_results = self._fuzzy_search(query, k * 2)
-        semantic_results = self._semantic_search(query, k * 2)
-        combined = self._combine_results(fuzzy_results, semantic_results)
-        filtered = [
-            (id, score, name) for id, score, name in combined if score >= threshold
-        ]
-
-        return filtered[:k]
-
-    def _fuzzy_search(self, query: str, k: int) -> List[Tuple[str, float, str]]:
-        """Fuzzy string matching"""
+        query_lower = query.lower()
         results = []
 
+        # Check for exact word matches (whole word boundary)
+        exact_word_matches = []
+        for idx, name in enumerate(self.product_names):
+            name_lower = name.lower()
+            # Check if query appears as a whole word
+            words = name_lower.split()
+            if query_lower in words:
+                exact_word_matches.append((self.product_ids[idx], 1.0, name))
+            # Also check if query is at word boundaries
+            elif (
+                f" {query_lower} " in f" {name_lower} "
+                or name_lower.startswith(f"{query_lower} ")
+                or name_lower.endswith(f" {query_lower}")
+            ):
+                exact_word_matches.append((self.product_ids[idx], 0.95, name))
+
+        if exact_word_matches:
+            logger.info(
+                f"Found {len(exact_word_matches)} exact word matches for '{query}'"
+            )
+            results.extend(exact_word_matches)
+
+        # Get fuzzy matches
+        fuzzy_results = self._fuzzy_search(query, k)
+
+        # Get semantic matches
+        semantic_results = self._semantic_search(query, k)
+
+        # Combine all results
+        combined = self._combine_and_deduplicate_results(
+            results + fuzzy_results + semantic_results, threshold
+        )
+
+        return combined[:k]
+
+    def _fuzzy_search(self, query: str, k: int) -> List[Tuple[str, float, str]]:
+        """Fuzzy string matching with multiple strategies"""
+        results = []
+
+        # Strategy 1: Token sort ratio - good for reordered words
         token_sort_results = process.extract(
             query, self.product_names, scorer=fuzz.token_sort_ratio, limit=k
         )
 
         for name, score, idx in token_sort_results:
-            results.append((self.product_ids[idx], score / 100.0, name))
+            # Apply penalty if it's not a good match
+            adjusted_score = score / 100.0
+            if score < 80:  # Lower quality matches get penalized
+                adjusted_score *= 0.8
+            results.append((self.product_ids[idx], adjusted_score, name))
 
-        partial_results = process.extract(
-            query, self.product_names, scorer=fuzz.partial_ratio, limit=k
+        # Strategy 2: Token set ratio - good for subset matching
+        token_set_results = process.extract(
+            query, self.product_names, scorer=fuzz.token_set_ratio, limit=k
         )
 
-        for name, score, idx in partial_results:
-            results.append((self.product_ids[idx], score / 100.0, name))
+        for name, score, idx in token_set_results:
+            adjusted_score = score / 100.0
+            if score < 85:
+                adjusted_score *= 0.85
+            results.append((self.product_ids[idx], adjusted_score, name))
 
         return results
 
@@ -178,39 +216,52 @@ class SimilarityMatcher:
 
         results = []
         for dist, idx in zip(distances[0], indices[0]):
-            if idx < len(self.product_ids):
-                similarity = 1 / (1 + dist)
-                results.append(
-                    (self.product_ids[idx], similarity, self.product_names[idx])
-                )
+            if idx < len(self.product_ids) and idx >= 0:
+                # Convert L2 distance to similarity score
+                # Normalize distance to 0-1 range (lower distance = higher similarity)
+                # Typical distances range from 0 to 2
+                similarity = max(0, 1 - (dist / 2))
+
+                # Apply threshold - semantic matches should be quite good
+                if similarity > 0.4:  # Roughly equivalent to old threshold
+                    results.append(
+                        (self.product_ids[idx], similarity, self.product_names[idx])
+                    )
 
         return results
+
+    def _combine_and_deduplicate_results(
+        self, all_results: List[Tuple[str, float, str]], threshold: float
+    ) -> List[Tuple[str, float, str]]:
+        """Combine results from different methods and deduplicate"""
+        # Group by product ID and take maximum score
+        best_scores = {}
+        product_names = {}
+
+        for product_id, score, name in all_results:
+            if product_id not in best_scores or score > best_scores[product_id]:
+                best_scores[product_id] = score
+                product_names[product_id] = name
+
+        # Create final results list
+        combined = [
+            (pid, score, product_names[pid])
+            for pid, score in best_scores.items()
+            if score >= threshold
+        ]
+
+        # Sort by score descending
+        combined.sort(key=lambda x: x[1], reverse=True)
+
+        return combined
 
     def _combine_results(
         self,
         fuzzy_results: List[Tuple[str, float, str]],
         semantic_results: List[Tuple[str, float, str]],
     ) -> List[Tuple[str, float, str]]:
-        """Combine and deduplicate results from different methods"""
-        combined_scores = {}
-        product_names = {}
-
-        for product_id, score, name in fuzzy_results:
-            if product_id not in combined_scores:
-                combined_scores[product_id] = 0
-                product_names[product_id] = name
-            combined_scores[product_id] += score * 0.6
-
-        for product_id, score, name in semantic_results:
-            if product_id not in combined_scores:
-                combined_scores[product_id] = 0
-                product_names[product_id] = name
-            combined_scores[product_id] += score * 0.4
-
-        sorted_results = sorted(
-            [(id, score, product_names[id]) for id, score in combined_scores.items()],
-            key=lambda x: x[1],
-            reverse=True,
+        """Legacy method for backwards compatibility"""
+        return self._combine_and_deduplicate_results(
+            fuzzy_results + semantic_results,
+            threshold=0.0,  # No threshold here, applied elsewhere
         )
-
-        return sorted_results

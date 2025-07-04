@@ -7,6 +7,7 @@ export interface SearchOptions {
   maxPrice?: number;
   vendorIds?: string[];
   brandIds?: string[];
+  searchType?: "auto" | "similarity" | "database";
 }
 
 export interface Product {
@@ -31,6 +32,7 @@ export interface ProductGroup {
     avg: number;
   };
   vendor_count: number;
+  product_count?: number;
 }
 
 export interface SearchResult {
@@ -38,6 +40,7 @@ export interface SearchResult {
   total: number;
   offset: number;
   limit: number;
+  search_type_used?: string;
 }
 
 export async function searchProducts(
@@ -46,7 +49,7 @@ export async function searchProducts(
 ): Promise<SearchResult> {
   const params = new URLSearchParams({
     q: query,
-    limit: (options?.limit || 20).toString(),
+    limit: (options?.limit || 100).toString(), // Increased default limit
     offset: (options?.offset || 0).toString(),
   });
 
@@ -62,6 +65,9 @@ export async function searchProducts(
   if (options?.brandIds && options.brandIds.length > 0) {
     options.brandIds.forEach((id) => params.append("brand_ids", id));
   }
+  if (options?.searchType) {
+    params.append("search_type", options.searchType);
+  }
 
   const response = await fetch(`${API_URL}/api/search?${params}`);
 
@@ -70,6 +76,54 @@ export async function searchProducts(
   }
 
   return response.json();
+}
+
+export async function searchAllProducts(
+  query: string,
+  options?: Omit<SearchOptions, "limit" | "offset">
+): Promise<SearchResult> {
+  // First, get a small batch to check total count
+  const initialResult = await searchProducts(query, {
+    ...options,
+    limit: 1,
+    offset: 0,
+  });
+
+  // If total is reasonable, fetch all at once
+  if (initialResult.total <= 100) {
+    return searchProducts(query, {
+      ...options,
+      limit: 100,
+      offset: 0,
+    });
+  }
+
+  // For larger result sets, fetch in batches
+  const allGroups: ProductGroup[] = [];
+  const batchSize = 100;
+  let offset = 0;
+
+  while (offset < initialResult.total) {
+    const batch = await searchProducts(query, {
+      ...options,
+      limit: batchSize,
+      offset: offset,
+    });
+
+    allGroups.push(...batch.groups);
+    offset += batchSize;
+
+    // Safety limit to prevent infinite loops
+    if (offset > 1000) break;
+  }
+
+  return {
+    groups: allGroups,
+    total: initialResult.total,
+    offset: 0,
+    limit: allGroups.length,
+    search_type_used: initialResult.search_type_used,
+  };
 }
 
 export async function checkHealth(): Promise<{ status: string }> {
@@ -94,6 +148,8 @@ export async function getFeaturedProducts(
     "magnesium",
     "protein",
     "probiotik",
+    "kreatin",
+    "kolagen",
   ];
   const randomTerm =
     popularTerms[Math.floor(Math.random() * popularTerms.length)];
