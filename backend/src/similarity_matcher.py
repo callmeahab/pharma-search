@@ -139,96 +139,135 @@ class SimilarityMatcher:
     ) -> List[Tuple[str, float, str]]:
         """Find similar products using both fuzzy and semantic search"""
 
-        query_lower = query.lower()
+        query_lower = query.lower().strip()
+        query_len = len(query_lower)
         results = []
+
+        if query_len <= 2:
+            effective_threshold = max(0.2, threshold * 0.3)
+        elif query_len <= 4:
+            effective_threshold = max(0.4, threshold * 0.6)
+        else:
+            effective_threshold = threshold
 
         # Check for exact word matches (whole word boundary)
         exact_word_matches = []
         for idx, name in enumerate(self.product_names):
             name_lower = name.lower()
-            # Check if query appears as a whole word
+
+            if query_len <= 3:
+                words = name_lower.split()
+                if any(word.startswith(query_lower) for word in words):
+                    exact_word_matches.append((self.product_ids[idx], 0.9, name))
+                elif name_lower.startswith(query_lower):
+                    exact_word_matches.append((self.product_ids[idx], 0.95, name))
+
             words = name_lower.split()
             if query_lower in words:
                 exact_word_matches.append((self.product_ids[idx], 1.0, name))
-            # Also check if query is at word boundaries
             elif (
                 f" {query_lower} " in f" {name_lower} "
-                or name_lower.startswith(f"{query_lower} ")
+                or name_lower.startswith(f"{query_lower}")
                 or name_lower.endswith(f" {query_lower}")
             ):
                 exact_word_matches.append((self.product_ids[idx], 0.95, name))
 
         if exact_word_matches:
-            logger.info(
-                f"Found {len(exact_word_matches)} exact word matches for '{query}'"
-            )
             results.extend(exact_word_matches)
 
-        # Get fuzzy matches
-        fuzzy_results = self._fuzzy_search(query, k)
+        fuzzy_results = self._fuzzy_search(query, k, query_len)
 
-        # Get semantic matches
-        semantic_results = self._semantic_search(query, k)
+        semantic_results = self._semantic_search(query, k, query_len)
 
-        # Combine all results
-        combined = self._combine_and_deduplicate_results(
-            results + fuzzy_results + semantic_results, threshold
-        )
-
+        combined = self._combine_and_deduplicate_results(results + fuzzy_results + semantic_results, effective_threshold)
         return combined[:k]
 
-    def _fuzzy_search(self, query: str, k: int) -> List[Tuple[str, float, str]]:
-        """Fuzzy string matching with multiple strategies"""
+    def _fuzzy_search(self, query: str, k: int, query_len: int) -> List[Tuple[str, float, str]]:
+        """Improved fuzzy string matching with query length awareness"""
         results = []
+        
+        if query_len is None:
+            query_len = len(query.strip())
 
-        # Strategy 1: Token sort ratio - good for reordered words
+        # Adjust scoring based on query length
+        if query_len <= 3:
+            min_score_threshold = 60  # More lenient for short queries
+            score_multiplier = 1.2    # Boost scores for short queries
+        else:
+            min_score_threshold = 70
+            score_multiplier = 1.0
+
+        # Strategy 1: Token sort ratio
         token_sort_results = process.extract(
-            query, self.product_names, scorer=fuzz.token_sort_ratio, limit=k
+            query, self.product_names, scorer=fuzz.token_sort_ratio, limit=k * 2
         )
 
         for name, score, idx in token_sort_results:
-            # Apply penalty if it's not a good match
-            adjusted_score = score / 100.0
-            if score < 80:  # Lower quality matches get penalized
-                adjusted_score *= 0.8
-            results.append((self.product_ids[idx], adjusted_score, name))
+            if score >= min_score_threshold:
+                adjusted_score = (score / 100.0) * score_multiplier
+                adjusted_score = min(1.0, adjusted_score)  # Cap at 1.0
+                results.append((self.product_ids[idx], adjusted_score, name))
 
-        # Strategy 2: Token set ratio - good for subset matching
+        # Strategy 2: Partial ratio (good for substring matching)
+        partial_results = process.extract(
+            query, self.product_names, scorer=fuzz.partial_ratio, limit=k * 2
+        )
+
+        for name, score, idx in partial_results:
+            if score >= min_score_threshold:
+                # Partial ratio gets slight penalty since it's less precise
+                adjusted_score = (score / 100.0) * 0.9 * score_multiplier
+                adjusted_score = min(1.0, adjusted_score)
+                results.append((self.product_ids[idx], adjusted_score, name))
+
+        # Strategy 3: Token set ratio
         token_set_results = process.extract(
             query, self.product_names, scorer=fuzz.token_set_ratio, limit=k
         )
 
         for name, score, idx in token_set_results:
-            adjusted_score = score / 100.0
-            if score < 85:
-                adjusted_score *= 0.85
-            results.append((self.product_ids[idx], adjusted_score, name))
+            if score >= min_score_threshold:
+                adjusted_score = (score / 100.0) * score_multiplier
+                adjusted_score = min(1.0, adjusted_score)
+                results.append((self.product_ids[idx], adjusted_score, name))
 
         return results
 
-    def _semantic_search(self, query: str, k: int) -> List[Tuple[str, float, str]]:
-        """Semantic similarity search using embeddings"""
-        if self.index is None:
-            return []
 
-        query_embedding = self.encoder.encode([query])
-        distances, indices = self.index.search(query_embedding.astype("float32"), k)
+    def _semantic_search(self, query: str, k: int, query_len: int) -> List[Tuple[str, float, str]]:
+       """Improved semantic similarity search with query length awareness"""
+       if self.index is None:
+           return []
 
-        results = []
-        for dist, idx in zip(distances[0], indices[0]):
-            if idx < len(self.product_ids) and idx >= 0:
-                # Convert L2 distance to similarity score
-                # Normalize distance to 0-1 range (lower distance = higher similarity)
-                # Typical distances range from 0 to 2
-                similarity = max(0, 1 - (dist / 2))
+       if query_len is None:
+           query_len = len(query.strip())
 
-                # Apply threshold - semantic matches should be quite good
-                if similarity > 0.4:  # Roughly equivalent to old threshold
-                    results.append(
-                        (self.product_ids[idx], similarity, self.product_names[idx])
-                    )
+       query_embedding = self.encoder.encode([query])
+       # Increase k for short queries to get more candidates
+       search_k = k * 3 if query_len <= 4 else k * 2
+       distances, indices = self.index.search(query_embedding.astype("float32"), search_k)
 
-        return results
+       results = []
+       # Adaptive similarity threshold
+       if query_len <= 3:
+           min_similarity = 0.25
+       elif query_len <= 4:
+           min_similarity = 0.35
+       else:
+           min_similarity = 0.4
+
+       for dist, idx in zip(distances[0], indices[0]):
+           if idx < len(self.product_ids) and idx >= 0:
+               # Convert L2 distance to similarity score
+               similarity = max(0, 1 - (dist / 2))
+
+               if similarity > min_similarity:
+                   results.append(
+                       (self.product_ids[idx], similarity, self.product_names[idx])
+                   )
+
+       return results
+    
 
     def _combine_and_deduplicate_results(
         self, all_results: List[Tuple[str, float, str]], threshold: float

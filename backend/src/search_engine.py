@@ -87,13 +87,24 @@ class PharmaSearchEngine:
     ) -> Dict[str, Any]:
         """Hybrid search that combines similarity and exact matching"""
 
-        query_lower = query.lower()
+        query_lower = query.lower().strip()
+        query_len = len(query_lower)
+
+        if query_len < 2:
+            similiarity_threshold = 0.3
+            similiarity_k = 1000
+        elif query_len < 4:
+            similiarity_threshold = 0.5
+            similiarity_k = 800
+        else:
+            similiarity_threshold = 0.7
+            similiarity_k = 500
 
         # First, try similarity search with appropriate threshold
         similar_products = self.matcher.find_similar_products(
             query,
-            k=500,  # Get more candidates
-            threshold=0.75,  # Back to reasonable threshold
+            k=similiarity_k,
+            threshold=similiarity_threshold,
         )
 
         # Also get exact/partial matches from database
@@ -103,19 +114,25 @@ class PharmaSearchEngine:
         all_product_ids = []
         seen_ids = set()
 
-        # Add exact matches first
+        # Add exact matches first (they're already sorted by relevance)
         for product_id in exact_matches:
             if product_id not in seen_ids:
                 all_product_ids.append(product_id)
                 seen_ids.add(product_id)
 
-        # Then add similarity matches
-        for product_id, score, _ in similar_products:
+        # Add similarity matches, but limit them based on query length
+        similarity_limit = min(len(similar_products), 500 if query_len <= 3 else 200)
+        for i, (product_id, score, _) in enumerate(similar_products):
+            if i >= similarity_limit:
+                break
             if product_id not in seen_ids:
                 all_product_ids.append(product_id)
                 seen_ids.add(product_id)
 
         if not all_product_ids:
+            # Fallback: try even more relaxed search for very short queries
+            if query_len <= 3:
+                return await self._fallback_short_query_search(query_lower, filters, limit, offset)
             return {"groups": [], "total": 0, "offset": offset, "limit": limit}
 
         # Get grouped results
@@ -126,24 +143,88 @@ class PharmaSearchEngine:
     async def _get_exact_matches(self, query: str) -> List[str]:
         """Get product IDs that match the query exactly or as a whole word"""
         async with self.pool.acquire() as conn:
-            # Use word boundaries for more accurate matching
-            rows = await conn.fetch(
-                """
-                SELECT DISTINCT p.id
-                FROM "Product" p
-                LEFT JOIN "Brand" b ON p."brandId" = b.id
-                WHERE 
-                    -- Exact match at word boundary
-                    p.title ~* ('\\m' || $1 || '\\M') OR
-                    p."normalizedName" ~* ('\\m' || $1 || '\\M') OR
-                    b.name ~* ('\\m' || $1 || '\\M') OR
-                    -- Exact match in search tokens
-                    $1 = ANY(p."searchTokens")
-                ORDER BY p.id
-                LIMIT 1000
-            """,
-                query,
-            )
+            query_len = len(query.strip())
+
+            if query_len <= 3:
+                rows = await conn.fetch(
+                    """
+                    SELECT DISTINCT p.id
+                    FROM "Product" p
+                    LEFT JOIN "Brand" b ON p."brandId" = b.id
+                    WHERE
+                        -- Prefix matches (starts with)
+                        p.title ILIKE ($1 || '%') OR
+                        p."normalizedName" ILIKE ($1 || '%') OR
+                        b.name ILIKE ($1 || '%') OR
+                        -- Substring matching for very short queries
+                        p.title ILIKE ('%' || $1 || '%') OR
+                        p."normalizedName" ILIKE ('%' || $1 || '%') OR
+                        -- Token array search
+                        $1 = ANY(p."searchTokens") OR
+                        -- Partial token matching
+                        EXISTS (
+                            SELECT 1 FROM unnest(p."searchTokens") AS token
+                            WHERE token ILIKE ($1 || '%')
+                        )
+                    ORDER BY
+                        -- Prioritize exact prefix matches
+                        CASE WHEN p.title ILIKE ($1 || '%') THEN 1
+                             WHEN p."normalizedName" ILIKE ($1 || '%') THEN 2
+                             WHEN b.name ILIKE ($1 || '%') THEN 3
+                             ELSE 4 END,
+                        p.id
+                    LIMIT 1000
+                    """,
+                    query,
+                )
+            else:
+                rows = await conn.fetch(
+                    """
+                    SELECT DISTINCT p.id, 
+                        -- Calculate relevance score
+                        (CASE 
+                            -- Exact word boundary match (highest priority)
+                            WHEN p.title ~* ('\\m' || $1 || '\\M') OR
+                                p."normalizedName" ~* ('\\m' || $1 || '\\M') OR
+                                b.name ~* ('\\m' || $1 || '\\M') THEN 100
+                            -- Prefix match (high priority)
+                            WHEN p.title ILIKE ($1 || '%') OR
+                                p."normalizedName" ILIKE ($1 || '%') OR
+                                b.name ILIKE ($1 || '%') THEN 90
+                            -- Substring match (medium priority)
+                            WHEN p.title ILIKE ('%' || $1 || '%') OR
+                                p."normalizedName" ILIKE ('%' || $1 || '%') THEN 80
+                            -- Token exact match
+                            WHEN $1 = ANY(p."searchTokens") THEN 95
+                            -- Token prefix match
+                            WHEN EXISTS (
+                                SELECT 1 FROM unnest(p."searchTokens") AS token 
+                                WHERE token ILIKE ($1 || '%')
+                            ) THEN 85
+                            ELSE 70
+                        END) as relevance_score
+                    FROM "Product" p
+                    LEFT JOIN "Brand" b ON p."brandId" = b.id
+                    WHERE 
+                        -- Word boundary matching
+                        p.title ~* ('\\m' || $1 || '\\M') OR
+                        p."normalizedName" ~* ('\\m' || $1 || '\\M') OR
+                        b.name ~* ('\\m' || $1 || '\\M') OR
+                        -- Partial matching
+                        p.title ILIKE ('%' || $1 || '%') OR
+                        p."normalizedName" ILIKE ('%' || $1 || '%') OR
+                        b.name ILIKE ('%' || $1 || '%') OR
+                        -- Token matching
+                        $1 = ANY(p."searchTokens") OR
+                        EXISTS (
+                            SELECT 1 FROM unnest(p."searchTokens") AS token 
+                            WHERE token ILIKE ($1 || '%')
+                        )
+                    ORDER BY relevance_score DESC, p.id
+                    LIMIT 1500
+                    """,
+                        query,
+                )
 
             return [row["id"] for row in rows]
 
@@ -514,3 +595,54 @@ class PharmaSearchEngine:
             self.matcher.save_index()
 
         logger.info(f"Rebuilt index with {len(products)} products")
+
+    async def _fallback_short_query_search(self, query: str, filters: Optional[Dict], limit: int, offset: int) -> Dict[str, Any]:
+        """Fallback search for very short queries using trigrams and looser threshold"""
+
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT DISTINCT p.id
+                FROM "Product" p
+                LEFT JOIN "Brand" b ON p."brandId" = b.id
+                WHERE
+                    -- Any occurence anywhere in the text
+                    p.title ILIKE ('%' || $1 || '%') OR
+                    p."normalizedName" ILIKE ('%' || $1 || '%') OR
+                    b.name ILIKE ('%' || $1 || '%') OR
+                    -- Search in individual words of search tokens
+                    EXISTS (
+                        SELECT 1 FROM unnest(p."searchTokens") AS token
+                        WHERE token ILIKE ('%' || $1 || '%')
+                    ) OR
+                    -- Character-level similiarity for very short queries
+                    similiarity(p."normalizedName", $1) > 0.2 OR
+                    similiarity(p.title, $1) > 0.2 OR
+                ORDER BY
+                    -- Prioritize by position of match
+                    CASE
+                        WHEN p.title ILIKE ($1 || '%') THEN 1
+                        WHEN p."normalizedName" ILIKE ($1 || '%') THEN 2
+                        WHEN position($1 in lower(p.title)) <= 5 THEN 3
+                        ELSE 4
+                    END,
+                    p.id
+                LIMIT 1000
+                """,
+                query,
+            )
+
+            product_ids = [row["id"] for row in rows]
+
+            if not product_ids:
+                return {"groups": [], "total": 0, "offset": offset, "limit": limit}
+
+            # Get grouped results
+            return await self._fetch_groups_by_product_ids(
+                product_ids,
+                filters,
+                limit,
+                offset,
+                preserve_order=True,
+            )
+

@@ -357,21 +357,37 @@ class PharmaNormalizer:
         tokens = set()
 
         for word in original.lower().split():
-            if len(word) > 2:
+            if len(word) > 1:
                 tokens.add(word)
+                if len(word) > 3:
+                    for i in range(min(len(word), 6)):
+                        tokens.add(word[:i])
 
         for word in normalized.split():
-            if len(word) > 2:
+            if len(word) > 1:
                 tokens.add(word)
+                if len(word) > 3:
+                    for i in range(2, min(len(word), 6)):
+                        tokens.add(word[:i])
 
         tokens.add(unidecode(original.lower()))
         tokens.add(unidecode(normalized))
 
+        # Add trigrams for fuzzy matching
         for text in [original.lower(), normalized]:
-            for i in range(len(text) - 2):
-                trigram = text[i : i + 3]
-                if trigram.strip():
+            clean_text = re.sub(r'[^\w]', '', text)
+            if len(clean_text) >= 3:
+                for i in range(len(clean_text) - 2):
+                    trigram = clean_text[i:i + 3]
                     tokens.add(trigram)
+
+        # Add character-level tokens for very short searches
+        for text in [original.lower(), normalized]:
+            clean_text = re.sub(r'[^\w]', '', text)
+            if len(clean_text) >= 2:
+                for i in range(len(clean_text) - 1):
+                    bigram = clean_text[i:i + 2]
+                    tokens.add(bigram)
 
         return list(tokens)
 
