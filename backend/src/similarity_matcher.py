@@ -122,10 +122,18 @@ class SimilarityMatcher:
         self.product_names = [p["normalized_name"] for p in products]
         self.product_ids = [p["id"] for p in products]
 
-        embeddings = self.encoder.encode(self.product_names, batch_size=512, show_progress_bar=False)
+        embeddings = self.encoder.encode(self.product_names, batch_size=1024, show_progress_bar=False)
 
         dimension = embeddings.shape[1]
-        self.index = faiss.IndexFlatL2(dimension)
+        # Use IVF index for better performance on large datasets
+        nlist = min(100, len(products) // 10)  # Adaptive number of clusters
+        if len(products) > 10000:
+            quantizer = faiss.IndexFlatL2(dimension)
+            self.index = faiss.IndexIVFFlat(quantizer, dimension, nlist)
+            self.index.train(embeddings.astype("float32"))
+        else:
+            self.index = faiss.IndexFlatL2(dimension)
+        
         self.index.add(embeddings.astype("float32"))
 
         logger.info("Index built successfully")

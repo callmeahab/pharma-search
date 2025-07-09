@@ -149,6 +149,10 @@ model Product {
   @@index([productGroupId])
   @@index([normalizedName])
   @@index([searchTokens], type: Gin)
+  @@index([title, normalizedName])
+  @@index([productGroupId, price])
+  @@index([brandId, price])
+  @@index([vendorId, price])
 }
 
 model User {

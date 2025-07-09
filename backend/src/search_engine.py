@@ -3,6 +3,9 @@ from typing import List, Dict, Optional, Any
 import json
 import logging
 import os
+import hashlib
+import asyncio
+from functools import lru_cache
 
 from .similarity_matcher import SimilarityMatcher
 from .product_processor import EnhancedProductProcessor
@@ -20,6 +23,7 @@ class PharmaSearchEngine:
         os.makedirs(cache_dir, exist_ok=True)
         self.matcher = SimilarityMatcher(cache_dir=cache_dir)
         self.pool: asyncpg.pool.Pool
+        self._search_cache = {}
 
     async def connect(self):
         """Initialize connection and load index"""
@@ -31,6 +35,22 @@ class PharmaSearchEngine:
         """Close connections"""
         if self.pool:
             await self.pool.close()
+    
+    def _get_cache_key(self, query: str, filters: Optional[Dict], limit: int, offset: int, search_type: str) -> str:
+        """Generate cache key for search results"""
+        key_data = {
+            "query": query.lower().strip(),
+            "filters": filters or {},
+            "limit": limit,
+            "offset": offset,
+            "search_type": search_type
+        }
+        return hashlib.md5(json.dumps(key_data, sort_keys=True).encode()).hexdigest()
+    
+    def _is_cache_valid(self, cache_entry: Dict, max_age: int = 300) -> bool:
+        """Check if cache entry is still valid (default 5 minutes)"""
+        import time
+        return time.time() - cache_entry.get("timestamp", 0) < max_age
 
     async def _process_products_if_needed(self):
         """Process products if there are unprocessed ones"""
@@ -64,7 +84,7 @@ class PharmaSearchEngine:
         offset: int = 0,
         force_db_search: bool = False,
     ) -> Dict[str, Any]:
-        """Search for products
+        """Search for products with caching
 
         Args:
             query: Search query
@@ -74,13 +94,41 @@ class PharmaSearchEngine:
             offset: Offset for pagination
             force_db_search: Force database search instead of similarity search
         """
-
+        
+        # Generate cache key
+        search_type = "db" if force_db_search else "hybrid"
+        cache_key = self._get_cache_key(query, filters, limit, offset, search_type)
+        
+        # Check cache
+        if cache_key in self._search_cache:
+            cache_entry = self._search_cache[cache_key]
+            if self._is_cache_valid(cache_entry):
+                logger.debug(f"Cache hit for query: {query}")
+                return cache_entry["result"]
+        
+        # Execute search
         if group_results:
             if force_db_search:
-                return await self._db_search_groups_exact(query, filters, limit, offset)
-            return await self._search_groups_hybrid(query, filters, limit, offset)
+                result = await self._db_search_groups_exact(query, filters, limit, offset)
+            else:
+                result = await self._search_groups_hybrid(query, filters, limit, offset)
         else:
-            return await self._search_products(query, filters, limit, offset)
+            result = await self._search_products(query, filters, limit, offset)
+        
+        # Cache result
+        import time
+        self._search_cache[cache_key] = {
+            "result": result,
+            "timestamp": time.time()
+        }
+        
+        # Clean old cache entries (keep only last 1000 entries)
+        if len(self._search_cache) > 1000:
+            old_keys = list(self._search_cache.keys())[:-500]
+            for key in old_keys:
+                del self._search_cache[key]
+        
+        return result
 
     async def _search_groups_hybrid(
         self, query: str, filters: Optional[Dict], limit: int, offset: int
@@ -100,15 +148,59 @@ class PharmaSearchEngine:
             similarity_threshold = 0.7
             similarity_k = 500
 
-        # First, try similarity search with appropriate threshold
-        similar_products = self.matcher.find_similar_products(
-            query,
-            k=similarity_k,
-            threshold=similarity_threshold,
-        )
+        # Run similarity search and database search in parallel
+        async def get_similarity_results():
+            # Pre-filter products by price/vendor if specified
+            if filters and (filters.get("min_price") or filters.get("max_price") or filters.get("vendor_ids")):
+                # Get product details to filter before similarity search
+                async with self.pool.acquire() as conn:
+                    price_filter = []
+                    vendor_filter = []
+                    
+                    if filters.get("min_price"):
+                        price_filter.append(f"price >= {filters['min_price']}")
+                    if filters.get("max_price"):
+                        price_filter.append(f"price <= {filters['max_price']}")
+                    if filters.get("vendor_ids"):
+                        vendor_ids_str = "', '".join(filters["vendor_ids"])
+                        vendor_filter.append(f"\"vendorId\" IN ('{vendor_ids_str}')")
+                    
+                    where_clause = " AND ".join(price_filter + vendor_filter)
+                    if where_clause:
+                        valid_product_ids = await conn.fetch(
+                            f'SELECT id FROM "Product" WHERE {where_clause}'
+                        )
+                        valid_ids = {row["id"] for row in valid_product_ids}
+                        
+                        # Filter similarity search to only valid products
+                        similar_products = self.matcher.find_similar_products(
+                            query,
+                            k=similarity_k,
+                            threshold=similarity_threshold,
+                        )
+                        return [
+                            prod for prod in similar_products if prod[0] in valid_ids
+                        ]
+                    else:
+                        return self.matcher.find_similar_products(
+                            query,
+                            k=similarity_k,
+                            threshold=similarity_threshold,
+                        )
+            else:
+                return self.matcher.find_similar_products(
+                    query,
+                    k=similarity_k,
+                    threshold=similarity_threshold,
+                )
 
-        # Also get exact/partial matches from database
-        exact_matches = await self._get_exact_matches(query_lower)
+        # Run both searches in parallel
+        similarity_task = asyncio.create_task(get_similarity_results())
+        exact_matches_task = asyncio.create_task(self._get_exact_matches(query_lower))
+        
+        filtered_similarity_products, exact_matches = await asyncio.gather(
+            similarity_task, exact_matches_task
+        )
 
         # Combine results, prioritizing exact matches
         all_product_ids = []
@@ -121,8 +213,8 @@ class PharmaSearchEngine:
                 seen_ids.add(product_id)
 
         # Add similarity matches, but limit them based on query length
-        similarity_limit = min(len(similar_products), 500 if query_len <= 3 else 200)
-        for i, (product_id, _, _) in enumerate(similar_products):
+        similarity_limit = min(len(filtered_similarity_products), 500 if query_len <= 3 else 200)
+        for i, (product_id, _, _) in enumerate(filtered_similarity_products):
             if i >= similarity_limit:
                 break
             if product_id not in seen_ids:
@@ -137,7 +229,7 @@ class PharmaSearchEngine:
 
         # Get grouped results
         return await self._fetch_groups_by_product_ids(
-            all_product_ids, filters, limit, offset, preserve_order=True
+            all_product_ids, filters, limit, offset
         )
 
     async def _get_exact_matches(self, query: str) -> List[str]:
@@ -152,13 +244,12 @@ class PharmaSearchEngine:
                     FROM "Product" p
                     LEFT JOIN "Brand" b ON p."brandId" = b.id
                     WHERE
+                        -- Use full-text search for better performance
+                        p."searchVector" @@ plainto_tsquery('english', $1) OR
                         -- Prefix matches (starts with)
                         p.title ILIKE ($1 || '%') OR
                         p."normalizedName" ILIKE ($1 || '%') OR
                         b.name ILIKE ($1 || '%') OR
-                        -- Substring matching for very short queries
-                        p.title ILIKE ('%' || $1 || '%') OR
-                        p."normalizedName" ILIKE ('%' || $1 || '%') OR
                         -- Token array search
                         $1 = ANY(p."searchTokens") OR
                         -- Partial token matching
@@ -167,8 +258,9 @@ class PharmaSearchEngine:
                             WHERE token ILIKE ($1 || '%')
                         )
                     ORDER BY
-                        -- Prioritize exact prefix matches
-                        CASE WHEN p.title ILIKE ($1 || '%') THEN 1
+                        -- Prioritize full-text search matches
+                        CASE WHEN p."searchVector" @@ plainto_tsquery('english', $1) THEN 0
+                             WHEN p.title ILIKE ($1 || '%') THEN 1
                              WHEN p."normalizedName" ILIKE ($1 || '%') THEN 2
                              WHEN b.name ILIKE ($1 || '%') THEN 3
                              ELSE 4 END,
@@ -181,12 +273,11 @@ class PharmaSearchEngine:
                 rows = await conn.fetch(
                     """
                     SELECT DISTINCT p.id, 
-                        -- Calculate relevance score
+                        -- Calculate relevance score using full-text search ranking
                         (CASE 
-                            -- Exact word boundary match (highest priority)
-                            WHEN p.title ~* ('\\m' || $1 || '\\M') OR
-                                p."normalizedName" ~* ('\\m' || $1 || '\\M') OR
-                                b.name ~* ('\\m' || $1 || '\\M') THEN 100
+                            -- Full-text search match (highest priority)
+                            WHEN p."searchVector" @@ plainto_tsquery('english', $1) THEN 
+                                ts_rank(p."searchVector", plainto_tsquery('english', $1)) * 100
                             -- Prefix match (high priority)
                             WHEN p.title ILIKE ($1 || '%') OR
                                 p."normalizedName" ILIKE ($1 || '%') OR
@@ -206,10 +297,8 @@ class PharmaSearchEngine:
                     FROM "Product" p
                     LEFT JOIN "Brand" b ON p."brandId" = b.id
                     WHERE 
-                        -- Word boundary matching
-                        p.title ~* ('\\m' || $1 || '\\M') OR
-                        p."normalizedName" ~* ('\\m' || $1 || '\\M') OR
-                        b.name ~* ('\\m' || $1 || '\\M') OR
+                        -- Full-text search
+                        p."searchVector" @@ plainto_tsquery('english', $1) OR
                         -- Partial matching
                         p.title ILIKE ('%' || $1 || '%') OR
                         p."normalizedName" ILIKE ('%' || $1 || '%') OR
@@ -234,80 +323,78 @@ class PharmaSearchEngine:
         filters: Optional[Dict],
         limit: int,
         offset: int,
-        preserve_order: bool = False,
     ) -> Dict[str, Any]:
         """Fetch product groups for given product IDs with enhanced price comparison"""
 
         async with self.pool.acquire() as conn:
+            # First get distinct group IDs to reduce processing
+            group_ids = await conn.fetch(
+                """
+                SELECT DISTINCT pg.id
+                FROM "ProductGroup" pg
+                JOIN "Product" p ON p."productGroupId" = pg.id
+                WHERE p.id = ANY($1::text[])
+                """,
+                product_ids
+            )
+            
+            group_ids_list = [row["id"] for row in group_ids]
+            
+            if not group_ids_list:
+                return {"groups": [], "total": 0, "offset": offset, "limit": limit}
+            
+            # Then get the grouped results with better indexing
             rows = await conn.fetch(
                 """
-                WITH relevant_groups AS (
-                    SELECT DISTINCT pg.*
-                    FROM "ProductGroup" pg
-                    JOIN "Product" p ON p."productGroupId" = pg.id
-                    WHERE p.id = ANY($1::text[])
-                ),
-                group_products AS (
-                    SELECT 
-                        g.id,
-                        g."normalizedName",
-                        g."dosageValue",
-                        g."dosageUnit",
-                        json_agg(
-                            json_build_object(
-                                'id', p.id,
-                                'title', p.title,
-                                'price', p.price,
-                                'vendor_id', p."vendorId",
-                                'vendor_name', v.name,
-                                'link', p.link,
-                                'thumbnail', p.thumbnail,
-                                'brand_name', b.name
-                            ) ORDER BY p.price
-                        ) as products,
-                        MIN(p.price) as min_price,
-                        MAX(p.price) as max_price,
-                        COUNT(DISTINCT p."vendorId") as vendor_count,
-                        COUNT(*) as product_count,
-                        MIN(array_position($1::text[], p.id)) as input_order
-                    FROM relevant_groups g
-                    JOIN "Product" p ON p."productGroupId" = g.id
-                    JOIN "Vendor" v ON v.id = p."vendorId"
-                    LEFT JOIN "Brand" b ON b.id = p."brandId"
-                    WHERE ($2::numeric IS NULL OR p.price >= $2)
-                      AND ($3::numeric IS NULL OR p.price <= $3)
-                      AND ($4::text[] IS NULL OR p."vendorId" = ANY($4))
-                      AND ($5::text[] IS NULL OR p."brandId" = ANY($5))
-                    GROUP BY g.id, g."normalizedName", g."dosageValue", g."dosageUnit"
-                )
-                SELECT id, "normalizedName", "dosageValue", "dosageUnit", 
-                       products, min_price, max_price, vendor_count, product_count
-                FROM group_products
+                SELECT 
+                    g.id,
+                    g."normalizedName",
+                    g."dosageValue",
+                    g."dosageUnit",
+                    json_agg(
+                        json_build_object(
+                            'id', p.id,
+                            'title', p.title,
+                            'price', p.price,
+                            'vendor_id', p."vendorId",
+                            'vendor_name', v.name,
+                            'link', p.link,
+                            'thumbnail', p.thumbnail,
+                            'brand_name', b.name
+                        ) ORDER BY p.price
+                    ) as products,
+                    MIN(p.price) as min_price,
+                    MAX(p.price) as max_price,
+                    COUNT(DISTINCT p."vendorId") as vendor_count,
+                    COUNT(*) as product_count,
+                    1 as input_order
+                FROM "ProductGroup" g
+                JOIN "Product" p ON p."productGroupId" = g.id
+                JOIN "Vendor" v ON v.id = p."vendorId"
+                LEFT JOIN "Brand" b ON b.id = p."brandId"
+                WHERE g.id = ANY($7::text[])
+                  AND ($1::numeric IS NULL OR p.price >= $1)
+                  AND ($2::numeric IS NULL OR p.price <= $2)
+                  AND ($3::text[] IS NULL OR p."vendorId" = ANY($3))
+                  AND ($4::text[] IS NULL OR p."brandId" = ANY($4))
+                GROUP BY g.id, g."normalizedName", g."dosageValue", g."dosageUnit"
                 ORDER BY 
-                    CASE WHEN $8 THEN input_order ELSE NULL END NULLS LAST,
-                    vendor_count DESC,  -- Prioritize groups with more vendors for better price comparison
+                    vendor_count DESC,
                     product_count DESC, 
                     min_price
-                LIMIT $6 OFFSET $7
-            """,
-                product_ids,
+                LIMIT $5 OFFSET $6
+                """,
                 filters.get("min_price") if filters else None,
                 filters.get("max_price") if filters else None,
                 filters.get("vendor_ids") if filters else None,
                 filters.get("brand_ids") if filters else None,
                 limit,
                 offset,
-                preserve_order,  # Pass as parameter $8
+                group_ids_list,  # Pass as parameter $7
             )
 
-            count_row = await conn.fetchrow(
-                'SELECT COUNT(DISTINCT pg.id) FROM "ProductGroup" pg '
-                'JOIN "Product" p ON p."productGroupId" = pg.id '
-                "WHERE p.id = ANY($1::text[])",
-                product_ids,
-            )
-
-            total = count_row["count"] if count_row else 0
+            # Use the already fetched group count for better performance
+            total = len(group_ids_list)
 
             groups = []
             for row in rows:
@@ -642,6 +729,5 @@ class PharmaSearchEngine:
                 filters,
                 limit,
                 offset,
-                preserve_order=True,
             )
 
