@@ -48,7 +48,7 @@ class PharmaSearchEngine:
             processor = EnhancedProductProcessor(self.db_url)
             await processor.connect()
             try:
-                await processor.process_products(batch_size=5000)
+                await processor.process_products(batch_size=20000)
                 logger.info("Product processing completed")
             finally:
                 await processor.disconnect()
@@ -91,20 +91,20 @@ class PharmaSearchEngine:
         query_len = len(query_lower)
 
         if query_len < 2:
-            similiarity_threshold = 0.3
-            similiarity_k = 1000
+            similarity_threshold = 0.3
+            similarity_k = 1000
         elif query_len < 4:
-            similiarity_threshold = 0.5
-            similiarity_k = 800
+            similarity_threshold = 0.5
+            similarity_k = 800
         else:
-            similiarity_threshold = 0.7
-            similiarity_k = 500
+            similarity_threshold = 0.7
+            similarity_k = 500
 
         # First, try similarity search with appropriate threshold
         similar_products = self.matcher.find_similar_products(
             query,
-            k=similiarity_k,
-            threshold=similiarity_threshold,
+            k=similarity_k,
+            threshold=similarity_threshold,
         )
 
         # Also get exact/partial matches from database
@@ -262,31 +262,13 @@ class PharmaSearchEngine:
                                 'vendor_name', v.name,
                                 'link', p.link,
                                 'thumbnail', p.thumbnail,
-                                'brand_name', b.name,
-                                'price_analysis', json_build_object(
-                                    'diff_from_avg', p.price - AVG(p.price) OVER (PARTITION BY g.id),
-                                    'percentile', CASE 
-                                        WHEN MAX(p.price) OVER (PARTITION BY g.id) - MIN(p.price) OVER (PARTITION BY g.id) > 0
-                                        THEN (p.price - MIN(p.price) OVER (PARTITION BY g.id)) / 
-                                             (MAX(p.price) OVER (PARTITION BY g.id) - MIN(p.price) OVER (PARTITION BY g.id)) * 100
-                                        ELSE 0
-                                    END,
-                                    'is_best_deal', p.price = MIN(p.price) OVER (PARTITION BY g.id),
-                                    'is_worst_deal', p.price = MAX(p.price) OVER (PARTITION BY g.id)
-                                )
+                                'brand_name', b.name
                             ) ORDER BY p.price
                         ) as products,
                         MIN(p.price) as min_price,
                         MAX(p.price) as max_price,
-                        AVG(p.price) as avg_price,
-                        STDDEV(p.price) as price_stddev,
                         COUNT(DISTINCT p."vendorId") as vendor_count,
                         COUNT(*) as product_count,
-                        -- Calculate price comparison metrics
-                        MAX(p.price) - MIN(p.price) as price_range_span,
-                        COUNT(*) FILTER (WHERE p.price <= AVG(p.price)) as below_avg_count,
-                        COUNT(*) FILTER (WHERE p.price > AVG(p.price)) as above_avg_count,
-                        -- For preserving order, find the minimum position of products in input array
                         MIN(array_position($1::text[], p.id)) as input_order
                     FROM relevant_groups g
                     JOIN "Product" p ON p."productGroupId" = g.id
@@ -299,13 +281,11 @@ class PharmaSearchEngine:
                     GROUP BY g.id, g."normalizedName", g."dosageValue", g."dosageUnit"
                 )
                 SELECT id, "normalizedName", "dosageValue", "dosageUnit", 
-                       products, min_price, max_price, avg_price, price_stddev,
-                       vendor_count, product_count, price_range_span, below_avg_count, above_avg_count
+                       products, min_price, max_price, vendor_count, product_count
                 FROM group_products
                 ORDER BY 
                     CASE WHEN $8 THEN input_order ELSE NULL END NULLS LAST,
                     vendor_count DESC,  -- Prioritize groups with more vendors for better price comparison
-                    price_range_span DESC,  -- Then by price range for better savings potential
                     product_count DESC, 
                     min_price
                 LIMIT $6 OFFSET $7
@@ -331,7 +311,6 @@ class PharmaSearchEngine:
 
             groups = []
             for row in rows:
-                price_stddev = float(row["price_stddev"]) if row["price_stddev"] else 0
                 groups.append(
                     {
                         "id": row["id"],
@@ -344,19 +323,9 @@ class PharmaSearchEngine:
                         "price_range": {
                             "min": float(row["min_price"]),
                             "max": float(row["max_price"]),
-                            "avg": float(row["avg_price"]),
-                            "range": float(row["price_range_span"]),
-                            "stddev": price_stddev,
                         },
                         "vendor_count": row["vendor_count"],
                         "product_count": row["product_count"],
-                        "price_analysis": {
-                            "savings_potential": float(row["price_range_span"]) if row["price_range_span"] else 0,
-                            "price_variation": (price_stddev / float(row["avg_price"]) * 100) if row["avg_price"] and price_stddev else 0,
-                            "below_avg_count": row["below_avg_count"],
-                            "above_avg_count": row["above_avg_count"],
-                            "has_multiple_vendors": row["vendor_count"] > 1,
-                        },
                     }
                 )
 
@@ -442,30 +411,13 @@ class PharmaSearchEngine:
                                 'vendor_name', v.name,
                                 'link', p.link,
                                 'thumbnail', p.thumbnail,
-                                'brand_name', b.name,
-                                'price_analysis', json_build_object(
-                                    'diff_from_avg', p.price - AVG(p.price) OVER (PARTITION BY pg.id),
-                                    'percentile', CASE 
-                                        WHEN MAX(p.price) OVER (PARTITION BY pg.id) - MIN(p.price) OVER (PARTITION BY pg.id) > 0
-                                        THEN (p.price - MIN(p.price) OVER (PARTITION BY pg.id)) / 
-                                             (MAX(p.price) OVER (PARTITION BY pg.id) - MIN(p.price) OVER (PARTITION BY pg.id)) * 100
-                                        ELSE 0
-                                    END,
-                                    'is_best_deal', p.price = MIN(p.price) OVER (PARTITION BY pg.id),
-                                    'is_worst_deal', p.price = MAX(p.price) OVER (PARTITION BY pg.id)
-                                )
+                                'brand_name', b.name
                             ) ORDER BY p.price
                         ) as products,
                         MIN(p.price) as min_price,
                         MAX(p.price) as max_price,
-                        AVG(p.price) as avg_price,
-                        STDDEV(p.price) as price_stddev,
                         COUNT(DISTINCT p."vendorId") as vendor_count,
-                        COUNT(*) as product_count,
-                        -- Calculate price comparison metrics
-                        MAX(p.price) - MIN(p.price) as price_range_span,
-                        COUNT(*) FILTER (WHERE p.price <= AVG(p.price)) as below_avg_count,
-                        COUNT(*) FILTER (WHERE p.price > AVG(p.price)) as above_avg_count
+                        COUNT(*) as product_count
                     FROM "ProductGroup" pg
                     JOIN matching_groups mg ON mg.id = pg.id
                     JOIN "Product" p ON p."productGroupId" = pg.id
@@ -474,7 +426,7 @@ class PharmaSearchEngine:
                     GROUP BY pg.id, pg."normalizedName", pg."dosageValue", pg."dosageUnit"
                 )
                 SELECT * FROM group_data
-                ORDER BY vendor_count DESC, price_range_span DESC, product_count DESC, min_price
+                ORDER BY vendor_count DESC, product_count DESC, min_price
                 LIMIT ${param_count} OFFSET ${param_count + 1}
             """
 
@@ -484,7 +436,6 @@ class PharmaSearchEngine:
 
             groups = []
             for row in rows:
-                price_stddev = float(row["price_stddev"]) if row["price_stddev"] else 0
                 groups.append(
                     {
                         "id": row["id"],
@@ -497,19 +448,9 @@ class PharmaSearchEngine:
                         "price_range": {
                             "min": float(row["min_price"]),
                             "max": float(row["max_price"]),
-                            "avg": float(row["avg_price"]),
-                            "range": float(row["price_range_span"]),
-                            "stddev": price_stddev,
                         },
                         "vendor_count": row["vendor_count"],
                         "product_count": row["product_count"],
-                        "price_analysis": {
-                            "savings_potential": float(row["price_range_span"]) if row["price_range_span"] else 0,
-                            "price_variation": (price_stddev / float(row["avg_price"]) * 100) if row["avg_price"] and price_stddev else 0,
-                            "below_avg_count": row["below_avg_count"],
-                            "above_avg_count": row["above_avg_count"],
-                            "has_multiple_vendors": row["vendor_count"] > 1,
-                        },
                     }
                 )
 
@@ -673,9 +614,9 @@ class PharmaSearchEngine:
                         SELECT 1 FROM unnest(p."searchTokens") AS token
                         WHERE token ILIKE ('%' || $1 || '%')
                     ) OR
-                    -- Character-level similiarity for very short queries
-                    similiarity(p."normalizedName", $1) > 0.2 OR
-                    similiarity(p.title, $1) > 0.2 OR
+                    -- Character-level similarity for very short queries
+                    similarity(p."normalizedName", $1) > 0.2 OR
+                    similarity(p.title, $1) > 0.2 OR
                 ORDER BY
                     -- Prioritize by position of match
                     CASE

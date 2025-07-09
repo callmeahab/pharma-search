@@ -122,7 +122,7 @@ class SimilarityMatcher:
         self.product_names = [p["normalized_name"] for p in products]
         self.product_ids = [p["id"] for p in products]
 
-        embeddings = self.encoder.encode(self.product_names)
+        embeddings = self.encoder.encode(self.product_names, batch_size=512, show_progress_bar=False)
 
         dimension = embeddings.shape[1]
         self.index = faiss.IndexFlatL2(dimension)

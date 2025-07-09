@@ -21,7 +21,16 @@ class PharmaNormalizer:
             "vitamin d3": "vitamin d",
             "vitamin d 3": "vitamin d", 
             "vitamin d-3": "vitamin d",
+            "d3": "vitamin d",
             "cholecalciferol": "vitamin d",
+            "vitamin k1": "vitamin k",
+            "vitamin k 1": "vitamin k",
+            "vitamin k-1": "vitamin k",
+            "k1": "vitamin k",
+            "d3+k1": "vitamin d + vitamin k",
+            "d3 + k1": "vitamin d + vitamin k",
+            "d3+k": "vitamin d + vitamin k",
+            "d3 + k": "vitamin d + vitamin k",
             "vitamin b12": "vitamin b12",
             "vitamin b 12": "vitamin b12",
             "vitamin b-12": "vitamin b12",
@@ -185,6 +194,11 @@ class PharmaNormalizer:
         core_name = attributes.product_name or title
         core_name = core_name.lower().strip()
         
+        # Normalize spacing and punctuation first
+        core_name = re.sub(r'\s*\+\s*', ' + ', core_name)  # Normalize plus signs
+        core_name = re.sub(r'\s*-\s*', ' ', core_name)     # Remove dashes
+        core_name = re.sub(r'\s+', ' ', core_name)         # Normalize multiple spaces
+        
         # Apply core product mappings to normalize similar products
         for original, normalized in self.core_product_mappings.items():
             if original in core_name:
@@ -199,7 +213,11 @@ class PharmaNormalizer:
             r'\b(for|with|without|free|plus|extra)\b',
             r'\b(men|women|kids|children|adult|senior)\b',
             r'\b(morning|evening|night|day)\b',
-            r'\b\d+\s*(mg|g|mcg|iu|ml|caps|tabs|tablet|capsule)\b',  # Remove dosage info
+            r'\b\d+\s*(mg|g|mcg|iu|ml|caps|tabs|tablet|capsule|kom)\b',  # Remove dosage info
+            r'\b(babytol|centrum|solgar|now|nature|naturals|optimum|gnc|vitacost|kirkland|life|source|nordic|carlson|thorne|garden|rainbow|bluebonnet|way|made|puritan|pride|twinlab|jarrow|swanson|country)\b',
+            r'\b(twist|off|kaps|kapsula|kapsule|tableta|tablet|capsule|cap|soft|gel|gummy|liquid|powder|drop|spray|cream|gel|oil|balm|ointment)\b',
+            r'\b[a-z]*\d+\b',  # Remove patterns like A30, B12, etc.
+            r'\b\d+\s*(x|kom|ks|pc|pcs|pieces)\b',  # Remove quantity indicators
         ]
         
         for pattern in modifiers_to_remove:

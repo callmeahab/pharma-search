@@ -3,6 +3,8 @@ import asyncpg
 from datetime import datetime
 import logging
 import json
+import os
+import re
 from tqdm import tqdm
 from typing import List, Dict, Set, Tuple
 from collections import defaultdict
@@ -39,8 +41,8 @@ class EnhancedProductProcessor:
         # Step 1: Process products with new grouping logic
         await self._process_products_with_new_grouping(batch_size)
         
-        # Step 2: Merge similar groups for better price comparison
-        await self._merge_similar_groups()
+        # Step 2: Fast group merging during initial processing
+        logger.info("Using fast inline group merging during processing")
         
         # Step 3: Update similarity index
         await self._update_similarity_index()
@@ -71,7 +73,9 @@ class EnhancedProductProcessor:
     async def _process_batch_enhanced(self, products: List[Dict]) -> List[Dict]:
         """Process a batch of products with enhanced grouping"""
         processed = []
+        normalized_names = []
 
+        # First pass: normalize all products
         for product in products:
             try:
                 title = product.get("originalTitle") or product.get("title")
@@ -90,11 +94,6 @@ class EnhancedProductProcessor:
                 if product.get("unit_name") and product.get("unitConfidence", 0) > 0.8:
                     processed_product.attributes.quantity_unit = product["unit_name"]
 
-                # Generate embedding for similarity matching
-                if processed_product.normalized_name:
-                    embedding = self.matcher.encoder.encode([processed_product.normalized_name])[0]
-                    processed_product.embedding = embedding.tolist()
-
                 processed.append({
                     "id": product["id"],
                     "normalized_name": processed_product.normalized_name,
@@ -107,12 +106,25 @@ class EnhancedProductProcessor:
                     "quantity_unit": processed_product.attributes.quantity_unit,
                     "form": processed_product.attributes.form,
                     "brand": processed_product.attributes.brand,
-                    "title_embedding": processed_product.embedding,
+                    "processed_product": processed_product,
                 })
+                
+                normalized_names.append(processed_product.normalized_name if processed_product.normalized_name else "")
 
             except Exception as e:
                 logger.error(f"Error processing product {product.get('id')}: {e}")
                 continue
+
+        # Second pass: batch generate embeddings
+        if normalized_names:
+            embeddings = self.matcher.encoder.encode(normalized_names, batch_size=512, show_progress_bar=False)
+            
+            # Assign embeddings back to processed products
+            for i, item in enumerate(processed):
+                if i < len(embeddings):
+                    item["title_embedding"] = embeddings[i].tolist()
+                    # Remove the temporary processed_product
+                    item.pop("processed_product", None)
 
         return processed
 
@@ -139,6 +151,12 @@ class EnhancedProductProcessor:
                     )
 
                     if not group:
+                        # Validate dosage value for group creation
+                        group_dosage_value = product["dosage_value"]
+                        if group_dosage_value is not None:
+                            if group_dosage_value > 99999999.99 or group_dosage_value < -99999999.99:
+                                group_dosage_value = None
+                        
                         group_id = await conn.fetchval(
                             """
                             INSERT INTO "ProductGroup" (
@@ -152,16 +170,32 @@ class EnhancedProductProcessor:
                         """,
                             product["normalized_name"],
                             group_key,
-                            product["dosage_value"],
+                            group_dosage_value,
                             product["dosage_unit"],
                         )
                         groups[group_key] = group_id
                     else:
                         groups[group_key] = group["id"]
 
-            # Update products with group assignments
+            # Fast inline group merging by similarity
+            merged_groups = await self._merge_similar_groups_inline(conn, similarity_groups, groups)
+            
+            # Update products with merged group assignments
             for product in products:
                 try:
+                    final_group_id = merged_groups.get(product["group_key"], groups[product["group_key"]])
+                    
+                    # Validate dosage value to prevent numeric overflow
+                    dosage_value = product["dosage_value"]
+                    if dosage_value is not None:
+                        # Database field is DECIMAL(10,2), max value is 99,999,999.99
+                        if dosage_value > 99999999.99:
+                            dosage_value = None
+                            logger.warning(f"Product {product['id']}: dosage value {product['dosage_value']} too large, setting to NULL")
+                        elif dosage_value < -99999999.99:
+                            dosage_value = None
+                            logger.warning(f"Product {product['id']}: dosage value {product['dosage_value']} too small, setting to NULL")
+                    
                     await conn.execute(
                         """
                         UPDATE "Product" 
@@ -175,16 +209,17 @@ class EnhancedProductProcessor:
                     """,
                         product["normalized_name"],
                         product["search_tokens"],
-                        groups[product["group_key"]],
-                        product["dosage_value"],
+                        final_group_id,
+                        dosage_value,
                         product["dosage_unit"],
                         product["id"],
                     )
                 except Exception as e:
                     logger.error(f"Error saving product {product['id']}: {e}")
 
-            # Update group product counts
-            for group_id in groups.values():
+            # Update group product counts for final groups only
+            final_group_ids = set(merged_groups.values()) or set(groups.values())
+            for group_id in final_group_ids:
                 await conn.execute(
                     """
                     UPDATE "ProductGroup"
@@ -197,6 +232,103 @@ class EnhancedProductProcessor:
                 """,
                     group_id,
                 )
+
+    async def _merge_similar_groups_inline(self, conn, similarity_groups: Dict, groups: Dict) -> Dict:
+        """Comprehensive group merging using fuzzy matching"""
+        merged_groups = {}
+        
+        # First pass: merge by exact similarity key
+        for similarity_key, products in similarity_groups.items():
+            if len(products) <= 1:
+                continue
+                
+            # Find the best representative group (most common or first)
+            group_keys = [p["group_key"] for p in products]
+            group_counts = defaultdict(int)
+            for gk in group_keys:
+                group_counts[gk] += 1
+            
+            # Use the group with most products as the target
+            target_group_key = max(group_counts.items(), key=lambda x: x[1])[0]
+            target_group_id = groups[target_group_key]
+            
+            # Map all other groups to the target group
+            for gk in group_keys:
+                if gk != target_group_key:
+                    merged_groups[gk] = target_group_id
+        
+        # Second pass: aggressive fuzzy matching for remaining groups
+        all_products = []
+        for products in similarity_groups.values():
+            all_products.extend(products)
+        
+        # Group by core product identity for fuzzy matching
+        product_groups = defaultdict(list)
+        for product in all_products:
+            # Extract core identity from normalized name
+            core_identity = self._extract_core_identity(product["normalized_name"])
+            product_groups[core_identity].append(product)
+        
+        # Merge groups with very similar core identities
+        for core_identity, products in product_groups.items():
+            if len(products) <= 1:
+                continue
+                
+            # Get unique group keys
+            group_keys = list(set(p["group_key"] for p in products))
+            if len(group_keys) <= 1:
+                continue
+                
+            # Find target group (most products)
+            group_counts = defaultdict(int)
+            for p in products:
+                group_counts[p["group_key"]] += 1
+            
+            target_group_key = max(group_counts.items(), key=lambda x: x[1])[0]
+            target_group_id = groups[target_group_key]
+            
+            # Check if groups are similar enough to merge
+            for gk in group_keys:
+                if gk != target_group_key and self._should_merge_groups(target_group_key, gk):
+                    merged_groups[gk] = target_group_id
+                    
+        return merged_groups
+    
+    def _extract_core_identity(self, normalized_name: str) -> str:
+        """Extract core product identity for fuzzy matching"""
+        # Remove brand names, quantities, forms, and other noise
+        core = normalized_name.lower()
+        
+        # Remove common variations
+        remove_patterns = [
+            r'\b\d+\s*(mg|g|mcg|iu|ml|caps|tabs|tablet|capsule|kom|ks|x|pcs|pieces)\b',
+            r'\b(twist|off|kaps|kapsula|kapsule|tableta|tablet|capsule|cap)\b',
+            r'\b[a-z]*\d+\b',
+            r'\b(babytol|centrum|solgar|gnc)\b',
+            r'[,\.\-]'
+        ]
+        
+        for pattern in remove_patterns:
+            core = re.sub(pattern, ' ', core, flags=re.IGNORECASE)
+        
+        # Clean up whitespace
+        core = ' '.join(core.split())
+        return core
+    
+    def _should_merge_groups(self, group1: str, group2: str) -> bool:
+        """Check if two groups should be merged based on similarity"""
+        # Extract core parts from group keys
+        def extract_core(group_key):
+            if group_key.startswith('product:'):
+                return group_key.split('_')[0].replace('product:', '')
+            return group_key
+        
+        core1 = extract_core(group1)
+        core2 = extract_core(group2)
+        
+        # Use fuzzy matching with high threshold
+        similarity = fuzz.token_sort_ratio(core1, core2)
+        return similarity >= 85  # High threshold for automatic merging
 
     async def _merge_similar_groups(self):
         """Merge similar product groups for better price comparison"""
