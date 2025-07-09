@@ -5,7 +5,7 @@ import logging
 import os
 
 from .similarity_matcher import SimilarityMatcher
-from .product_processor import ProductProcessor
+from .product_processor import EnhancedProductProcessor
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +45,7 @@ class PharmaSearchEngine:
             logger.info(
                 f"Found {unprocessed_count} unprocessed products, starting processing"
             )
-            processor = ProductProcessor(self.db_url)
+            processor = EnhancedProductProcessor(self.db_url)
             await processor.connect()
             try:
                 await processor.process_products(batch_size=5000)

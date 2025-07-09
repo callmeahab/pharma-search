@@ -27,6 +27,7 @@ const SearchBar: React.FC<SearchBarProps> = ({
   const [isLoadingGroups, setIsLoadingGroups] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [showModal, setShowModal] = useState(false);
+  const [hasUnsearchedChanges, setHasUnsearchedChanges] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -35,6 +36,7 @@ const SearchBar: React.FC<SearchBarProps> = ({
   useEffect(() => {
     if (initialTerm !== searchTerm) {
       setSearchTerm(initialTerm);
+      setHasUnsearchedChanges(false); // Reset unsearched changes when URL changes
       if (initialTerm.trim() !== "") {
         fetchSearchGroups(initialTerm);
       }
@@ -132,16 +134,19 @@ const SearchBar: React.FC<SearchBarProps> = ({
     const value = e.target.value;
     setSearchTerm(value);
 
-    // Real-time API search for groups
+    // Mark that there are unsearched changes
+    setHasUnsearchedChanges(value !== initialTerm);
+
+    // Real-time API search for dropdown suggestions only
     fetchSearchGroups(value);
     setIsDropdownOpen(value.trim() !== "");
 
-    // Call onSearch with debounce handled in the parent component
-    onSearch(value);
+    // Don't call onSearch here - only on form submit or suggestion click
   };
 
   const handleSuggestionClick = (suggestion: string) => {
     setSearchTerm(suggestion);
+    setHasUnsearchedChanges(false);
     onSearch(suggestion);
     setIsDropdownOpen(false);
   };
@@ -159,22 +164,21 @@ const SearchBar: React.FC<SearchBarProps> = ({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault(); // Prevent default form submission
     console.log("Form submitted with term:", searchTerm);
-    onSearch(searchTerm);
-    setIsDropdownOpen(false);
-
-    // Track search when form is submitted
+    
+    // Only perform search if there's a search term
     if (searchTerm.trim()) {
-      // const results = sampleProducts.filter(
-      //   (product) =>
-      //     product.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      //     product.category.toLowerCase().includes(searchTerm.toLowerCase())
-      // );
-      // trackSearch(searchTerm, results.length);
+      setHasUnsearchedChanges(false);
+      onSearch(searchTerm);
+      setIsDropdownOpen(false);
+      
+      // Track search when form is submitted
+      trackSearch(searchTerm, 0); // Will be updated when results come in
     }
   };
 
   const clearSearch = () => {
     setSearchTerm("");
+    setHasUnsearchedChanges(false);
     setIsDropdownOpen(false);
     setFilteredSuggestions([]);
     setSearchGroups([]);
@@ -183,7 +187,7 @@ const SearchBar: React.FC<SearchBarProps> = ({
     if (searchTimeoutRef.current) {
       clearTimeout(searchTimeoutRef.current);
     }
-    onSearch(""); // Call onSearch with empty string to reset
+    onSearch(""); // Call onSearch with empty string to reset grid results
     if (inputRef.current) {
       inputRef.current.focus();
     }
@@ -192,9 +196,10 @@ const SearchBar: React.FC<SearchBarProps> = ({
   const handlePopularSearchClick = (e: React.MouseEvent, term: string) => {
     e.preventDefault(); // Prevent any default behavior
     setSearchTerm(term);
+    setHasUnsearchedChanges(false);
     fetchSearchGroups(term);
     setIsDropdownOpen(true);
-    onSearch(term);
+    onSearch(term); // Trigger grid search for popular searches
 
     // Track popular search click
     trackSearch(term, 0); // Will be updated when API results come in
@@ -214,6 +219,12 @@ const SearchBar: React.FC<SearchBarProps> = ({
               onFocus={() =>
                 searchTerm.trim() !== "" && setIsDropdownOpen(true)
               }
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  handleSubmit(e);
+                }
+              }}
               className="w-full pr-12 rounded-r-none h-14 text-lg border-r-0 focus-visible:ring-health-primary dark:bg-gray-800 dark:border-gray-700 dark:text-gray-100 dark:placeholder:text-gray-400"
             />
             {searchTerm && (
@@ -232,10 +243,15 @@ const SearchBar: React.FC<SearchBarProps> = ({
           </div>
           <Button
             type="submit"
-            className="h-14 px-6 rounded-l-none bg-health-primary hover:bg-health-secondary dark:bg-health-secondary dark:hover:bg-health-primary"
+            className={`h-14 px-6 rounded-l-none bg-health-primary hover:bg-health-secondary dark:bg-health-secondary dark:hover:bg-health-primary ${
+              hasUnsearchedChanges ? 'ring-2 ring-health-secondary ring-opacity-50' : ''
+            }`}
           >
             <Search className="mr-2 h-5 w-5" />
             <span className="text-base">Pretraži</span>
+            {hasUnsearchedChanges && (
+              <span className="ml-1 w-2 h-2 bg-health-secondary rounded-full"></span>
+            )}
           </Button>
         </div>
       </form>
@@ -375,6 +391,12 @@ const SearchBar: React.FC<SearchBarProps> = ({
           Probiotici
         </button>
       </div>
+      
+      {hasUnsearchedChanges && (
+        <div className="mt-1 text-xs text-health-primary dark:text-health-accent">
+          Pritisnite Enter ili kliknite "Pretraži" da pretražite rezultate
+        </div>
+      )}
 
       {/* Product Detail Modal */}
       <ProductDetailModal

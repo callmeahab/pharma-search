@@ -14,8 +14,6 @@ const Navbar = () => {
   const pathname = usePathname();
   const router = useRouter();
   const searchParams = useSearchParams();
-  const [updateUrlTimeout, setUpdateUrlTimeout] =
-    useState<NodeJS.Timeout | null>(null);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const isMobile = useIsMobile();
 
@@ -39,48 +37,31 @@ const Navbar = () => {
     return () => window.removeEventListener("storage", handleStorageChange);
   }, []);
 
-  // Clean up timeouts on component unmount
-  useEffect(() => {
-    return () => {
-      if (updateUrlTimeout) {
-        clearTimeout(updateUrlTimeout);
-      }
-    };
-  }, [updateUrlTimeout]);
 
   const handleSearch = (term: string) => {
     console.log("Search triggered with term:", term);
 
-    // Clear any existing timeout
-    if (updateUrlTimeout) {
-      clearTimeout(updateUrlTimeout);
+    // Update URL immediately since this is now only called on form submit
+    // Create a new URL object from the current pathname only
+    const url = new URL(window.location.origin + pathname);
+
+    // Update or remove the search parameter based on the term
+    if (term && term.trim()) {
+      url.searchParams.set("search", term);
+      trackSearch(term, 0); // Results count will be determined on the main page
+    } else {
+      url.searchParams.delete("search");
     }
 
-    // Only update URL and navigate after typing stops
-    const timeoutId = setTimeout(() => {
-      // Create a new URL object from the current pathname only
-      const url = new URL(window.location.origin + pathname);
+    // Update the URL without causing navigation or page refresh
+    window.history.replaceState(null, "", url.toString());
 
-      // Update or remove the search parameter based on the term
-      if (term && term.trim()) {
-        url.searchParams.set("search", term);
-        trackSearch(term, 0); // Results count will be determined on the main page
-      } else {
-        url.searchParams.delete("search");
-      }
-
-      // Update the URL without causing navigation or page refresh
-      window.history.replaceState(null, "", url.toString());
-
-      // Dispatch a custom event to notify other components about URL change
-      window.dispatchEvent(
-        new CustomEvent("urlSearchChanged", {
-          detail: { term },
-        })
-      );
-    }, 300); // Wait 300ms before updating URL
-
-    setUpdateUrlTimeout(timeoutId);
+    // Dispatch a custom event to notify other components about URL change
+    window.dispatchEvent(
+      new CustomEvent("urlSearchChanged", {
+        detail: { term },
+      })
+    );
   };
 
   return (

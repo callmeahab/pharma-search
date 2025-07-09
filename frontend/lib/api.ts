@@ -206,3 +206,126 @@ export async function getCategories(): Promise<Category[]> {
 
   return categories.filter((cat) => cat.count > 0);
 }
+
+// New API functions for backend routes
+
+export interface GroupingStatistics {
+  total_products: number;
+  total_groups: number;
+  avg_products_per_group: number;
+  avg_vendors_per_group: number;
+  groups_with_multiple_vendors: number;
+  multi_vendor_percentage: number;
+}
+
+export interface TopGroup {
+  name: string;
+  product_count: number;
+  vendor_count: number;
+  price_range: {
+    min: number;
+    max: number;
+    avg: number;
+  };
+}
+
+export interface GroupingAnalysis {
+  status: string;
+  statistics: GroupingStatistics;
+  top_groups: TopGroup[];
+}
+
+export async function getGroupingAnalysis(): Promise<GroupingAnalysis> {
+  const response = await fetch(`${API_URL}/api/grouping-analysis`);
+
+  if (!response.ok) {
+    throw new Error(`Grouping analysis failed: ${response.status} ${response.statusText}`);
+  }
+
+  return response.json();
+}
+
+export interface PriceComparisonProduct {
+  id: string;
+  title: string;
+  price: number;
+  vendor: {
+    name: string;
+    website: string;
+  };
+  brand: string;
+  link: string;
+  thumbnail: string;
+  price_analysis: {
+    diff_from_avg: number;
+    percentile: number;
+    is_best_deal: boolean;
+    is_worst_deal: boolean;
+  };
+}
+
+export interface PriceComparisonGroup {
+  id: string;
+  name: string;
+  product_count: number;
+  vendor_count: number;
+  dosage_value: number | null;
+  dosage_unit: string;
+  price_stats: {
+    min: number;
+    max: number;
+    avg: number;
+    range: number;
+  };
+}
+
+export interface PriceComparisonResult {
+  group: PriceComparisonGroup;
+  products: PriceComparisonProduct[];
+}
+
+export async function getPriceComparison(groupId: string): Promise<PriceComparisonResult> {
+  const response = await fetch(`${API_URL}/api/price-comparison/${groupId}`);
+
+  if (!response.ok) {
+    throw new Error(`Price comparison failed: ${response.status} ${response.statusText}`);
+  }
+
+  return response.json();
+}
+
+export async function processProducts(batchSize: number = 100): Promise<{ status: string; message: string }> {
+  const response = await fetch(`${API_URL}/api/process?batch_size=${batchSize}`, {
+    method: 'POST',
+  });
+
+  if (!response.ok) {
+    throw new Error(`Product processing failed: ${response.status} ${response.statusText}`);
+  }
+
+  return response.json();
+}
+
+export async function reprocessAllProducts(): Promise<{ status: string; message: string }> {
+  const response = await fetch(`${API_URL}/api/reprocess-all`, {
+    method: 'POST',
+  });
+
+  if (!response.ok) {
+    throw new Error(`Reprocessing failed: ${response.status} ${response.statusText}`);
+  }
+
+  return response.json();
+}
+
+export async function rebuildSearchIndex(): Promise<{ status: string; message: string }> {
+  const response = await fetch(`${API_URL}/api/rebuild-index`, {
+    method: 'POST',
+  });
+
+  if (!response.ok) {
+    throw new Error(`Index rebuild failed: ${response.status} ${response.statusText}`);
+  }
+
+  return response.json();
+}

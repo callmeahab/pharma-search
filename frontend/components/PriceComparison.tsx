@@ -4,21 +4,38 @@ import { cn, formatPrice } from "@/lib/utils";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ExternalLink } from "lucide-react";
 import { trackStoreClick } from "@/utils/analytics";
+import { PriceComparisonProduct } from "@/lib/api";
 
 interface PriceComparisonProps {
-  prices: Price[];
+  prices?: Price[];
+  products?: PriceComparisonProduct[];
   isInCard?: boolean; // Prop to identify if it's in a card on home screen
   productName?: string; // Add productName as an optional prop
 }
 
 export const PriceComparison: React.FC<PriceComparisonProps> = ({
   prices,
+  products,
   isInCard = false,
   productName,
 }) => {
+  // Handle both legacy prices and new products format
+  const priceData = products 
+    ? products.map(product => ({
+        store: product.vendor.name,
+        price: product.price,
+        inStock: true,
+        link: product.link,
+        website: product.vendor.website,
+        is_best_deal: product.price_analysis.is_best_deal,
+        is_worst_deal: product.price_analysis.is_worst_deal,
+        diff_from_avg: product.price_analysis.diff_from_avg,
+      }))
+    : prices || [];
+
   // Sort prices from lowest to highest
-  const sortedPrices = [...prices].sort((a, b) => a.price - b.price);
-  const lowestPrice = sortedPrices[0].price;
+  const sortedPrices = [...priceData].sort((a, b) => a.price - b.price);
+  const lowestPrice = sortedPrices[0]?.price || 0;
 
   // For large number of pharmacies, we'll display them in a grid or scrollable area
   const displayLimit = isInCard ? 5 : 20;
@@ -27,15 +44,15 @@ export const PriceComparison: React.FC<PriceComparisonProps> = ({
     ? sortedPrices.slice(0, displayLimit)
     : sortedPrices;
 
-  const handleStoreClick = (store: string) => {
+  const handleStoreClick = (price: any) => {
     // Track store link click
-    trackStoreClick(store, productName || null);
+    trackStoreClick(price.store, productName || null);
 
-    console.log(`Navigating to ${store} website`);
-    window.open(
-      `https://www.${store.toLowerCase().replace(/\s+/g, "")}.com`,
-      "_blank"
-    );
+    console.log(`Navigating to ${price.store} website`);
+    
+    // Use the actual product link if available, otherwise fallback to generic website
+    const targetUrl = price.link || price.website || `https://www.${price.store.toLowerCase().replace(/\s+/g, "")}.com`;
+    window.open(targetUrl, "_blank");
   };
 
   const PriceList = () => (
@@ -50,10 +67,10 @@ export const PriceComparison: React.FC<PriceComparisonProps> = ({
       {displayPrices.map((price, index) => (
         <button
           key={`${price.store}-${index}`}
-          onClick={() => handleStoreClick(price.store)}
+          onClick={() => handleStoreClick(price)}
           className={cn(
             "flex justify-between items-center p-3 rounded transition-colors duration-200 w-full text-left",
-            index === 0
+            price.is_best_deal || index === 0
               ? "bg-health-light dark:bg-green-800/30 border-l-4 border-health-primary dark:border-green-500"
               : "hover:bg-gray-50 dark:hover:bg-gray-700 border-l-4 border-transparent"
           )}
@@ -63,7 +80,7 @@ export const PriceComparison: React.FC<PriceComparisonProps> = ({
             <div
               className={cn(
                 "w-6 h-6 flex items-center justify-center mr-2 rounded-full border",
-                index === 0
+                price.is_best_deal || index === 0
                   ? "bg-health-primary text-white border-health-primary dark:bg-green-600 dark:border-green-500"
                   : "bg-white dark:bg-gray-600 border-gray-200 dark:border-gray-700"
               )}
@@ -82,7 +99,7 @@ export const PriceComparison: React.FC<PriceComparisonProps> = ({
             <span
               className={cn(
                 "font-semibold",
-                index === 0
+                price.is_best_deal || index === 0
                   ? "text-health-primary dark:text-green-300"
                   : "dark:text-gray-200"
               )}
@@ -100,6 +117,12 @@ export const PriceComparison: React.FC<PriceComparisonProps> = ({
                 )}
               >
                 +{formatPrice(price.price - lowestPrice)}
+              </span>
+            )}
+            
+            {price.diff_from_avg && (
+              <span className="text-xs text-gray-500 dark:text-gray-400">
+                {price.diff_from_avg > 0 ? '+' : ''}{formatPrice(price.diff_from_avg)} from avg
               </span>
             )}
           </div>
@@ -129,8 +152,8 @@ export const PriceComparison: React.FC<PriceComparisonProps> = ({
       {hasMorePrices && (
         <div className="text-xs text-center mt-2 text-gray-500 dark:text-gray-400">
           {isInCard
-            ? `Click to see all ${prices.length} stores`
-            : `Showing ${displayPrices.length} of ${prices.length} stores`}
+            ? `Click to see all ${priceData.length} stores`
+            : `Showing ${displayPrices.length} of ${priceData.length} stores`}
         </div>
       )}
     </div>

@@ -55,12 +55,8 @@ export function convertBackendProductToProduct(
 ): Product {
   return {
     id: backendProduct.id,
-    name:
-      humanizeTitle(group.normalized_name) +
-      (group.dosage_value
-        ? ` ${group.dosage_value}${group.dosage_unit || ""}`.toUpperCase()
-        : ""),
-    description: humanizeTitle(backendProduct.title),
+    name: humanizeTitle(backendProduct.title),
+    description: `Available at ${group.vendor_count} pharmacies`,
     category: "Supplements", // Default category since backend doesn't provide this
     image: backendProduct.thumbnail || "/placeholder.svg",
     prices: [
@@ -75,16 +71,22 @@ export function convertBackendProductToProduct(
 
 export function convertProductGroupToProducts(group: ProductGroup): Product[] {
   // Create one main product representing the group
+  // Use the first product's title as the main name, or fall back to normalized name
+  const firstProduct = group.products[0];
+  
+  // Find the most common or representative title
+  // For now, use the first product's title, but this could be enhanced
+  // to find the most frequent title or the shortest/clearest one
+  const productTitle = firstProduct?.title 
+    ? humanizeTitle(firstProduct.title)
+    : humanizeTitle(group.normalized_name);
+  
   const mainProduct: Product = {
     id: group.id,
-    name:
-      humanizeTitle(group.normalized_name) +
-      (group.dosage_value
-        ? ` ${group.dosage_value}${group.dosage_unit || ""}`.toUpperCase()
-        : ""),
+    name: productTitle,
     description: `Available at ${group.vendor_count} pharmacies`,
     category: "Supplements",
-    image: group.products[0]?.thumbnail || "/placeholder.svg",
+    image: firstProduct?.thumbnail || "/placeholder.svg",
     prices: group.products.map((p) => ({
       store: p.vendor_name,
       price: p.price,
