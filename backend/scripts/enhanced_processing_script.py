@@ -14,7 +14,7 @@ from datetime import datetime
 # Add the parent directory to the path so we can import our modules
 sys.path.append(str(Path(__file__).parent.parent))
 
-from product_processor import EnhancedProductProcessor
+from src.product_processor import EnhancedProductProcessor
 from src.config import settings
 
 # Setup logging

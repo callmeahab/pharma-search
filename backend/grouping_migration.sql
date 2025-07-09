@@ -246,14 +246,14 @@ COMMENT ON VIEW "PriceComparisonView" IS 'View optimized for price comparison qu
 CREATE OR REPLACE VIEW "GroupingSummary" AS
 SELECT 
     COUNT(*) as total_products,
-    COUNT(DISTINCT "productGroupId") as total_groups,
+    COUNT(DISTINCT p."productGroupId") as total_groups,
     AVG(group_stats.product_count) as avg_products_per_group,
     AVG(group_stats.vendor_count) as avg_vendors_per_group,
     COUNT(*) FILTER (WHERE group_stats.vendor_count > 1) as groups_with_multiple_vendors,
     COUNT(*) FILTER (WHERE group_stats.vendor_count = 1) as single_vendor_groups,
     ROUND(
         COUNT(*) FILTER (WHERE group_stats.vendor_count > 1) * 100.0 / 
-        NULLIF(COUNT(DISTINCT "productGroupId"), 0), 2
+        NULLIF(COUNT(DISTINCT p."productGroupId"), 0), 2
     ) as multi_vendor_percentage
 FROM "Product" p
 JOIN (
