@@ -214,9 +214,10 @@ class EnhancedProductProcessor:
                     pg."productCount",
                     array_agg(DISTINCT p."vendorId") as vendor_ids,
                     array_agg(p."normalizedName") as product_names,
-                    array_agg(p."searchTokens") as all_search_tokens
+                    array_agg(DISTINCT token) as all_search_tokens
                 FROM "ProductGroup" pg
                 JOIN "Product" p ON p."productGroupId" = pg.id
+                CROSS JOIN LATERAL unnest(p."searchTokens") AS token
                 WHERE pg."productCount" > 0
                 GROUP BY pg.id, pg."normalizedName", pg."groupKey", pg."dosageValue", pg."dosageUnit", pg."productCount"
                 ORDER BY pg."productCount" DESC
