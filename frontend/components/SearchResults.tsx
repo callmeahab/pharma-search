@@ -8,9 +8,11 @@ import {
   ChevronDown,
   ChevronUp,
   ExternalLink,
-  MapPin,
   TrendingDown,
   Store,
+  TrendingUp,
+  DollarSign,
+  Award,
 } from "lucide-react";
 import { ProductGroup } from "@/types/product";
 import { humanizeTitle, formatPrice } from "@/lib/utils";
@@ -48,11 +50,11 @@ const SearchResults: React.FC<SearchResultsProps> = ({
         {[...Array(3)].map((_, i) => (
           <Card key={i} className="animate-pulse">
             <CardHeader>
-              <div className="h-6 bg-gray-200 rounded w-3/4"></div>
-              <div className="h-4 bg-gray-200 rounded w-1/2"></div>
+              <div className="w-3/4 h-6 bg-gray-200 rounded"></div>
+              <div className="w-1/2 h-4 bg-gray-200 rounded"></div>
             </CardHeader>
             <CardContent>
-              <div className="h-4 bg-gray-200 rounded w-full"></div>
+              <div className="w-full h-4 bg-gray-200 rounded"></div>
             </CardContent>
           </Card>
         ))}
@@ -62,10 +64,10 @@ const SearchResults: React.FC<SearchResultsProps> = ({
 
   if (error) {
     return (
-      <Card className="border-red-200 bg-red-50">
+      <Card className="bg-red-50 border-red-200">
         <CardContent className="p-6 text-center">
-          <p className="text-red-600 font-medium">Greška pri pretraživanju</p>
-          <p className="text-red-500 text-sm mt-1">{error}</p>
+          <p className="font-medium text-red-600">Greška pri pretraživanju</p>
+          <p className="mt-1 text-sm text-red-500">{error}</p>
         </CardContent>
       </Card>
     );
@@ -75,10 +77,10 @@ const SearchResults: React.FC<SearchResultsProps> = ({
     return (
       <Card>
         <CardContent className="p-8 text-center">
-          <p className="text-gray-600 text-lg">
+          <p className="text-lg text-gray-600">
             Nema rezultata za vašu pretragu
           </p>
-          <p className="text-gray-500 text-sm mt-2">
+          <p className="mt-2 text-sm text-gray-500">
             Pokušajte sa drugačijim ključnim rečima
           </p>
         </CardContent>
@@ -98,7 +100,7 @@ const SearchResults: React.FC<SearchResultsProps> = ({
         const isExpanded = expandedGroups.has(group.id);
         const hasMultipleProducts = group.products.length > 1;
         const cheapestProduct = group.products.reduce((min, product) =>
-          product.price < min.price ? product : min
+          product.price < min.price ? product : min,
         );
 
         return (
@@ -109,20 +111,38 @@ const SearchResults: React.FC<SearchResultsProps> = ({
                   <CardTitle className="text-lg text-health-primary dark:text-health-accent">
                     {humanizeTitle(group.normalized_name)}
                     {group.dosage_value && (
-                      <span className="font-normal text-gray-600 dark:text-gray-400 ml-2">
+                      <span className="ml-2 font-normal text-gray-600 dark:text-gray-400">
                         {group.dosage_value} {group.dosage_unit}
                       </span>
                     )}
                   </CardTitle>
-                  <div className="flex items-center gap-4 mt-2 text-sm text-gray-600 dark:text-gray-400">
-                    <div className="flex items-center gap-1">
-                      <Store className="h-4 w-4" />
+                  <div className="flex gap-4 items-center mt-2 text-sm text-gray-600 dark:text-gray-400">
+                    <div className="flex gap-1 items-center">
+                      <Store className="w-4 h-4" />
                       <span>{group.vendor_count} apoteka</span>
                     </div>
-                    <div className="flex items-center gap-1">
-                      <TrendingDown className="h-4 w-4" />
+                    <div className="flex gap-1 items-center">
+                      <TrendingDown className="w-4 h-4" />
                       <span>od {formatPrice(group.price_range.min)}</span>
                     </div>
+                    {group.price_analysis?.savings_potential &&
+                      group.price_analysis.savings_potential > 0 && (
+                        <div className="flex gap-1 items-center">
+                          <DollarSign className="w-4 h-4 text-green-600" />
+                          <span className="font-medium text-green-600">
+                            Uštedite do{" "}
+                            {formatPrice(
+                              group.price_analysis.savings_potential,
+                            )}
+                          </span>
+                        </div>
+                      )}
+                    {group.price_analysis?.has_multiple_vendors && (
+                      <Badge variant="secondary" className="text-xs">
+                        <TrendingUp className="mr-1 w-3 h-3" />
+                        Više ponuđača
+                      </Badge>
+                    )}
                   </div>
                 </div>
                 <div className="text-right">
@@ -134,12 +154,18 @@ const SearchResults: React.FC<SearchResultsProps> = ({
                       do {formatPrice(group.price_range.max)}
                     </div>
                   )}
+                  {group.price_analysis?.price_variation &&
+                    group.price_analysis.price_variation > 20 && (
+                      <div className="mt-1 text-xs text-orange-600">
+                        Visoka varijabilnost cena
+                      </div>
+                    )}
                 </div>
               </div>
 
               {!isExpanded && (
-                <div className="mt-3 flex items-center justify-between">
-                  <div className="flex items-center gap-2">
+                <div className="flex justify-between items-center mt-3">
+                  <div className="flex gap-2 items-center">
                     <Badge variant="outline" className="text-xs">
                       {cheapestProduct.vendor_name}
                     </Badge>
@@ -155,7 +181,7 @@ const SearchResults: React.FC<SearchResultsProps> = ({
                       className="text-health-primary dark:text-health-accent"
                     >
                       Prikaži sve ({group.products.length})
-                      <ChevronDown className="ml-1 h-4 w-4" />
+                      <ChevronDown className="ml-1 w-4 h-4" />
                     </Button>
                   )}
                 </div>
@@ -175,7 +201,7 @@ const SearchResults: React.FC<SearchResultsProps> = ({
                     className="text-health-primary dark:text-health-accent"
                   >
                     Sakrij
-                    <ChevronUp className="ml-1 h-4 w-4" />
+                    <ChevronUp className="ml-1 w-4 h-4" />
                   </Button>
                 </div>
 
@@ -185,28 +211,78 @@ const SearchResults: React.FC<SearchResultsProps> = ({
                     .map((product) => (
                       <div
                         key={product.id}
-                        className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-800 rounded-lg"
+                        className={`flex items-center justify-between p-3 rounded-lg ${
+                          product.price_analysis?.is_best_deal
+                            ? "bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800"
+                            : "bg-gray-50 dark:bg-gray-800"
+                        }`}
                       >
                         <div className="flex-1">
-                          <div className="font-medium text-gray-900 dark:text-gray-100">
-                            {product.vendor_name}
+                          <div className="flex gap-2 items-center">
+                            <div className="font-medium text-gray-900 dark:text-gray-100">
+                              {product.vendor_name}
+                            </div>
+                            {product.price_analysis?.is_best_deal && (
+                              <Badge
+                                variant="default"
+                                className="text-xs text-white bg-green-600"
+                              >
+                                <Award className="mr-1 w-3 h-3" />
+                                Najbolja cena
+                              </Badge>
+                            )}
+                            {product.price_analysis?.is_worst_deal && (
+                              <Badge
+                                variant="outline"
+                                className="text-xs text-red-600 border-red-200"
+                              >
+                                Najskuplja
+                              </Badge>
+                            )}
                           </div>
-                          <div className="text-sm text-gray-600 dark:text-gray-400 mt-1">
+                          <div className="mt-1 text-sm text-gray-600 dark:text-gray-400">
                             {humanizeTitle(product.title)}
                           </div>
+                          {product.price_analysis?.diff_from_avg && (
+                            <div className="mt-1 text-xs">
+                              {product.price_analysis.diff_from_avg > 0 ? (
+                                <span className="text-red-600">
+                                  +
+                                  {formatPrice(
+                                    product.price_analysis.diff_from_avg,
+                                  )}{" "}
+                                  od proseka
+                                </span>
+                              ) : (
+                                <span className="text-green-600">
+                                  {formatPrice(
+                                    product.price_analysis.diff_from_avg,
+                                  )}{" "}
+                                  od proseka
+                                </span>
+                              )}
+                            </div>
+                          )}
                         </div>
-                        <div className="flex items-center gap-3">
+                        <div className="flex gap-3 items-center">
                           <div className="text-right">
-                            <div className="font-bold text-lg text-health-primary dark:text-health-accent">
+                            <div className="text-lg font-bold text-health-primary dark:text-health-accent">
                               {formatPrice(product.price)}
                             </div>
+                            {product.price_analysis?.percentile !==
+                              undefined && (
+                              <div className="text-xs text-gray-500">
+                                {product.price_analysis.percentile.toFixed(0)}%
+                                opsega
+                              </div>
+                            )}
                           </div>
                           <Button
                             size="sm"
                             onClick={() => window.open(product.link, "_blank")}
-                            className="bg-health-primary hover:bg-health-secondary dark:bg-health-secondary dark:hover:bg-health-primary"
+                            className="bg-health-primary dark:bg-health-secondary dark:hover:bg-health-primary hover:bg-health-secondary"
                           >
-                            <ExternalLink className="h-4 w-4 mr-1" />
+                            <ExternalLink className="mr-1 w-4 h-4" />
                             Kupi
                           </Button>
                         </div>

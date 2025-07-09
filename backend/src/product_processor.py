@@ -21,7 +21,7 @@ class EnhancedProductProcessor:
         self.db_url = db_url
         self.normalizer = PharmaNormalizer()
         self.matcher = SimilarityMatcher()
-        self.pool = None
+        self.pool: asyncpg.pool.Pool
 
     async def connect(self):
         """Create database connection pool"""

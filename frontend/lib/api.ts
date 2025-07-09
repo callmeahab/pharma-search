@@ -18,6 +18,13 @@ export interface Product {
   vendor_name: string;
   link: string;
   thumbnail?: string;
+  brand_name?: string;
+  price_analysis?: {
+    diff_from_avg: number;
+    percentile: number;
+    is_best_deal: boolean;
+    is_worst_deal: boolean;
+  };
 }
 
 export interface ProductGroup {
@@ -30,9 +37,18 @@ export interface ProductGroup {
     min: number;
     max: number;
     avg: number;
+    range?: number;
+    stddev?: number;
   };
   vendor_count: number;
   product_count?: number;
+  price_analysis?: {
+    savings_potential: number;
+    price_variation: number;
+    below_avg_count: number;
+    above_avg_count: number;
+    has_multiple_vendors: boolean;
+  };
 }
 
 export interface SearchResult {

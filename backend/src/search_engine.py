@@ -19,7 +19,7 @@ class PharmaSearchEngine:
         # Ensure cache directory exists
         os.makedirs(cache_dir, exist_ok=True)
         self.matcher = SimilarityMatcher(cache_dir=cache_dir)
-        self.pool = None
+        self.pool: asyncpg.pool.Pool
 
     async def connect(self):
         """Initialize connection and load index"""
@@ -122,7 +122,7 @@ class PharmaSearchEngine:
 
         # Add similarity matches, but limit them based on query length
         similarity_limit = min(len(similar_products), 500 if query_len <= 3 else 200)
-        for i, (product_id, score, _) in enumerate(similar_products):
+        for i, (product_id, _, _) in enumerate(similar_products):
             if i >= similarity_limit:
                 break
             if product_id not in seen_ids:
@@ -236,7 +236,7 @@ class PharmaSearchEngine:
         offset: int,
         preserve_order: bool = False,
     ) -> Dict[str, Any]:
-        """Fetch product groups for given product IDs"""
+        """Fetch product groups for given product IDs with enhanced price comparison"""
 
         async with self.pool.acquire() as conn:
             rows = await conn.fetch(
@@ -261,19 +261,37 @@ class PharmaSearchEngine:
                                 'vendor_id', p."vendorId",
                                 'vendor_name', v.name,
                                 'link', p.link,
-                                'thumbnail', p.thumbnail
+                                'thumbnail', p.thumbnail,
+                                'brand_name', b.name,
+                                'price_analysis', json_build_object(
+                                    'diff_from_avg', p.price - AVG(p.price) OVER (PARTITION BY g.id),
+                                    'percentile', CASE 
+                                        WHEN MAX(p.price) OVER (PARTITION BY g.id) - MIN(p.price) OVER (PARTITION BY g.id) > 0
+                                        THEN (p.price - MIN(p.price) OVER (PARTITION BY g.id)) / 
+                                             (MAX(p.price) OVER (PARTITION BY g.id) - MIN(p.price) OVER (PARTITION BY g.id)) * 100
+                                        ELSE 0
+                                    END,
+                                    'is_best_deal', p.price = MIN(p.price) OVER (PARTITION BY g.id),
+                                    'is_worst_deal', p.price = MAX(p.price) OVER (PARTITION BY g.id)
+                                )
                             ) ORDER BY p.price
                         ) as products,
                         MIN(p.price) as min_price,
                         MAX(p.price) as max_price,
                         AVG(p.price) as avg_price,
+                        STDDEV(p.price) as price_stddev,
                         COUNT(DISTINCT p."vendorId") as vendor_count,
                         COUNT(*) as product_count,
+                        -- Calculate price comparison metrics
+                        MAX(p.price) - MIN(p.price) as price_range_span,
+                        COUNT(*) FILTER (WHERE p.price <= AVG(p.price)) as below_avg_count,
+                        COUNT(*) FILTER (WHERE p.price > AVG(p.price)) as above_avg_count,
                         -- For preserving order, find the minimum position of products in input array
                         MIN(array_position($1::text[], p.id)) as input_order
                     FROM relevant_groups g
                     JOIN "Product" p ON p."productGroupId" = g.id
                     JOIN "Vendor" v ON v.id = p."vendorId"
+                    LEFT JOIN "Brand" b ON b.id = p."brandId"
                     WHERE ($2::numeric IS NULL OR p.price >= $2)
                       AND ($3::numeric IS NULL OR p.price <= $3)
                       AND ($4::text[] IS NULL OR p."vendorId" = ANY($4))
@@ -281,11 +299,13 @@ class PharmaSearchEngine:
                     GROUP BY g.id, g."normalizedName", g."dosageValue", g."dosageUnit"
                 )
                 SELECT id, "normalizedName", "dosageValue", "dosageUnit", 
-                       products, min_price, max_price, avg_price, 
-                       vendor_count, product_count
+                       products, min_price, max_price, avg_price, price_stddev,
+                       vendor_count, product_count, price_range_span, below_avg_count, above_avg_count
                 FROM group_products
                 ORDER BY 
                     CASE WHEN $8 THEN input_order ELSE NULL END NULLS LAST,
+                    vendor_count DESC,  -- Prioritize groups with more vendors for better price comparison
+                    price_range_span DESC,  -- Then by price range for better savings potential
                     product_count DESC, 
                     min_price
                 LIMIT $6 OFFSET $7
@@ -311,6 +331,7 @@ class PharmaSearchEngine:
 
             groups = []
             for row in rows:
+                price_stddev = float(row["price_stddev"]) if row["price_stddev"] else 0
                 groups.append(
                     {
                         "id": row["id"],
@@ -324,9 +345,18 @@ class PharmaSearchEngine:
                             "min": float(row["min_price"]),
                             "max": float(row["max_price"]),
                             "avg": float(row["avg_price"]),
+                            "range": float(row["price_range_span"]),
+                            "stddev": price_stddev,
                         },
                         "vendor_count": row["vendor_count"],
                         "product_count": row["product_count"],
+                        "price_analysis": {
+                            "savings_potential": float(row["price_range_span"]) if row["price_range_span"] else 0,
+                            "price_variation": (price_stddev / float(row["avg_price"]) * 100) if row["avg_price"] and price_stddev else 0,
+                            "below_avg_count": row["below_avg_count"],
+                            "above_avg_count": row["above_avg_count"],
+                            "has_multiple_vendors": row["vendor_count"] > 1,
+                        },
                     }
                 )
 
@@ -388,7 +418,7 @@ class PharmaSearchEngine:
 
             total = await conn.fetchval(count_query, *params)
 
-            # Then get the grouped results
+            # Then get the grouped results with enhanced price comparison
             query_sql = f"""
                 WITH matching_groups AS (
                     SELECT DISTINCT pg.id
@@ -411,22 +441,40 @@ class PharmaSearchEngine:
                                 'vendor_id', p."vendorId",
                                 'vendor_name', v.name,
                                 'link', p.link,
-                                'thumbnail', p.thumbnail
+                                'thumbnail', p.thumbnail,
+                                'brand_name', b.name,
+                                'price_analysis', json_build_object(
+                                    'diff_from_avg', p.price - AVG(p.price) OVER (PARTITION BY pg.id),
+                                    'percentile', CASE 
+                                        WHEN MAX(p.price) OVER (PARTITION BY pg.id) - MIN(p.price) OVER (PARTITION BY pg.id) > 0
+                                        THEN (p.price - MIN(p.price) OVER (PARTITION BY pg.id)) / 
+                                             (MAX(p.price) OVER (PARTITION BY pg.id) - MIN(p.price) OVER (PARTITION BY pg.id)) * 100
+                                        ELSE 0
+                                    END,
+                                    'is_best_deal', p.price = MIN(p.price) OVER (PARTITION BY pg.id),
+                                    'is_worst_deal', p.price = MAX(p.price) OVER (PARTITION BY pg.id)
+                                )
                             ) ORDER BY p.price
                         ) as products,
                         MIN(p.price) as min_price,
                         MAX(p.price) as max_price,
                         AVG(p.price) as avg_price,
+                        STDDEV(p.price) as price_stddev,
                         COUNT(DISTINCT p."vendorId") as vendor_count,
-                        COUNT(*) as product_count
+                        COUNT(*) as product_count,
+                        -- Calculate price comparison metrics
+                        MAX(p.price) - MIN(p.price) as price_range_span,
+                        COUNT(*) FILTER (WHERE p.price <= AVG(p.price)) as below_avg_count,
+                        COUNT(*) FILTER (WHERE p.price > AVG(p.price)) as above_avg_count
                     FROM "ProductGroup" pg
                     JOIN matching_groups mg ON mg.id = pg.id
                     JOIN "Product" p ON p."productGroupId" = pg.id
                     JOIN "Vendor" v ON v.id = p."vendorId"
+                    LEFT JOIN "Brand" b ON b.id = p."brandId"
                     GROUP BY pg.id, pg."normalizedName", pg."dosageValue", pg."dosageUnit"
                 )
                 SELECT * FROM group_data
-                ORDER BY product_count DESC, min_price
+                ORDER BY vendor_count DESC, price_range_span DESC, product_count DESC, min_price
                 LIMIT ${param_count} OFFSET ${param_count + 1}
             """
 
@@ -436,6 +484,7 @@ class PharmaSearchEngine:
 
             groups = []
             for row in rows:
+                price_stddev = float(row["price_stddev"]) if row["price_stddev"] else 0
                 groups.append(
                     {
                         "id": row["id"],
@@ -449,9 +498,18 @@ class PharmaSearchEngine:
                             "min": float(row["min_price"]),
                             "max": float(row["max_price"]),
                             "avg": float(row["avg_price"]),
+                            "range": float(row["price_range_span"]),
+                            "stddev": price_stddev,
                         },
                         "vendor_count": row["vendor_count"],
                         "product_count": row["product_count"],
+                        "price_analysis": {
+                            "savings_potential": float(row["price_range_span"]) if row["price_range_span"] else 0,
+                            "price_variation": (price_stddev / float(row["avg_price"]) * 100) if row["avg_price"] and price_stddev else 0,
+                            "below_avg_count": row["below_avg_count"],
+                            "above_avg_count": row["above_avg_count"],
+                            "has_multiple_vendors": row["vendor_count"] > 1,
+                        },
                     }
                 )
 
