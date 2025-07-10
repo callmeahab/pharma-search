@@ -5,13 +5,14 @@ import logging
 import json
 import os
 import re
+import numpy as np
 from tqdm import tqdm
 from typing import List, Dict, Set, Tuple
 from collections import defaultdict
 from rapidfuzz import fuzz
 
 from .normalizer import PharmaNormalizer
-from .similarity_matcher import SimilarityMatcher
+# Removed SimilarityMatcher - using database-only approach
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +23,7 @@ class EnhancedProductProcessor:
     def __init__(self, db_url: str):
         self.db_url = db_url
         self.normalizer = PharmaNormalizer()
-        self.matcher = SimilarityMatcher()
+        # Removed SimilarityMatcher - using database-only approach
         self.pool: asyncpg.pool.Pool
 
     async def connect(self):
@@ -44,8 +45,7 @@ class EnhancedProductProcessor:
         # Step 2: Fast group merging during initial processing
         logger.info("Using fast inline group merging during processing")
         
-        # Step 3: Update similarity index
-        await self._update_similarity_index()
+        # Step 3: Database-only approach - no similarity index needed
         
         logger.info("Enhanced product processing complete")
 
@@ -115,16 +115,10 @@ class EnhancedProductProcessor:
                 logger.error(f"Error processing product {product.get('id')}: {e}")
                 continue
 
-        # Second pass: batch generate embeddings
-        if normalized_names:
-            embeddings = self.matcher.encoder.encode(normalized_names, batch_size=512, show_progress_bar=False)
-            
-            # Assign embeddings back to processed products
-            for i, item in enumerate(processed):
-                if i < len(embeddings):
-                    item["title_embedding"] = embeddings[i].tolist()
-                    # Remove the temporary processed_product
-                    item.pop("processed_product", None)
+        # Second pass: Database-only approach - no embeddings needed
+        for item in processed:
+            # Remove the temporary processed_product
+            item.pop("processed_product", None)
 
         return processed
 
@@ -154,8 +148,15 @@ class EnhancedProductProcessor:
                         # Validate dosage value for group creation
                         group_dosage_value = product["dosage_value"]
                         if group_dosage_value is not None:
-                            if group_dosage_value > 99999999.99 or group_dosage_value < -99999999.99:
+                            # More strict validation to prevent overflow
+                            try:
+                                group_dosage_value = float(group_dosage_value)
+                                if group_dosage_value > 99999999.99 or group_dosage_value < -99999999.99 or not np.isfinite(group_dosage_value):
+                                    group_dosage_value = None
+                                    logger.warning(f"Product {product['id']}: invalid dosage value {product['dosage_value']}, setting to NULL")
+                            except (ValueError, TypeError):
                                 group_dosage_value = None
+                                logger.warning(f"Product {product['id']}: non-numeric dosage value {product['dosage_value']}, setting to NULL")
                         
                         group_id = await conn.fetchval(
                             """
@@ -188,13 +189,22 @@ class EnhancedProductProcessor:
                     # Validate dosage value to prevent numeric overflow
                     dosage_value = product["dosage_value"]
                     if dosage_value is not None:
-                        # Database field is DECIMAL(10,2), max value is 99,999,999.99
-                        if dosage_value > 99999999.99:
+                        # More comprehensive validation
+                        try:
+                            dosage_value = float(dosage_value)
+                            # Database field is DECIMAL(10,2), max value is 99,999,999.99
+                            if dosage_value > 99999999.99:
+                                dosage_value = None
+                                logger.warning(f"Product {product['id']}: dosage value {product['dosage_value']} too large, setting to NULL")
+                            elif dosage_value < -99999999.99:
+                                dosage_value = None
+                                logger.warning(f"Product {product['id']}: dosage value {product['dosage_value']} too small, setting to NULL")
+                            elif not np.isfinite(dosage_value):
+                                dosage_value = None
+                                logger.warning(f"Product {product['id']}: dosage value {product['dosage_value']} not finite, setting to NULL")
+                        except (ValueError, TypeError, OverflowError):
                             dosage_value = None
-                            logger.warning(f"Product {product['id']}: dosage value {product['dosage_value']} too large, setting to NULL")
-                        elif dosage_value < -99999999.99:
-                            dosage_value = None
-                            logger.warning(f"Product {product['id']}: dosage value {product['dosage_value']} too small, setting to NULL")
+                            logger.warning(f"Product {product['id']}: invalid dosage value {product['dosage_value']}, setting to NULL")
                     
                     await conn.execute(
                         """
@@ -295,40 +305,70 @@ class EnhancedProductProcessor:
         return merged_groups
     
     def _extract_core_identity(self, normalized_name: str) -> str:
-        """Extract core product identity for fuzzy matching"""
+        """Extract core product identity for aggressive fuzzy matching"""
         # Remove brand names, quantities, forms, and other noise
         core = normalized_name.lower()
         
-        # Remove common variations
+        # More aggressive pattern removal for better grouping
         remove_patterns = [
-            r'\b\d+\s*(mg|g|mcg|iu|ml|caps|tabs|tablet|capsule|kom|ks|x|pcs|pieces)\b',
-            r'\b(twist|off|kaps|kapsula|kapsule|tableta|tablet|capsule|cap)\b',
-            r'\b[a-z]*\d+\b',
-            r'\b(babytol|centrum|solgar|gnc)\b',
-            r'[,\.\-]'
+            # Remove all dosage/quantity information
+            r'\b\d+\s*(mg|g|mcg|iu|ml|caps|tabs|tablet|capsule|kom|ks|x|pcs|pieces|komada|tableta|kapsule|kaps)\b',
+            # Remove forms and packaging
+            r'\b(twist|off|kaps|kapsula|kapsule|tableta|tablet|capsule|cap|caps|tabs|drops|sirup|syrup|gel|cream|mast|powder|prah)\b',
+            # Remove numbers that might be dosages or quantities
+            r'\b\d+\s*(x|\*|/|komada|kom|ks|pcs|pieces|tableta|kapsule|ml|mg|g|mcg|iu)?\b',
+            # Remove standalone numbers
+            r'\b\d+\b',
+            # Remove brand names (extended list)
+            r'\b(babytol|centrum|solgar|gnc|pampers|huggies|johnson|nivea|la|roche|posay|eucerin|vichy|avene|bioderma|cetaphil|neutrogena|loreal|garnier|maybelline|revlon|max|factor|rimmel|essence|catrice|nyx|urban|decay|too|faced|benefit|tarte|fenty|rare|beauty|glossier|drunk|elephant|ordinary|paula|choice|cerave|olay|clinique|estee|lauder|lancome|dior|chanel|yves|saint|laurent|gucci|versace|armani|dolce|gabbana|prada|bulgari|hermes|cartier|tiffany|rolex|omega|tag|heuer|breitling|iwc|patek|philippe|audemars|piguet|vacheron|constantin|jaeger|lecoultre|longines|tissot|seiko|citizen|casio|fossil|diesel|michael|kors|guess|tommy|hilfiger|calvin|klein|polo|ralph|lauren|hugo|boss|lacoste|nike|adidas|puma|reebok|under|armour|new|balance|converse|vans|timberland|ugg|dr|martens|birkenstock|crocs|havaianas|flip|flop|ray|ban|oakley|persol|tom|ford|prada|gucci|versace|armani|dolce|gabbana|dior|chanel|yves|saint|laurent|hermes|cartier|tiffany|bulgari|rolex|omega|tag|heuer|breitling|iwc|patek|philippe|audemars|piguet|vacheron|constantin|jaeger|lecoultre|longines|tissot|seiko|citizen|casio|fossil|diesel|michael|kors|guess|tommy|hilfiger|calvin|klein|polo|ralph|lauren|hugo|boss|lacoste)\b',
+            # Remove punctuation
+            r'[,\.\-\(\)\[\]\/\\]',
+            # Remove excess spaces
+            r'\s+'
         ]
         
         for pattern in remove_patterns:
             core = re.sub(pattern, ' ', core, flags=re.IGNORECASE)
         
-        # Clean up whitespace
+        # Clean up whitespace and normalize
         core = ' '.join(core.split())
+        
+        # Further normalize common variations
+        core = re.sub(r'\bvitamin\s*([a-z])\b', r'vitamin\1', core)
+        core = re.sub(r'\bomega\s*(\d+)\b', r'omega\1', core)
+        core = re.sub(r'\bco\s*q\s*(\d+)\b', r'coq\1', core)
+        
         return core
     
     def _should_merge_groups(self, group1: str, group2: str) -> bool:
-        """Check if two groups should be merged based on similarity"""
+        """Check if two groups should be merged based on aggressive similarity"""
         # Extract core parts from group keys
         def extract_core(group_key):
             if group_key.startswith('product:'):
-                return group_key.split('_')[0].replace('product:', '')
-            return group_key
+                core = group_key.split('_')[0].replace('product:', '')
+            else:
+                core = group_key
+            
+            # Apply aggressive core identity extraction
+            return self._extract_core_identity(core)
         
         core1 = extract_core(group1)
         core2 = extract_core(group2)
         
-        # Use fuzzy matching with high threshold
-        similarity = fuzz.token_sort_ratio(core1, core2)
-        return similarity >= 85  # High threshold for automatic merging
+        # If cores are identical after aggressive normalization, merge
+        if core1 == core2 and core1.strip():
+            return True
+        
+        # Use multiple fuzzy matching algorithms for better coverage
+        token_sort_sim = fuzz.token_sort_ratio(core1, core2)
+        token_set_sim = fuzz.token_set_ratio(core1, core2)
+        ratio_sim = fuzz.ratio(core1, core2)
+        
+        # More aggressive thresholds for better grouping
+        max_similarity = max(token_sort_sim, token_set_sim, ratio_sim)
+        
+        # Lower threshold since we want more aggressive grouping
+        return max_similarity >= 75  # Reduced from 85 for more aggressive grouping
 
     async def _merge_similar_groups(self):
         """Merge similar product groups for better price comparison"""
@@ -379,8 +419,8 @@ class EnhancedProductProcessor:
                 # Calculate similarity score
                 similarity_score = self._calculate_group_similarity(group1, group2)
                 
-                # Merge if similarity is high enough
-                if similarity_score > 0.85:
+                # More aggressive merging threshold
+                if similarity_score > 0.75:  # Reduced from 0.85
                     merge_candidates.append((group1["id"], group2["id"], similarity_score))
                     logger.info(f"Merge candidate: '{group1['normalizedName']}' + '{group2['normalizedName']}' (score: {similarity_score:.3f})")
         
@@ -390,36 +430,74 @@ class EnhancedProductProcessor:
         return merge_candidates
 
     def _calculate_group_similarity(self, group1: Dict, group2: Dict) -> float:
-        """Calculate similarity between two groups"""
+        """Calculate similarity between two groups with aggressive matching"""
         
         # Extract core product names
         name1 = group1["normalizedName"].lower()
         name2 = group2["normalizedName"].lower()
         
         # Apply core product mappings to normalize
-        core_mappings = self.normalizer.core_product_mappings
+        core_mappings = getattr(self.normalizer, 'core_product_mappings', {})
         for original, normalized in core_mappings.items():
             name1 = name1.replace(original, normalized)
             name2 = name2.replace(original, normalized)
         
-        # Calculate text similarity
-        text_similarity = fuzz.token_sort_ratio(name1, name2) / 100.0
+        # Apply aggressive core identity extraction
+        core1 = self._extract_core_identity(name1)
+        core2 = self._extract_core_identity(name2)
         
-        # Boost score for exact core matches
-        if name1 == name2:
-            text_similarity = 1.0
+        # If cores are identical after aggressive normalization, very high similarity
+        if core1 == core2 and core1.strip():
+            text_similarity = 0.95
+        else:
+            # Use multiple fuzzy matching approaches
+            token_sort_sim = fuzz.token_sort_ratio(core1, core2) / 100.0
+            token_set_sim = fuzz.token_set_ratio(core1, core2) / 100.0
+            ratio_sim = fuzz.ratio(core1, core2) / 100.0
+            partial_sim = fuzz.partial_ratio(core1, core2) / 100.0
+            
+            # Take the maximum similarity for aggressive grouping
+            text_similarity = max(token_sort_sim, token_set_sim, ratio_sim, partial_sim)
         
-        # Check dosage compatibility
-        dosage_similarity = self._calculate_dosage_similarity(group1, group2)
+        # Dosage compatibility - less strict now
+        dosage_similarity = self._calculate_dosage_similarity_relaxed(group1, group2)
         
         # Check if they have different vendors (good for price comparison)
         vendor_overlap = set(group1.get("vendor_ids", [])) & set(group2.get("vendor_ids", []))
         vendor_bonus = 0.1 if len(vendor_overlap) < len(set(group1.get("vendor_ids", []))) else 0
         
-        # Final similarity score
-        similarity = (text_similarity * 0.7) + (dosage_similarity * 0.2) + vendor_bonus
+        # Final similarity score - prioritize text similarity more
+        similarity = (text_similarity * 0.8) + (dosage_similarity * 0.1) + vendor_bonus
         
         return min(similarity, 1.0)
+
+    def _calculate_dosage_similarity_relaxed(self, group1: Dict, group2: Dict) -> float:
+        """Calculate dosage similarity with relaxed rules for aggressive grouping"""
+        
+        dosage1 = group1.get("dosageValue")
+        dosage2 = group2.get("dosageValue")
+        unit1 = group1.get("dosageUnit")
+        unit2 = group2.get("dosageUnit")
+        
+        # If one or both have no dosage info, neutral similarity (don't penalize)
+        if not dosage1 or not dosage2:
+            return 0.7  # Higher than before for more aggressive grouping
+        
+        # Different units - still allow grouping but with moderate similarity
+        if unit1 != unit2:
+            return 0.6  # Higher than before (was 0.3)
+        
+        # Same units - very permissive ratio calculation
+        if unit1 == unit2:
+            ratio = min(float(dosage1), float(dosage2)) / max(float(dosage1), float(dosage2))
+            
+            # Much more permissive dosage variation for grouping
+            if ratio >= 0.1:  # Within 10x range (was 0.5 for 2x)
+                return 0.9
+            else:
+                return 0.7  # Still good even for very different dosages
+        
+        return 0.7  # Default to moderate similarity
 
     def _calculate_dosage_similarity(self, group1: Dict, group2: Dict) -> float:
         """Calculate dosage similarity between groups"""
@@ -531,27 +609,7 @@ class EnhancedProductProcessor:
             )
             return [dict(row) for row in rows]
 
-    async def _update_similarity_index(self):
-        """Update the similarity search index"""
-        logger.info("Updating similarity index")
-
-        async with self.pool.acquire() as conn:
-            rows = await conn.fetch(
-                """
-                SELECT id, "normalizedName" 
-                FROM "Product" 
-                WHERE "normalizedName" IS NOT NULL
-            """
-            )
-
-            products = [
-                {"id": row["id"], "normalized_name": row["normalizedName"]}
-                for row in rows
-            ]
-
-            self.matcher.build_index(products)
-
-        logger.info("Similarity index updated")
+    # Removed similarity index update - using database-only approach
 
     async def reprocess_all_products(self):
         """Reprocess all products with new grouping logic"""
