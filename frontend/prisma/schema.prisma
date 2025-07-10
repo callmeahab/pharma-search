@@ -1,9 +1,3 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -15,25 +9,21 @@ datasource db {
 
 model Vendor {
   id          String            @id @default(cuid())
-  name        String
-  website     String?
-  scraperFile String?
+  name        String            @unique
   logo        String?
   createdAt   DateTime          @default(now())
   updatedAt   DateTime          @updatedAt
+  scraperFile String?
+  website     String?
   Products    Product[]
   Locations   VendorLocations[]
-
-  @@unique([name])
 }
 
 model Category {
   id        String   @id @default(cuid())
-  name      String
+  name      String   @unique
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-
-  @@unique([name])
 }
 
 model VendorLocations {
@@ -47,120 +37,106 @@ model VendorLocations {
   latitude  Float
   longitude Float
   vendorId  String
-  vendor    Vendor   @relation(fields: [vendorId], references: [id])
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+  vendor    Vendor   @relation(fields: [vendorId], references: [id])
 }
 
 model Brand {
   id            String         @id @default(cuid())
   name          String         @unique
-  embedding     Bytes? // Store model embeddings for similarity search
-  products      Product[]
-  productGroups ProductGroup[]
+  embedding     Bytes?
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
+  products      Product[]
+  productGroups ProductGroup[]
 }
 
 model Unit {
   id            String         @id @default(cuid())
   name          String         @unique
-  products      Product[]
-  productGroups ProductGroup[]
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
+  products      Product[]
+  productGroups ProductGroup[]
 }
 
 model ProductName {
   id            String         @id @default(cuid())
   name          String         @unique
-  embedding     Bytes? // Store model embeddings for similarity search
-  products      Product[]
-  productGroups ProductGroup[]
+  embedding     Bytes?
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
+  products      Product[]
+  productGroups ProductGroup[]
 }
 
 model ProductGroup {
   id             String       @id @default(cuid())
   normalizedName String
   brandId        String?
-  brand          Brand?       @relation(fields: [brandId], references: [id])
   productNameId  String?
-  productName    ProductName? @relation(fields: [productNameId], references: [id])
   dosageValue    Decimal?
   dosageUnit     String?
   unitId         String?
-  unit           Unit?        @relation(fields: [unitId], references: [id])
   groupKey       String       @unique
   productCount   Int          @default(0)
-  products       Product[]
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
+  products       Product[]
+  brand          Brand?       @relation(fields: [brandId], references: [id])
+  productName    ProductName? @relation(fields: [productNameId], references: [id])
+  unit           Unit?        @relation(fields: [unitId], references: [id])
 
   @@index([groupKey])
 }
 
 model Product {
-  id            String   @id @default(cuid())
-  vendorId      String
-  vendor        Vendor   @relation(fields: [vendorId], references: [id])
-  price         Float
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-  title         String // Original or cleaned title
-  originalTitle String? // Keep original title if cleaned
-  category      String?
-  description   String?
-  link          String
-  thumbnail     String
-  photos        String
-
-  // New fields for ML-processed data
-  brandId         String?
-  brand           Brand?  @relation(fields: [brandId], references: [id])
-  brandConfidence Float? // Confidence score from ML model
-
-  quantity           Int? // Extracted quantity 
-  quantityConfidence Float? // Confidence score from ML model
-
-  unitId         String?
-  unit           Unit?   @relation(fields: [unitId], references: [id])
-  unitConfidence Float? // Confidence score from ML model
-
+  id                    String                   @id @default(cuid())
+  vendorId              String
+  price                 Float
+  createdAt             DateTime                 @default(now())
+  updatedAt             DateTime                 @updatedAt
+  title                 String
+  category              String?
+  link                  String
+  thumbnail             String
+  photos                String
+  brandConfidence       Float?
+  brandId               String?
+  description           String?
+  dosageUnit            String?
+  dosageValue           Decimal?
+  normalizedName        String?
+  originalTitle         String?
+  processedAt           DateTime?
+  productGroupId        String?
+  productNameConfidence Float?
   productNameId         String?
-  productName           ProductName? @relation(fields: [productNameId], references: [id])
-  productNameConfidence Float? // Confidence score from ML model
-
-  titleEmbedding Bytes? // Store model embeddings for similarity search
-  searchVector   Unsupported("tsvector")? // For PostgreSQL full-text search
-
-  // Additional fields from init.sql
-  normalizedName String?
-  productGroupId String?
-  productGroup   ProductGroup? @relation(fields: [productGroupId], references: [id])
-  processedAt    DateTime?
-  searchTokens   String[]
-  dosageValue    Decimal?
-  dosageUnit     String?
+  quantity              Int?
+  quantityConfidence    Float?
+  searchTokens          String[]
+  searchVector          Unsupported("tsvector")?
+  titleEmbedding        Bytes?
+  unitConfidence        Float?
+  unitId                String?
+  brand                 Brand?                   @relation(fields: [brandId], references: [id])
+  productGroup          ProductGroup?            @relation(fields: [productGroupId], references: [id])
+  productName           ProductName?             @relation(fields: [productNameId], references: [id])
+  unit                  Unit?                    @relation(fields: [unitId], references: [id])
+  vendor                Vendor                   @relation(fields: [vendorId], references: [id])
 
   @@unique([title, vendorId], name: "title_vendorId")
   @@index([searchVector], type: Gin)
   @@index([productGroupId])
   @@index([normalizedName])
   @@index([searchTokens], type: Gin)
-  @@index([title, normalizedName])
-  @@index([productGroupId, price])
-  @@index([brandId, price])
-  @@index([vendorId, price])
 }
 
 model User {
   id        String   @id @default(cuid())
   name      String
-  email     String
+  email     String   @unique
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-
-  @@unique([email])
 }
