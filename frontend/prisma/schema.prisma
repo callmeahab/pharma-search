@@ -43,53 +43,31 @@ model VendorLocations {
 }
 
 model Brand {
-  id            String         @id @default(cuid())
-  name          String         @unique
-  embedding     Bytes?
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
-  products      Product[]
-  productGroups ProductGroup[]
+  id        String    @id @default(cuid())
+  name      String    @unique
+  embedding Bytes?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  products  Product[]
 }
 
 model Unit {
-  id            String         @id @default(cuid())
-  name          String         @unique
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
-  products      Product[]
-  productGroups ProductGroup[]
+  id        String    @id @default(cuid())
+  name      String    @unique
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  products  Product[]
 }
 
 model ProductName {
-  id            String         @id @default(cuid())
-  name          String         @unique
-  embedding     Bytes?
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
-  products      Product[]
-  productGroups ProductGroup[]
+  id        String    @id @default(cuid())
+  name      String    @unique
+  embedding Bytes?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  products  Product[]
 }
 
-model ProductGroup {
-  id             String       @id @default(cuid())
-  normalizedName String
-  brandId        String?
-  productNameId  String?
-  dosageValue    Decimal?
-  dosageUnit     String?
-  unitId         String?
-  groupKey       String       @unique
-  productCount   Int          @default(0)
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
-  products       Product[]
-  brand          Brand?       @relation(fields: [brandId], references: [id])
-  productName    ProductName? @relation(fields: [productNameId], references: [id])
-  unit           Unit?        @relation(fields: [unitId], references: [id])
-
-  @@index([groupKey])
-}
 
 model Product {
   id                    String                   @id @default(cuid())
@@ -110,7 +88,6 @@ model Product {
   normalizedName        String?
   originalTitle         String?
   processedAt           DateTime?
-  productGroupId        String?
   productNameConfidence Float?
   productNameId         String?
   quantity              Int?
@@ -121,14 +98,12 @@ model Product {
   unitConfidence        Float?
   unitId                String?
   brand                 Brand?                   @relation(fields: [brandId], references: [id])
-  productGroup          ProductGroup?            @relation(fields: [productGroupId], references: [id])
   productName           ProductName?             @relation(fields: [productNameId], references: [id])
   unit                  Unit?                    @relation(fields: [unitId], references: [id])
   vendor                Vendor                   @relation(fields: [vendorId], references: [id])
 
   @@unique([title, vendorId], name: "title_vendorId")
   @@index([searchVector], type: Gin)
-  @@index([productGroupId])
   @@index([normalizedName])
   @@index([searchTokens], type: Gin)
 }

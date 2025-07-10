@@ -6,7 +6,10 @@ from unidecode import unidecode
 import logging
 from rapidfuzz import fuzz
 
-from .models import ExtractedAttributes, ProcessedProduct
+try:
+    from .models import ExtractedAttributes, ProcessedProduct
+except ImportError:
+    from models import ExtractedAttributes, ProcessedProduct
 
 logger = logging.getLogger(__name__)
 
