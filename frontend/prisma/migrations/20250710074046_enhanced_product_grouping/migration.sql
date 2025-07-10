@@ -1,8 +1,7 @@
--- Database migration for enhanced product grouping
--- Run this script to add necessary columns and indexes
+-- Enhanced product grouping migration
+-- Migrated from backend/grouping_migration.sql
 
--- Enable extensions for better search
-CREATE EXTENSION IF NOT EXISTS pg_trgm;
+-- Enable extensions for better search (pg_trgm already added, keeping uuid-ossp)
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
 -- Add new columns to ProductGroup for enhanced grouping
@@ -26,56 +25,56 @@ ADD COLUMN IF NOT EXISTS "formCategory" TEXT,
 ADD COLUMN IF NOT EXISTS "dosageRange" TEXT;
 
 -- Create indexes for better performance
-CREATE INDEX CONCURRENTLY IF NOT EXISTS "idx_product_similarity_key" 
+CREATE INDEX IF NOT EXISTS "idx_product_similarity_key" 
 ON "Product" ("similarityKey") WHERE "similarityKey" IS NOT NULL;
 
-CREATE INDEX CONCURRENTLY IF NOT EXISTS "idx_product_core_identity" 
+CREATE INDEX IF NOT EXISTS "idx_product_core_identity" 
 ON "Product" ("coreProductIdentity") WHERE "coreProductIdentity" IS NOT NULL;
 
-CREATE INDEX CONCURRENTLY IF NOT EXISTS "idx_product_dosage_range" 
+CREATE INDEX IF NOT EXISTS "idx_product_dosage_range" 
 ON "Product" ("dosageRange") WHERE "dosageRange" IS NOT NULL;
 
-CREATE INDEX CONCURRENTLY IF NOT EXISTS "idx_productgroup_similarity_key" 
+CREATE INDEX IF NOT EXISTS "idx_productgroup_similarity_key" 
 ON "ProductGroup" ("similarityKey") WHERE "similarityKey" IS NOT NULL;
 
-CREATE INDEX CONCURRENTLY IF NOT EXISTS "idx_productgroup_core_identity" 
+CREATE INDEX IF NOT EXISTS "idx_productgroup_core_identity" 
 ON "ProductGroup" ("coreProductIdentity") WHERE "coreProductIdentity" IS NOT NULL;
 
 -- Trigram indexes for fuzzy searching
-CREATE INDEX CONCURRENTLY IF NOT EXISTS "idx_product_title_trgm" 
+CREATE INDEX IF NOT EXISTS "idx_product_title_trgm" 
 ON "Product" USING gin (title gin_trgm_ops);
 
-CREATE INDEX CONCURRENTLY IF NOT EXISTS "idx_product_normalized_trgm" 
+CREATE INDEX IF NOT EXISTS "idx_product_normalized_trgm" 
 ON "Product" USING gin ("normalizedName" gin_trgm_ops);
 
-CREATE INDEX CONCURRENTLY IF NOT EXISTS "idx_brand_name_trgm" 
+CREATE INDEX IF NOT EXISTS "idx_brand_name_trgm" 
 ON "Brand" USING gin (name gin_trgm_ops);
 
-CREATE INDEX CONCURRENTLY IF NOT EXISTS "idx_productgroup_normalized_trgm" 
+CREATE INDEX IF NOT EXISTS "idx_productgroup_normalized_trgm" 
 ON "ProductGroup" USING gin ("normalizedName" gin_trgm_ops);
 
 -- GIN indexes for array searching
-CREATE INDEX CONCURRENTLY IF NOT EXISTS "idx_product_search_tokens_gin" 
+CREATE INDEX IF NOT EXISTS "idx_product_search_tokens_gin" 
 ON "Product" USING gin ("searchTokens");
 
 -- Composite indexes for common query patterns
-CREATE INDEX CONCURRENTLY IF NOT EXISTS "idx_product_vendor_group" 
+CREATE INDEX IF NOT EXISTS "idx_product_vendor_group" 
 ON "Product" ("vendorId", "productGroupId") WHERE "productGroupId" IS NOT NULL;
 
-CREATE INDEX CONCURRENTLY IF NOT EXISTS "idx_product_price_group" 
+CREATE INDEX IF NOT EXISTS "idx_product_price_group" 
 ON "Product" ("productGroupId", "price") WHERE "productGroupId" IS NOT NULL;
 
-CREATE INDEX CONCURRENTLY IF NOT EXISTS "idx_product_vendor_price" 
+CREATE INDEX IF NOT EXISTS "idx_product_vendor_price" 
 ON "Product" ("vendorId", "price");
 
 -- Case-insensitive text search indexes
-CREATE INDEX CONCURRENTLY IF NOT EXISTS "idx_product_title_lower" 
+CREATE INDEX IF NOT EXISTS "idx_product_title_lower" 
 ON "Product" (lower(title));
 
-CREATE INDEX CONCURRENTLY IF NOT EXISTS "idx_product_normalized_lower" 
+CREATE INDEX IF NOT EXISTS "idx_product_normalized_lower" 
 ON "Product" (lower("normalizedName")) WHERE "normalizedName" IS NOT NULL;
 
-CREATE INDEX CONCURRENTLY IF NOT EXISTS "idx_brand_name_lower" 
+CREATE INDEX IF NOT EXISTS "idx_brand_name_lower" 
 ON "Brand" (lower(name));
 
 -- Create materialized view for fast group statistics
@@ -266,16 +265,3 @@ JOIN (
     GROUP BY "productGroupId"
 ) group_stats ON p."productGroupId" = group_stats."productGroupId"
 WHERE p."productGroupId" IS NOT NULL;
-
--- Initial data migration (optional - run if you want to update existing data)
--- This will be handled by the enhanced processor, but you can run it manually:
-
-/*
--- Reset processing status to reprocess with new grouping
-UPDATE "Product" SET "processedAt" = NULL WHERE "processedAt" IS NOT NULL;
-
--- Clear old groups to rebuild with new logic
-DELETE FROM "ProductGroup";
-
--- Note: After running this, you'll need to run the enhanced processor to rebuild groups
-*/

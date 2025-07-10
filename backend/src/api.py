@@ -242,7 +242,7 @@ async def price_comparison(group_id: str):
                     COUNT(DISTINCT p."vendorId") as vendor_count,
                     MIN(p.price) as min_price,
                     MAX(p.price) as max_price,
-                    AVG(p.price) as avg_price,
+                    AVG(p.price) as avg_price
                 FROM "ProductGroup" pg
                 JOIN "Product" p ON p."productGroupId" = pg.id
                 WHERE pg.id = $1

@@ -149,43 +149,74 @@ class SimilarityMatcher:
 
         query_lower = query.lower().strip()
         query_len = len(query_lower)
+        query_words = query_lower.split()
+        is_specific_product_query = len(query_words) >= 3 and any(len(word) > 2 for word in query_words)
         results = []
-
+        
+        # Early return for very short queries to avoid unnecessary semantic search
         if query_len <= 2:
-            effective_threshold = max(0.2, threshold * 0.3)
-        elif query_len <= 4:
+            return self._fuzzy_search(query, k, query_len)
+
+        if query_len <= 4:
             effective_threshold = max(0.4, threshold * 0.6)
         else:
             effective_threshold = threshold
 
-        # Check for exact word matches (whole word boundary)
-        exact_word_matches = []
-        for idx, name in enumerate(self.product_names):
-            name_lower = name.lower()
+        # For specific product queries, prioritize phrase matching
+        if is_specific_product_query:
+            phrase_matches = []
+            for idx, name in enumerate(self.product_names):
+                name_lower = name.lower()
+                
+                # Exact phrase match
+                if query_lower in name_lower:
+                    phrase_matches.append((self.product_ids[idx], 1.0, name))
+                # High similarity for phrase-like matches
+                elif any(word in name_lower for word in query_words if len(word) > 2):
+                    # Count meaningful word matches
+                    meaningful_words = [w for w in query_words if len(w) > 2]
+                    matched_words = sum(1 for w in meaningful_words if w in name_lower)
+                    if matched_words >= 2:  # At least 2 meaningful words match
+                        score = 0.9 * (matched_words / len(meaningful_words))
+                        phrase_matches.append((self.product_ids[idx], score, name))
+            
+            if phrase_matches:
+                results.extend(phrase_matches)
+                # For specific queries, reduce the weight of fuzzy/semantic results
+                fuzzy_results = self._fuzzy_search(query, k // 2, query_len)
+                semantic_results = self._semantic_search(query, k // 2, query_len)
+            else:
+                fuzzy_results = self._fuzzy_search(query, k, query_len)
+                semantic_results = self._semantic_search(query, k, query_len)
+        else:
+            # Original logic for non-specific queries
+            # Check for exact word matches (whole word boundary)
+            exact_word_matches = []
+            for idx, name in enumerate(self.product_names):
+                name_lower = name.lower()
 
-            if query_len <= 3:
+                if query_len <= 3:
+                    words = name_lower.split()
+                    if any(word.startswith(query_lower) for word in words):
+                        exact_word_matches.append((self.product_ids[idx], 0.9, name))
+                    elif name_lower.startswith(query_lower):
+                        exact_word_matches.append((self.product_ids[idx], 0.95, name))
+
                 words = name_lower.split()
-                if any(word.startswith(query_lower) for word in words):
-                    exact_word_matches.append((self.product_ids[idx], 0.9, name))
-                elif name_lower.startswith(query_lower):
+                if query_lower in words:
+                    exact_word_matches.append((self.product_ids[idx], 1.0, name))
+                elif (
+                    f" {query_lower} " in f" {name_lower} "
+                    or name_lower.startswith(f"{query_lower}")
+                    or name_lower.endswith(f" {query_lower}")
+                ):
                     exact_word_matches.append((self.product_ids[idx], 0.95, name))
 
-            words = name_lower.split()
-            if query_lower in words:
-                exact_word_matches.append((self.product_ids[idx], 1.0, name))
-            elif (
-                f" {query_lower} " in f" {name_lower} "
-                or name_lower.startswith(f"{query_lower}")
-                or name_lower.endswith(f" {query_lower}")
-            ):
-                exact_word_matches.append((self.product_ids[idx], 0.95, name))
+            if exact_word_matches:
+                results.extend(exact_word_matches)
 
-        if exact_word_matches:
-            results.extend(exact_word_matches)
-
-        fuzzy_results = self._fuzzy_search(query, k, query_len)
-
-        semantic_results = self._semantic_search(query, k, query_len)
+            fuzzy_results = self._fuzzy_search(query, k, query_len)
+            semantic_results = self._semantic_search(query, k, query_len)
 
         combined = self._combine_and_deduplicate_results(results + fuzzy_results + semantic_results, effective_threshold)
         return combined[:k]
