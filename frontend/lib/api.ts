@@ -345,3 +345,162 @@ export async function rebuildSearchIndex(): Promise<{ status: string; message: s
 
   return response.json();
 }
+
+// New Recommendation API Functions
+
+export interface SearchSuggestion {
+  text: string;
+  frequency: number;
+  type: string;
+}
+
+export interface QueryEnhancements {
+  original_query: string;
+  corrected_query: string;
+  synonyms_added: string[];
+  typos_corrected: string[];
+  suggestions: string[];
+  expanded_terms: string[];
+}
+
+export interface BetterDeal {
+  product: Product;
+  savings: {
+    amount: number;
+    percentage: number;
+  };
+  similarity_score: number;
+  recommendation_reason: string;
+}
+
+export interface AlternativeProduct {
+  product: Product;
+  price_analysis: {
+    vs_average: number;
+    vs_median: number;
+    percentile: number;
+    is_bargain: boolean;
+  };
+  recommendation_reason: string;
+}
+
+export interface PriceAlert {
+  product: Product;
+  alert_type: string;
+  savings: {
+    amount: number;
+    percentage: number;
+  };
+  message: string;
+}
+
+export async function getSearchSuggestions(
+  query: string,
+  limit: number = 5
+): Promise<{ query: string; suggestions: SearchSuggestion[] }> {
+  const params = new URLSearchParams({
+    q: query,
+    limit: limit.toString(),
+  });
+
+  const response = await fetch(`${API_URL}/api/suggestions?${params}`);
+
+  if (!response.ok) {
+    throw new Error(`Suggestions failed: ${response.status} ${response.statusText}`);
+  }
+
+  return response.json();
+}
+
+export async function getRelatedSearches(
+  query: string,
+  limit: number = 5
+): Promise<{ query: string; related_searches: string[] }> {
+  const params = new URLSearchParams({
+    q: query,
+    limit: limit.toString(),
+  });
+
+  const response = await fetch(`${API_URL}/api/related-searches?${params}`);
+
+  if (!response.ok) {
+    throw new Error(`Related searches failed: ${response.status} ${response.statusText}`);
+  }
+
+  return response.json();
+}
+
+export async function getBetterDeals(
+  productId: string,
+  similarityThreshold: number = 0.8
+): Promise<{ product_id: string; better_deals: BetterDeal[]; count: number }> {
+  const params = new URLSearchParams({
+    similarity_threshold: similarityThreshold.toString(),
+  });
+
+  const response = await fetch(`${API_URL}/api/better-deals/${productId}?${params}`);
+
+  if (!response.ok) {
+    throw new Error(`Better deals failed: ${response.status} ${response.statusText}`);
+  }
+
+  return response.json();
+}
+
+export async function getCheaperAlternatives(
+  query: string,
+  priceLimit?: number,
+  limit: number = 10
+): Promise<{ query: string; price_limit?: number; alternatives: AlternativeProduct[]; count: number }> {
+  const params = new URLSearchParams({
+    q: query,
+    limit: limit.toString(),
+  });
+
+  if (priceLimit !== undefined) {
+    params.append('price_limit', priceLimit.toString());
+  }
+
+  const response = await fetch(`${API_URL}/api/cheaper-alternatives?${params}`);
+
+  if (!response.ok) {
+    throw new Error(`Cheaper alternatives failed: ${response.status} ${response.statusText}`);
+  }
+
+  return response.json();
+}
+
+export async function trackPriceDrops(
+  productIds: string[],
+  daysBack: number = 30
+): Promise<{ product_ids: string[]; price_alerts: PriceAlert[]; count: number }> {
+  const params = new URLSearchParams({
+    days_back: daysBack.toString(),
+  });
+
+  const response = await fetch(`${API_URL}/api/price-alerts?${params}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(productIds),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Price tracking failed: ${response.status} ${response.statusText}`);
+  }
+
+  return response.json();
+}
+
+export async function getPriceInsights(
+  groupId: string
+): Promise<{ group_id: string; insights: any }> {
+  const response = await fetch(`${API_URL}/api/price-insights/${groupId}`);
+
+  if (!response.ok) {
+    throw new Error(`Price insights failed: ${response.status} ${response.statusText}`);
+  }
+
+  return response.json();
+}
