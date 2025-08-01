@@ -65,9 +65,28 @@ async function scrapePage(
         if (rsdPriceText) {
           const match = rsdPriceText.match(/≈\(([\d.,]+) RSD\)/);
           if (match) {
-            // Remove thousands separator (dot) and convert comma to dot for decimals
-            const normalized = match[1].replace(/\.(?=\d{3}(\D|$))/g, '').replace(',', '.');
-            rsdPrice = parseFloat(normalized);
+            const priceText = match[1];
+            let normalized = priceText;
+
+// Remove currency symbols and trim
+            normalized = normalized.replace(/[^\d.,]/g, '').trim();
+
+            if (normalized.includes(',') && normalized.includes('.')) {
+              // Assume comma is thousand separator, dot is decimal
+              normalized = normalized.split('.')[0].replace(/,/g, '');
+            } else if (normalized.includes(',') && !normalized.includes('.')) {
+              // Assume comma is decimal separator
+              normalized = normalized.split(',')[0].replace(/\./g, '');
+            } else if (normalized.includes('.')) {
+              // Assume dot is decimal separator
+              normalized = normalized.split('.')[0].replace(/,/g, '');
+            } else {
+              // No decimal, just remove any stray separators
+              normalized = normalized.replace(/[^\d]/g, '');
+            }
+
+            rsdPrice = parseInt(normalized, 10);
+
           }
         }
         // Link and image
@@ -175,9 +194,27 @@ async function scrapeMultipleBaseUrls(): Promise<Product[]> {
             if (rsdPriceText) {
               const match = rsdPriceText.match(/≈\(([\d.,]+) RSD\)/);
               if (match) {
-                // Remove thousands separator (dot) and convert comma to dot for decimals
-                const normalized = match[1].replace(/\.(?=\d{3}(\D|$))/g, '').replace(',', '.');
-                rsdPrice = parseFloat(normalized);
+                const priceText = match[1];
+                let normalized = priceText;
+
+// Remove currency symbols and trim
+                normalized = normalized.replace(/[^\d.,]/g, '').trim();
+
+                if (normalized.includes(',') && normalized.includes('.')) {
+                  // Assume comma is thousand separator, dot is decimal
+                  normalized = normalized.split('.')[0].replace(/,/g, '');
+                } else if (normalized.includes(',') && !normalized.includes('.')) {
+                  // Assume comma is decimal separator
+                  normalized = normalized.split(',')[0].replace(/\./g, '');
+                } else if (normalized.includes('.')) {
+                  // Assume dot is decimal separator
+                  normalized = normalized.split('.')[0].replace(/,/g, '');
+                } else {
+                  // No decimal, just remove any stray separators
+                  normalized = normalized.replace(/[^\d]/g, '');
+                }
+
+                rsdPrice = parseInt(normalized, 10);
               }
             }
             // Link and image
