@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -33,6 +33,7 @@ const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
   showPriceComparison = false,
 }) => {
   const { isInWishlist, toggleWishlist } = useWishlist();
+  const [imageError, setImageError] = useState(false);
 
   if (!product) return null;
 
@@ -51,7 +52,7 @@ const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-w-4xl max-h-[95vh] overflow-y-auto">
         <div className="absolute right-4 top-4 flex items-center space-x-2">
           <button
             onClick={handleWishClick}
@@ -94,9 +95,10 @@ const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
             <div className="flex flex-col space-y-4">
               <div className="aspect-square w-full overflow-hidden rounded-lg">
                 <img
-                  src={product.image}
+                  src={imageError ? "/medicine-placeholder.svg" : product.image}
                   alt={product.name}
                   className="h-full w-full object-cover"
+                  onError={() => setImageError(true)}
                 />
               </div>
 
@@ -104,7 +106,7 @@ const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
                 <div className="flex justify-between items-center">
                   <div>
                     <p className="text-sm text-gray-500 dark:text-gray-300">
-                      Price Range
+                      Raspon cena
                     </p>
                     <div className="text-xl font-bold text-health-primary dark:text-green-400">
                       {formatPrice(lowestPrice)} - {formatPrice(highestPrice)}
@@ -114,7 +116,7 @@ const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
                     <div className="flex flex-col items-center bg-white dark:bg-gray-800 px-4 py-2 rounded-lg shadow-sm">
                       <div className="text-sm text-gray-500 dark:text-gray-300 flex items-center">
                         <Percent size={14} className="mr-1 text-red-500" />
-                        Save up to
+                        Uštedi do
                       </div>
                       <div className="text-xl font-bold text-red-500">
                         {savingsPercentage}%
@@ -127,23 +129,23 @@ const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
               <div className="bg-gray-100 dark:bg-gray-800 rounded-lg p-4 flex items-center justify-center space-x-2">
                 <Store className="text-health-secondary" size={20} />
                 <span className="text-gray-600 dark:text-gray-300">
-                  Available at {product.prices.length} pharmacies
+                  Dostupno u {product.vendorCount || product.prices.length} apoteka
                 </span>
               </div>
             </div>
 
-            <div>
-              <DialogTabs defaultValue="comparison" className="w-full">
+            <div className="flex flex-col h-full">
+              <DialogTabs defaultValue="comparison" className="w-full h-full flex flex-col">
                 <DialogTabList className="grid w-full grid-cols-2">
                   <DialogTabTrigger value="comparison">
-                    Current Prices
+                    Trenutne cene
                   </DialogTabTrigger>
                   <DialogTabTrigger value="history">
-                    Price History
+                    Istorija cena
                   </DialogTabTrigger>
                 </DialogTabList>
-                <DialogTabContent value="comparison">
-                  <div className="bg-white dark:bg-gray-800 p-4 rounded-lg shadow">
+                <DialogTabContent value="comparison" className="h-[650px]">
+                  <div className="bg-white dark:bg-gray-800 p-4 rounded-lg shadow h-full overflow-y-auto">
                     <PriceComparison
                       prices={product.prices}
                       isInCard={false}
@@ -151,8 +153,10 @@ const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
                     />
                   </div>
                 </DialogTabContent>
-                <DialogTabContent value="history">
-                  <PriceHistoryChart prices={product.prices} isInCard={false} />
+                <DialogTabContent value="history" className="h-[650px]">
+                  <div className="bg-white dark:bg-gray-800 p-4 rounded-lg shadow h-full overflow-y-auto">
+                    <PriceHistoryChart prices={product.prices} isInCard={false} />
+                  </div>
                 </DialogTabContent>
               </DialogTabs>
             </div>

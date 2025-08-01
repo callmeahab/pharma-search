@@ -6,7 +6,6 @@ import Navbar from "../components/Navbar";
 import ProductList from "../components/ProductList";
 import SearchResults from "../components/SearchResults";
 import Footer from "../components/Footer";
-import CategoryFilter from "../components/CategoryFilter";
 import { trackSearch } from "../utils/analytics";
 import { useWishlist } from "../contexts/WishlistContext";
 import { initPriceChecking } from "../utils/priceNotifications";
@@ -29,7 +28,6 @@ export default function HomePage() {
   const { wishlist } = useWishlist();
 
   const [searchTerm, setSearchTerm] = useState(urlSearchTerm);
-  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
 
   // API search state
   const [apiSearchResults, setApiSearchResults] = useState<SearchResult | null>(
@@ -82,7 +80,7 @@ export default function HomePage() {
     if (urlSearchTerm) {
       trackSearch(urlSearchTerm, 0); // Will be updated when results come in
     }
-  }, [urlSearchTerm, selectedCategory]);
+  }, [urlSearchTerm]);
 
   // Check for price changes when the component loads and when wishlist changes
   useEffect(() => {
@@ -163,8 +161,8 @@ export default function HomePage() {
 
   // Load more results
   const handleLoadMore = () => {
-    if (searchTerm || selectedCategory) {
-      performApiSearch(searchTerm || selectedCategory || "", true);
+    if (searchTerm) {
+      performApiSearch(searchTerm, true);
     }
   };
 
@@ -199,32 +197,9 @@ export default function HomePage() {
         handleUrlSearchChanged as EventListener
       );
     };
-  }, [selectedCategory]);
+  }, []);
 
-  const handleCategorySelect = (category: string | null) => {
-    setSelectedCategory(category);
-    setCurrentPage(1); // Reset pagination
 
-    if (category) {
-      // Perform API search for the selected category
-      performApiSearch(category);
-
-      // Track category filter as a search
-      trackSearch(
-        `Category: ${category}${searchTerm ? ` with term: ${searchTerm}` : ""}`,
-        0 // Will be updated when results come in
-      );
-    } else {
-      // If no category selected, either show search results or featured products
-      if (searchTerm && searchTerm.trim()) {
-        performApiSearch(searchTerm);
-      } else {
-        setUseApiSearch(false);
-        setApiSearchResults(null);
-        loadFeaturedProducts();
-      }
-    }
-  };
 
   // Calculate if there are more results to load
   const hasMoreResults =
@@ -232,8 +207,8 @@ export default function HomePage() {
 
   const totalProductsShown = apiSearchResults
     ? apiSearchResults.groups.flatMap((group) =>
-        convertProductGroupToProducts(group)
-      ).length
+      convertProductGroupToProducts(group)
+    ).length
     : 0;
 
   return (
@@ -243,20 +218,11 @@ export default function HomePage() {
       <main className="flex-grow container mx-auto px-4 py-8">
         {!searchTerm && <HeroSection />}
 
-        <section className="mb-8">
-          <CategoryFilter
-            onSelectCategory={handleCategorySelect}
-            selectedCategory={selectedCategory}
-          />
-        </section>
-
         <section>
           <div className="mb-6 flex justify-between items-center">
             <h2 className="text-2xl font-semibold text-gray-800 dark:text-gray-100">
               {searchTerm
                 ? `Rezultati za "${searchTerm}"`
-                : selectedCategory
-                ? `${selectedCategory} proizvodi`
                 : "Popularni proizvodi"}
             </h2>
             <div className="text-sm text-gray-500 dark:text-gray-400">
@@ -277,10 +243,9 @@ export default function HomePage() {
                   )}
                 </>
               ) : featuredProducts ? (
-                `${
-                  featuredProducts.groups.flatMap((group) =>
-                    convertProductGroupToProducts(group)
-                  ).length
+                `${featuredProducts.groups.flatMap((group) =>
+                  convertProductGroupToProducts(group)
+                ).length
                 } proizvoda pronađeno`
               ) : (
                 ""
@@ -343,8 +308,7 @@ export default function HomePage() {
                           Učitavanje...
                         </span>
                       ) : (
-                        `Učitaj još (${
-                          apiSearchResults.total - totalProductsShown
+                        `Učitaj još (${apiSearchResults.total - totalProductsShown
                         } preostalo)`
                       )}
                     </button>

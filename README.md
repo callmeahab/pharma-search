@@ -31,7 +31,7 @@ A full-stack application for searching and comparing pharmaceutical product pric
 3. Run with Docker Compose:
 
 \`\`\`bash
-docker-compose up -d
+docker-compose up
 \`\`\`
 
 4. Process products:
@@ -43,7 +43,25 @@ docker-compose exec backend python scripts/process_products.py
 5. Access the application:
    - Frontend: http://localhost:3000
    - API: http://localhost:8000/docs
+   - 
+### DB Startup
 
+Ensure you have a PostgreSQL database running. Update the `.env` files with your database credentials.
+```bash
+bunx prisma generate  # Generate Prisma client
+bunx prisma db push   # Push schema to database
+bunx prisma db seed   # Seed initial data
+```
+
+### Starting Services
+
+**Database Viewer (Prisma Studio)**
+
+```bash
+bunx prisma studio
+```
+
+Access at: http://localhost:5555
 ### Manual Setup
 
 #### Backend

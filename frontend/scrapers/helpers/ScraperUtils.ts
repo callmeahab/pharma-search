@@ -29,6 +29,7 @@ export class ScraperUtils {
     const userAgent =
       this.USER_AGENTS[Math.floor(Math.random() * this.USER_AGENTS.length)];
     await page.setExtraHTTPHeaders({ 'User-Agent': userAgent });
+    await page.setUserAgent(userAgent);
     await page.setDefaultNavigationTimeout(60000);
 
     // Set viewport size

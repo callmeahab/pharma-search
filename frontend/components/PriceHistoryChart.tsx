@@ -65,7 +65,7 @@ export const PriceHistoryChart: React.FC<PriceHistoryProps> = ({
   // Define configuration for the chart
   const config = {
     lowestPrice: {
-      label: "Lowest Price",
+      label: "Najniža cena",
       theme: {
         light: "#3EB75E", // health primary
         dark: "#3EB75E",
@@ -78,7 +78,7 @@ export const PriceHistoryChart: React.FC<PriceHistoryProps> = ({
       <div className="flex items-center gap-2 mb-3">
         <ChartLine size={18} className="text-health-primary" />
         <h4 className="text-lg font-medium dark:text-gray-200">
-          Price History
+          Istorija cena
         </h4>
       </div>
 
@@ -112,7 +112,7 @@ export const PriceHistoryChart: React.FC<PriceHistoryProps> = ({
             <Line
               type="monotone"
               dataKey="lowestPrice"
-              name="Lowest Price"
+              name="Najniža cena"
               stroke="#3EB75E"
               strokeWidth={2}
               dot={{ r: 3 }}

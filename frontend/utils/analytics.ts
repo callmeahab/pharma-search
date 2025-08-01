@@ -1,5 +1,10 @@
 
 import ReactGA from "react-ga4";
+declare global {
+  interface Window {
+    dataLayer: any[];
+  }
+}
 
 // Cookie consent state - default to true as analytics cookies are required
 let cookieConsentGiven = true;
@@ -9,7 +14,7 @@ export const setCookieConsent = (hasConsent: boolean) => {
   cookieConsentGiven = true; // Always set to true as analytics are required
   
   // Initialize GA if not already done
-  ReactGA.initialize("G-XXXXXXXXXX");
+  ReactGA.initialize("G-WECSBGJW8J");
   // Create a new session
   ReactGA.set({ anonymizeIp: true });
   
@@ -20,7 +25,13 @@ export const setCookieConsent = (hasConsent: boolean) => {
 export const initGA = () => {
   // Always initialize with full functionality as analytics are required
   cookieConsentGiven = true;
-  ReactGA.initialize("G-XXXXXXXXXX");
+  ReactGA.initialize("G-WECSBGJW8J");
+
+  window.dataLayer = window.dataLayer || [];
+  window.dataLayer.push({
+    'gtm.start': new Date().getTime(),
+    event: 'gtm.js'
+  });
   
   // Update local storage to reflect that cookies are accepted
   localStorage.setItem('cookie-consent', 'accepted');
@@ -56,12 +67,31 @@ export const trackProductClick = (productId: string, productName: string, catego
 };
 
 // Track store link clicks
-export const trackStoreClick = (storeName: string, productName: string | null = null) => {
-  ReactGA.event({
+export const trackStoreClick = (storeName: string, targetUrl: string, productName: string | null = null) => {
+  ReactGA.gtag("event", "Store Link Click", {
     category: "Store",
-    action: "Store Link Click",
     label: storeName,
+    storeUrl: targetUrl,
+    productName
   });
+  // ReactGA.event({
+  //   category: "Store",
+  //   action: "Store Link Click",
+  //   label: storeName,
+  // },
+  // // ovo sa drugim parametrom ne radi, tj. sa ovim drugim viticastim zagradama
+  // {
+  //   storeUrl: targetUrl,
+  //   productName
+  // }
+  // );
+
+  // window.dataLayer.push({
+  //   event: "storeLinkClick",
+  //   url: targetUrl,
+  //   label: storeName,
+  //   productName: productName,
+  // });
   
   console.log(`[Analytics] Store click tracked: ${storeName}${productName ? ` for product ${productName}` : ''}`);
 };

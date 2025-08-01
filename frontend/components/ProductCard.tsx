@@ -15,6 +15,7 @@ interface ProductCardProps {
 const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
   const [showModal, setShowModal] = useState(false);
   const [showPriceComparison, setShowPriceComparison] = useState(false);
+  const [imageError, setImageError] = useState(false);
   const { isInWishlist, toggleWishlist } = useWishlist();
 
   // Find the lowest price
@@ -23,23 +24,7 @@ const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
   const priceDifference = highestPrice - lowestPrice;
   const savingsPercentage = Math.round((priceDifference / highestPrice) * 100);
 
-  // Category badge colors
-  const categoryColors: Record<string, string> = {
-    Vitamins: "bg-blue-100 text-blue-800",
-    Supplements: "bg-purple-100 text-purple-800",
-    Medications: "bg-red-100 text-red-800",
-    Wellness: "bg-green-100 text-green-800",
-    Fitness: "bg-orange-100 text-orange-800",
-    Natural: "bg-emerald-100 text-emerald-800",
-    Baby: "bg-pink-100 text-pink-800",
-    Food: "bg-yellow-100 text-yellow-800",
-    Medical: "bg-indigo-100 text-indigo-800",
-    Lab: "bg-gray-100 text-gray-800",
-  };
 
-  // Default color if category not found in mapping
-  const badgeClass =
-    categoryColors[product.category] || "bg-gray-100 text-gray-800";
 
   const handleCompareClick = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -72,13 +57,14 @@ const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
       >
         <div className="relative">
           <img
-            src={product.image}
+            src={imageError ? "/medicine-placeholder.svg" : product.image}
             alt={product.name}
-            className="w-full h-48 object-cover"
+            className="w-full h-48 object-contain"
+            onError={() => setImageError(true)}
           />
           {savingsPercentage > 10 && (
             <div className="absolute top-2 right-2 bg-red-500 text-white px-2 py-1 rounded-full text-xs font-bold">
-              Save up to {savingsPercentage}%
+              Uštedi do {savingsPercentage}%
             </div>
           )}
           <button
@@ -98,23 +84,16 @@ const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
         </div>
 
         <CardContent className="pt-4">
-          <div className="mb-2">
-            <span
-              className={`inline-block px-2 py-1 rounded-full text-xs font-medium ${badgeClass}`}
-            >
-              {product.category}
-            </span>
-          </div>
-          <h3 className="text-lg font-semibold mb-1">{product.name}</h3>
-          <p className="text-sm text-gray-500 mb-3">{product.description}</p>
+          <h3 className="text-lg font-semibold mb-1 line-clamp-2 h-12">{product.name}</h3>
+          <p className="text-sm text-gray-500 mb-3 line-clamp-2 h-10">{product.description}</p>
           <div className="flex justify-between items-center">
             <div>
-              <p className="text-sm text-gray-500">From</p>
+              <p className="text-sm text-gray-500">Već od</p>
               <p className="price-tag">{formatPrice(lowestPrice)}</p>
             </div>
             <div className="flex items-center text-sm text-gray-500">
               <Store size={16} className="mr-1 text-health-secondary" />
-              <span>{product.prices.length} stores</span>
+              <span>{product.vendorCount || product.prices.length} apoteka</span>
             </div>
           </div>
         </CardContent>
@@ -126,7 +105,7 @@ const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
             className="w-full text-health-primary dark:text-green-400 hover:bg-health-light dark:hover:bg-gray-700/50 dark:hover:text-green-300 border-health-light dark:border-gray-600 mb-2 bg-health-gray/50 dark:bg-gray-800/30"
             onClick={handleCompareClick}
           >
-            Compare prices
+            Uporedi cene
           </Button>
         </CardFooter>
       </Card>

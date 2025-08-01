@@ -7,7 +7,7 @@ import { ScraperUtils } from './helpers/ScraperUtils';
 puppeteer.use(StealthPlugin());
 
 const scrapedTitles = new Set<string>();
-const baseUrls = ['https://apotekakrsenkovic.rs/prodavnica'];
+const baseUrls = ['https://apotekakrsenkovic.rs/all-products'];
 
 async function scrapePage(page: Page, url: string): Promise<Product[]> {
   const allProducts: Product[] = [];
@@ -15,22 +15,22 @@ async function scrapePage(page: Page, url: string): Promise<Product[]> {
   try {
     await Promise.all([
       page.goto(url, { waitUntil: 'domcontentloaded' }),
-      page.waitForNavigation({ waitUntil: 'networkidle2' }).catch(() => {}),
+      page.waitForNavigation({ waitUntil: 'networkidle2' }).catch(() => { }),
     ]);
 
     await page
-      .waitForSelector('.product-content', {
+      .waitForSelector('.product-item', {
         timeout: 5000,
       })
       .catch(() => console.log('No products found on page'));
 
     await new Promise((resolve) => setTimeout(resolve, 1000));
 
-    const products = await page.$$eval('.product-content', (elements) => {
+    const products = await page.$$eval('.product-item', (elements) => {
       return elements
         .map((element) => {
-          const title = element.querySelector('h3')?.textContent?.trim() || '';
-          const offStockElement = element.querySelector('.aaa');
+          const title = element.querySelector('.product-item-name .product-item-link')?.textContent?.trim() || '';
+          const offStockElement = element.querySelector('.out-of-stock');
 
           if (offStockElement) {
             console.log(`Product out of stock: ${title}`);
@@ -40,8 +40,8 @@ async function scrapePage(page: Page, url: string): Promise<Product[]> {
           const price =
             element.querySelector('.price')?.textContent?.trim() || '';
           const link =
-            element.querySelector('.image > a')?.getAttribute('href') || '';
-          const imageElement = element.querySelector('.product-image > img');
+            element.querySelector('.product-item-photo')?.getAttribute('href') || '';
+          const imageElement = element.querySelector('.product-image-photo');
 
           let img =
             imageElement?.getAttribute('data-src') ||
@@ -81,7 +81,7 @@ async function scrapePage(page: Page, url: string): Promise<Product[]> {
 
 async function hasNextPage(page: Page): Promise<boolean> {
   try {
-    const nextButton = await page.$('.tb-icon-chevron-right');
+    const nextButton = await page.$('.item.pages-item-next');
     return nextButton !== null;
   } catch (error) {
     console.error(`Error checking for next page: ${error}`);
@@ -109,7 +109,7 @@ async function scrapeMultipleBaseUrls(): Promise<Product[]> {
       let pageNum = 1;
 
       while (true) {
-        const pageUrl = `${baseUrl}/page/${pageNum}?limit=100`;
+        const pageUrl = `${baseUrl}?p=${pageNum}`;
         console.log(`Scraping page: ${pageUrl}`);
 
         let retryCount = 0;

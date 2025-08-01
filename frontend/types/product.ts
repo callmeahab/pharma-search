@@ -2,6 +2,8 @@ export interface Price {
   store: string;
   price: number;
   inStock: boolean;
+  is_best_deal?: boolean;
+  diff_from_avg?: number;
 }
 
 export interface Product {
@@ -11,6 +13,7 @@ export interface Product {
   category: string;
   image: string;
   prices: Price[];
+  vendorCount?: number;
 }
 
 // Backend API interfaces
@@ -56,9 +59,9 @@ export function convertBackendProductToProduct(
   return {
     id: backendProduct.id,
     name: humanizeTitle(backendProduct.title),
-    description: `Available at ${group.vendor_count} pharmacies`,
-    category: "Supplements", // Default category since backend doesn't provide this
-    image: backendProduct.thumbnail || "/placeholder.svg",
+    description: `Dostupno u ${group.vendor_count} apoteka`,
+    category: "", // No category since we removed badges
+    image: backendProduct.thumbnail || "/medicine-placeholder.svg",
     prices: [
       {
         store: backendProduct.vendor_name,
@@ -66,6 +69,7 @@ export function convertBackendProductToProduct(
         inStock: true,
       },
     ],
+    vendorCount: group.vendor_count,
   };
 }
 
@@ -73,25 +77,26 @@ export function convertProductGroupToProducts(group: ProductGroup): Product[] {
   // Create one main product representing the group
   // Use the first product's title as the main name, or fall back to normalized name
   const firstProduct = group.products[0];
-  
+
   // Find the most common or representative title
   // For now, use the first product's title, but this could be enhanced
   // to find the most frequent title or the shortest/clearest one
-  const productTitle = firstProduct?.title 
+  const productTitle = firstProduct?.title
     ? humanizeTitle(firstProduct.title)
     : humanizeTitle(group.normalized_name);
-  
+
   const mainProduct: Product = {
     id: group.id,
     name: productTitle,
-    description: `Available at ${group.vendor_count} pharmacies`,
-    category: "Supplements",
-    image: firstProduct?.thumbnail || "/placeholder.svg",
+    description: `${group.products.length} istih ili sličnih proizvoda`,
+    category: "",
+    image: firstProduct?.thumbnail || "/medicine-placeholder.svg",
     prices: group.products.map((p) => ({
       store: p.vendor_name,
       price: p.price,
       inStock: true,
     })),
+    vendorCount: group.vendor_count,
   };
 
   return [mainProduct];

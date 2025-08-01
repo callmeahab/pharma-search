@@ -37,7 +37,7 @@ async function scrapePage(
   try {
     await Promise.all([
       page.goto(url, { waitUntil: 'domcontentloaded' }),
-      page.waitForNavigation({ waitUntil: 'networkidle2' }).catch(() => {}),
+      page.waitForNavigation({ waitUntil: 'networkidle2' }).catch(() => { }),
     ]);
 
     // Check for empty message
@@ -48,41 +48,35 @@ async function scrapePage(
     }
 
     await page
-      .waitForSelector('.prod-item', {
+      .waitForSelector('.product.product--grid', {
         timeout: 5000,
       })
       .catch(() => console.log('No products found on page'));
 
     await new Promise((resolve) => setTimeout(resolve, 1000));
 
-    const products = await page.$$eval('.prod-item', (elements) => {
+    const products = await page.$$eval('.product.product--grid', (elements) => {
       return elements
         .map((element) => {
           const title =
-            element.querySelector('.prod-title')?.textContent?.trim() || '';
-          const offStockElement = element.querySelector(
-            '.prod-price-on-request',
-          );
-
-          if (offStockElement) {
-            console.log(`Out of stock: ${title}`);
-            return null;
-          }
-
-          const price =
-            element.querySelector('.prod-price')?.textContent?.trim() || '';
+            element.querySelector('.product__name')?.textContent?.trim() || '';
           const link =
-            element.querySelector('.prod-item > a')?.getAttribute('href') || '';
-          const imgElement = element.querySelector('.prod-item > a > img');
+            element.querySelector('.product__name')?.getAttribute('href') || '';
+          const price =
+            element.querySelector('.product__info--price-gross span')?.textContent?.replace(/\s+RSD$/, '').trim() || '';
+          const img =
+            element.querySelector('.grid-image__image')?.getAttribute('src') || '';
+          const category =
+            element.querySelector('.product__category')?.textContent?.trim() || '';
+          const description =
+            element.querySelector('.product__description')?.textContent?.trim() || '';
 
-          let img =
-            imgElement?.getAttribute('data-src') ||
-            imgElement?.getAttribute('src') ||
-            '';
+          // If out of stock, you may need to check for a specific class or button, adjust as needed
+          // Example: if (element.querySelector('.out-of-stock-class')) return null;
 
-          return { title, price, link, img };
+          return { title, price, link, img, category, description };
         })
-        .filter((p): p is NonNullable<typeof p> => p !== null);
+        .filter((p) => p.title && p.price && p.link); // Filter out incomplete products
     });
 
     for (const product of products) {

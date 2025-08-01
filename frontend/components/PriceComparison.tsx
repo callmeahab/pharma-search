@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState } from "react";
 import { Price } from "@/types/product";
 import { cn, formatPrice } from "@/lib/utils";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -19,26 +19,27 @@ export const PriceComparison: React.FC<PriceComparisonProps> = ({
   isInCard = false,
   productName,
 }) => {
+  const [displayLimit, setDisplayLimit] = useState(isInCard ? 5 : 20);
   // Handle both legacy prices and new products format
-  const priceData = products 
+  const priceData = products
     ? products.map(product => ({
-        store: product.vendor.name,
-        price: product.price,
-        inStock: true,
-        link: product.link,
-        website: product.vendor.website,
-        is_best_deal: product.price_analysis.is_best_deal,
-        is_worst_deal: product.price_analysis.is_worst_deal,
-        diff_from_avg: product.price_analysis.diff_from_avg,
-      }))
-    : prices || [];
+      store: product.vendor.name,
+      price: product.price,
+      inStock: true,
+      link: "alooo",
+      website: product.vendor.website,
+      is_best_deal: product.price_analysis.is_best_deal,
+      is_worst_deal: product.price_analysis.is_worst_deal,
+      diff_from_avg: product.price_analysis.diff_from_avg,
+    }))
+    : (prices || []);
 
+  // console.log('priceData:', priceData);
   // Sort prices from lowest to highest
   const sortedPrices = [...priceData].sort((a, b) => a.price - b.price);
   const lowestPrice = sortedPrices[0]?.price || 0;
 
   // For large number of pharmacies, we'll display them in a grid or scrollable area
-  const displayLimit = isInCard ? 5 : 20;
   const hasMorePrices = sortedPrices.length > displayLimit;
   const displayPrices = hasMorePrices
     ? sortedPrices.slice(0, displayLimit)
@@ -46,24 +47,16 @@ export const PriceComparison: React.FC<PriceComparisonProps> = ({
 
   const handleStoreClick = (price: any) => {
     // Track store link click
-    trackStoreClick(price.store, productName || null);
-
-    console.log(`Navigating to ${price.store} website`);
-    
-    // Use the actual product link if available, otherwise fallback to generic website
+    // Milose Markovicu, prosledi link od proizvoda sa BackendProduct u Product, zbog analitike
     const targetUrl = price.link || price.website || `https://www.${price.store.toLowerCase().replace(/\s+/g, "")}.com`;
+    trackStoreClick(price.store, targetUrl, productName || null);
+
+    // Use the actual product link if available, otherwise fallback to generic website
     window.open(targetUrl, "_blank");
   };
 
   const PriceList = () => (
-    <div
-      className={cn(
-        "space-y-2",
-        sortedPrices.length > 8 &&
-          !isInCard &&
-          "grid grid-cols-1 md:grid-cols-2 gap-2 space-y-0"
-      )}
-    >
+    <div className="space-y-2">
       {displayPrices.map((price, index) => (
         <button
           key={`${price.store}-${index}`}
@@ -119,7 +112,7 @@ export const PriceComparison: React.FC<PriceComparisonProps> = ({
                 +{formatPrice(price.price - lowestPrice)}
               </span>
             )}
-            
+
             {price.diff_from_avg && (
               <span className="text-xs text-gray-500 dark:text-gray-400">
                 {price.diff_from_avg > 0 ? '+' : ''}{formatPrice(price.diff_from_avg)} from avg
@@ -134,7 +127,7 @@ export const PriceComparison: React.FC<PriceComparisonProps> = ({
   return (
     <div className="w-full mt-2">
       <h4 className="text-lg font-medium mb-3 dark:text-gray-200">
-        Price Comparison
+        Poređenje cena
       </h4>
 
       {sortedPrices.length > 10 ? (
@@ -150,10 +143,13 @@ export const PriceComparison: React.FC<PriceComparisonProps> = ({
       )}
 
       {hasMorePrices && (
-        <div className="text-xs text-center mt-2 text-gray-500 dark:text-gray-400">
-          {isInCard
-            ? `Click to see all ${priceData.length} stores`
-            : `Showing ${displayPrices.length} of ${priceData.length} stores`}
+        <div className="text-center mt-4">
+          <button
+            onClick={() => setDisplayLimit(displayLimit + 10)}
+            className="px-4 py-2 bg-health-primary text-white rounded-md hover:bg-health-secondary transition-colors text-sm"
+          >
+            Učitaj još ({priceData.length - displayLimit} preostalo)
+          </button>
         </div>
       )}
     </div>

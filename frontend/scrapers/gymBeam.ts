@@ -10,6 +10,7 @@ puppeteer.use(StealthPlugin());
 const baseUrls = [
   'https://gymbeam.rs/sportska-ishrana',
   'https://gymbeam.rs/zdrava-hrana',
+  'https://gymbeam.rs/proteini',
 ];
 
 // Function to scrape a single page for products
@@ -28,61 +29,69 @@ async function scrapePage(
     const category =
       baseUrl.split('/').pop()?.split('-').slice(0, -1).join('-') || '';
 
-    // Update selector to match new HTML structure
-    await page.waitForSelector('[data-testid="link"]', {
+    // Wait for product links to appear
+    await page.waitForSelector('[data-testid="link"][id^="product_item_"]', {
       visible: true,
       timeout: 20000,
+    });
+    await new Promise(resolve => setTimeout(resolve, 5000));
+    // Scroll to bottom to trigger lazy loading
+    await page.evaluate(async () => {
+      window.scrollTo(0, document.body.scrollHeight);
+      await new Promise(resolve => setTimeout(resolve, 2000));
     });
 
     await ScraperUtils.delay(2000);
 
     if (await page.$('.captcha-container')) {
-      console.log('CAPTCHA detected, attempting solve...');
       const solved = await ScraperUtils.solveImageCaptcha(page);
       if (!solved) throw new Error('CAPTCHA solve failed');
     }
 
-    const products = await page.evaluate((categoryArg) => {
-      const productElements = document.querySelectorAll('[data-testid="link"]');
-      return Array.from(productElements)
-        .map((element) => {
-          // Check if product is out of stock
-          const outOfStock =
-            element.querySelector('.currently-not-available') !== null;
-          if (outOfStock) {
-            return null;
+    const extracted = await page.evaluate((categoryArg) => {
+      const productElements = document.querySelectorAll('[data-testid="link"][id^="product_item_"]');
+      return Array.from(productElements).map((element) => {
+        // Out of stock check
+        const outOfStock = element.querySelector('.currently-not-available') !== null;
+        // Name
+        const name = element
+          .querySelector('[data-test="recommended-products-title"] .line-clamp-2')
+          ?.textContent?.trim();
+        // RSD Price
+        const spanTexts = Array.from(element.querySelectorAll('span')).map(s => s.textContent);
+        // Extract RSD price from spanTexts
+        const rsdPriceText = spanTexts.find(t => t && /≈\([\d.,]+ RSD\)/.test(t));
+        let rsdPrice = 0;
+        if (rsdPriceText) {
+          const match = rsdPriceText.match(/≈\(([\d.,]+) RSD\)/);
+          if (match) {
+            // Remove thousands separator (dot) and convert comma to dot for decimals
+            const normalized = match[1].replace(/\.(?=\d{3}(\D|$))/g, '').replace(',', '.');
+            rsdPrice = parseFloat(normalized);
           }
-
-          const name = element
-            .querySelector('[data-test="recommended-products-title"]')
-            ?.textContent?.trim();
-          const rsdPriceElement = element
-            .querySelector('.text-grey-300.text-sm.font-normal')
-            ?.textContent?.trim();
-          const rsdPrice = rsdPriceElement
-            ? parseFloat(rsdPriceElement.replace(/[^\d.]/g, ''))
-            : 0;
-          const link = element.getAttribute('href');
-          const imageUrl = element.querySelector('img')?.getAttribute('src');
-
-          if (!name || !rsdPrice || !link || !imageUrl) {
-            return null;
-          }
-
-          return {
-            title: name,
-            price: rsdPrice.toString(),
-            link,
-            thumbnail: imageUrl,
-            photos: imageUrl,
-            category: categoryArg,
-          };
-        })
-        .filter(
-          (product): product is NonNullable<typeof product> => product !== null,
-        );
+        }
+        // Link and image
+        const link = element.getAttribute('href');
+        const imageUrl = element.querySelector('img')?.getAttribute('src');
+        return {
+          outOfStock,
+          name,
+          rsdPrice,
+          link,
+          imageUrl
+        };
+      });
     }, category);
-
+    const products = extracted
+      .filter(p => !p.outOfStock && p.name && p.rsdPrice && p.link && p.imageUrl)
+      .map(p => ({
+        title: p.name!,
+        price: p.rsdPrice.toString(),
+        link: p.link!,
+        thumbnail: p.imageUrl!,
+        photos: p.imageUrl!,
+        category,
+      }));
     return products;
   } catch (error) {
     console.error(`Error scraping page ${url}:`, error);
@@ -134,75 +143,73 @@ async function scrapeMultipleBaseUrls(): Promise<Product[]> {
         console.log('No cookie consent dialog found');
       }
 
-      // Wait for initial products to load
-      await page.waitForSelector('[data-testid="link"]', {
+      // Wait for product links to appear
+      await page.waitForSelector('[data-testid="link"][id^="product_item_"]', {
         visible: true,
         timeout: 20000,
+      });
+      await new Promise(resolve => setTimeout(resolve, 5000));
+      // Scroll to bottom to trigger lazy loading
+      await page.evaluate(async () => {
+        window.scrollTo(0, document.body.scrollHeight);
+        await new Promise(resolve => setTimeout(resolve, 2000));
       });
 
       let previousProductCount = 0;
       while (true) {
         // Get current products
-        const currentProducts = await page.evaluate(
-          (categoryArg) => {
-            const productElements = document.querySelectorAll(
-              '[data-testid="link"]',
-            );
-            return Array.from(productElements)
-              .map((element) => {
-                // Check if product is out of stock
-                const outOfStock =
-                  element.querySelector('.currently-not-available') !== null;
-                if (outOfStock) {
-                  return null;
-                }
-
-                const name = element
-                  .querySelector('[data-test="recommended-products-title"]')
-                  ?.textContent?.trim();
-                const rsdPriceElement = element
-                  .querySelector(
-                    '.text-sm.font-bold.text-secondary > .text-grey-300',
-                  )
-                  ?.textContent?.trim();
-                const rsdPrice = rsdPriceElement
-                  ? parseFloat(rsdPriceElement.replace(/[^\d.]/g, ''))
-                  : 0;
-                const link = element.getAttribute('href');
-                const imageUrl = element
-                  .querySelector('img')
-                  ?.getAttribute('src');
-
-                if (!name || !rsdPrice || !link || !imageUrl) {
-                  return null;
-                }
-
-                return {
-                  title: name,
-                  price: rsdPrice.toString(),
-                  link,
-                  thumbnail: imageUrl,
-                  photos: imageUrl,
-                  category: categoryArg,
-                };
-              })
-              .filter(
-                (product): product is NonNullable<typeof product> =>
-                  product !== null,
-              );
-          },
-          baseUrl.split('/').pop()?.split('-').slice(0, -1).join('-') || '',
-        );
-
+        const products = await page.evaluate((categoryArg) => {
+          const productElements = document.querySelectorAll('[data-testid="link"][id^="product_item_"]');
+          return Array.from(productElements).map((element) => {
+            // Out of stock check
+            const outOfStock = element.querySelector('.currently-not-available') !== null;
+            // Name
+            const name = element
+              .querySelector('[data-test="recommended-products-title"] .line-clamp-2')
+              ?.textContent?.trim();
+            // RSD Price
+            const spanTexts = Array.from(element.querySelectorAll('span')).map(s => s.textContent);
+            // Extract RSD price from spanTexts
+            const rsdPriceText = spanTexts.find(t => t && /≈\([\d.,]+ RSD\)/.test(t));
+            let rsdPrice = 0;
+            if (rsdPriceText) {
+              const match = rsdPriceText.match(/≈\(([\d.,]+) RSD\)/);
+              if (match) {
+                // Remove thousands separator (dot) and convert comma to dot for decimals
+                const normalized = match[1].replace(/\.(?=\d{3}(\D|$))/g, '').replace(',', '.');
+                rsdPrice = parseFloat(normalized);
+              }
+            }
+            // Link and image
+            const link = element.getAttribute('href');
+            const imageUrl = element.querySelector('img')?.getAttribute('src');
+            return {
+              outOfStock,
+              name,
+              rsdPrice,
+              link,
+              imageUrl
+            };
+          });
+        }, baseUrl.split('/').pop()?.split('-').slice(0, -1).join('-') || '');
+        // Now filter and map to products
+        const currentProducts = products
+          .filter(p => !p.outOfStock && p.name && p.rsdPrice && p.link && p.imageUrl)
+          .map(p => ({
+            title: p.name!,
+            price: p.rsdPrice.toString(),
+            link: p.link!,
+            thumbnail: p.imageUrl!,
+            photos: p.imageUrl!,
+            category: baseUrl.split('/').pop()?.split('-').slice(0, -1).join('-') || '',
+          }));
         // Only add new products
         const newProducts = currentProducts.slice(previousProductCount);
         allScrapedProducts = [...allScrapedProducts, ...newProducts];
         previousProductCount = currentProducts.length;
 
         // Check for and click "Load More" button
-        const loadMoreButton = await page.$(
-          'button[title="Prikaži više proizvoda"]',
-        );
+        const loadMoreButton = await page.$('button[title="Prikaži više proizvoda"]');
         if (!loadMoreButton) {
           console.log('No more products to load');
           break;
@@ -217,7 +224,7 @@ async function scrapeMultipleBaseUrls(): Promise<Product[]> {
           await page.waitForFunction(
             (previousCount) => {
               const currentCount = document.querySelectorAll(
-                '[data-testid="link"]',
+                '[data-testid="link"][id^="product_item_"]',
               ).length;
               return currentCount > previousCount;
             },
@@ -229,6 +236,7 @@ async function scrapeMultipleBaseUrls(): Promise<Product[]> {
           break;
         }
       }
+      console.log('Total products found for this category:', allScrapedProducts.length);
     }
 
     return allScrapedProducts;

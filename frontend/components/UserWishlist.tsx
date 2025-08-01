@@ -64,9 +64,6 @@ const UserWishlist = () => {
               </p>
 
               <div className="flex items-center justify-between mb-3">
-                <span className="text-sm font-medium text-health-primary dark:text-health-accent">
-                  {product.category}
-                </span>
                 <span className="text-lg font-bold text-gray-900 dark:text-white">
                   {formatPrice(Math.min(...product.prices.map((p) => p.price)))}
                 </span>

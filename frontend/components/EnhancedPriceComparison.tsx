@@ -12,9 +12,9 @@ interface EnhancedPriceComparisonProps {
   className?: string;
 }
 
-export const EnhancedPriceComparison: React.FC<EnhancedPriceComparisonProps> = ({ 
-  groupId, 
-  className 
+export const EnhancedPriceComparison: React.FC<EnhancedPriceComparisonProps> = ({
+  groupId,
+  className
 }) => {
   const [data, setData] = useState<PriceComparisonResult | null>(null);
   const [loading, setLoading] = useState(true);
@@ -40,8 +40,8 @@ export const EnhancedPriceComparison: React.FC<EnhancedPriceComparisonProps> = (
     return (
       <Card className={className}>
         <CardHeader>
-          <CardTitle>Price Comparison</CardTitle>
-          <CardDescription>Loading comparison data...</CardDescription>
+          <CardTitle>Poređenje cena</CardTitle>
+          <CardDescription>Učitavanje podataka o poređenju...</CardDescription>
         </CardHeader>
         <CardContent>
           <div className="flex items-center justify-center py-8">
@@ -56,8 +56,8 @@ export const EnhancedPriceComparison: React.FC<EnhancedPriceComparisonProps> = (
     return (
       <Card className={className}>
         <CardHeader>
-          <CardTitle>Price Comparison</CardTitle>
-          <CardDescription>Error loading comparison data</CardDescription>
+          <CardTitle>Poređenje cena</CardTitle>
+          <CardDescription>Greška pri učitavanju podataka o poređenju</CardDescription>
         </CardHeader>
         <CardContent>
           <div className="text-red-500 flex items-center gap-2">
@@ -91,7 +91,7 @@ export const EnhancedPriceComparison: React.FC<EnhancedPriceComparisonProps> = (
                 {group.dosage_value}{group.dosage_unit}
               </span>
             )}
-            Available at {group.vendor_count} vendors
+            Dostupno u {group.vendor_count} apoteka
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -101,31 +101,31 @@ export const EnhancedPriceComparison: React.FC<EnhancedPriceComparisonProps> = (
               <Package className="h-4 w-4 text-blue-500" />
               <div>
                 <div className="text-2xl font-bold">{group.product_count}</div>
-                <div className="text-sm text-gray-600">Products</div>
+                <div className="text-sm text-gray-600">Proizvoda</div>
               </div>
             </div>
-            
+
             <div className="flex items-center gap-2">
               <Store className="h-4 w-4 text-green-500" />
               <div>
                 <div className="text-2xl font-bold">{group.vendor_count}</div>
-                <div className="text-sm text-gray-600">Vendors</div>
+                <div className="text-sm text-gray-600">Apoteka</div>
               </div>
             </div>
-            
+
             <div className="flex items-center gap-2">
               <Award className="h-4 w-4 text-yellow-500" />
               <div>
                 <div className="text-2xl font-bold">{formatPrice(group.price_stats.min)}</div>
-                <div className="text-sm text-gray-600">Best Price</div>
+                <div className="text-sm text-gray-600">Najbolja cena</div>
               </div>
             </div>
-            
+
             <div className="flex items-center gap-2">
               <TrendingUp className="h-4 w-4 text-red-500" />
               <div>
                 <div className="text-2xl font-bold">{formatPrice(group.price_stats.range)}</div>
-                <div className="text-sm text-gray-600">Price Range</div>
+                <div className="text-sm text-gray-600">Raspon cena</div>
               </div>
             </div>
           </div>
@@ -134,7 +134,7 @@ export const EnhancedPriceComparison: React.FC<EnhancedPriceComparisonProps> = (
           <div className="bg-gray-50 dark:bg-gray-800 rounded-lg p-4 mb-6">
             <h3 className="font-semibold mb-3 flex items-center gap-2">
               <TrendingUp className="h-4 w-4" />
-              Price Statistics
+              Statistika cena
             </h3>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div>
@@ -167,7 +167,7 @@ export const EnhancedPriceComparison: React.FC<EnhancedPriceComparisonProps> = (
                   </div>
                 </div>
               )}
-              
+
               {worstDealProduct && (
                 <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4">
                   <div className="flex items-center gap-2 mb-2">

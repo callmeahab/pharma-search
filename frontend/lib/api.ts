@@ -56,7 +56,7 @@ export interface SearchResult {
   total: number;
   offset: number;
   limit: number;
-  search_type_used?: string;
+  search_type_used?: "auto" | "similarity" | "database";
 }
 
 export async function searchProducts(
@@ -186,42 +186,7 @@ export async function getFeaturedProducts(
   }
 }
 
-export interface Category {
-  name: string;
-  count: number;
-}
 
-export async function getCategories(): Promise<Category[]> {
-  // Since the backend doesn't have a dedicated categories endpoint,
-  // we'll derive categories from search results
-  const commonCategories = [
-    "Vitamins",
-    "Supplements",
-    "Minerals",
-    "Proteins",
-    "Herbs",
-    "Probiotics",
-  ];
-
-  const categories: Category[] = [];
-
-  for (const categoryName of commonCategories) {
-    try {
-      const result = await searchProducts(categoryName.toLowerCase(), {
-        limit: 1,
-      });
-      categories.push({
-        name: categoryName,
-        count: result.total,
-      });
-    } catch (error) {
-      // Skip categories that fail to search
-      continue;
-    }
-  }
-
-  return categories.filter((cat) => cat.count > 0);
-}
 
 // New API functions for backend routes
 
