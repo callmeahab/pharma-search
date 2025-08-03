@@ -1,9 +1,7 @@
-import { PrismaClient } from "@prisma/client";
+import { apiClient } from './api-client';
 
-// Create a single shared Prisma client instance
-const prisma = new PrismaClient({
-  log: ["error", "warn"],
-});
+// Use API client to communicate with DuckDB backend
+const prisma = apiClient;
 
 export interface Product {
   title: string;
@@ -147,11 +145,7 @@ export async function insertData(allProducts: Product[], shopName: string) {
                 link: product.link,
                 thumbnail: product.thumbnail,
                 photos: product.photos,
-                vendor: {
-                  connect: {
-                    id: vendor.id,
-                  },
-                },
+                vendorId: vendor.id,
               },
             });
           }

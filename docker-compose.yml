@@ -21,12 +21,13 @@ services:
     ports:
       - "8000:8000"
     environment:
-      DATABASE_URL: postgresql://postgres:postgres@host.docker.internal:5432/pharmagician
+      DATABASE_URL: file:pharma_search.db
     # depends_on:
     #   db:
     #     condition: service_healthy
     volumes:
       - ./backend:/app
+      - ~/pharma_search.db:/app/pharma_search.db
     command: uvicorn src.api:app --host 0.0.0.0 --port 8000 --reload
 
   # frontend:

@@ -37,8 +37,18 @@ export interface ProductGroup {
     min: number;
     max: number;
     avg: number;
+    range?: number;
+    stddev?: number;
   };
   vendor_count: number;
+  product_count?: number;
+  price_analysis?: {
+    savings_potential: number;
+    price_variation: number;
+    below_avg_count: number;
+    above_avg_count: number;
+    has_multiple_vendors: boolean;
+  };
 }
 
 export interface SearchResult {

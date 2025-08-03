@@ -3,7 +3,7 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
+  provider = "sqlite"
   url      = env("DATABASE_URL")
 }
 
@@ -92,8 +92,7 @@ model Product {
   productNameId         String?
   quantity              Int?
   quantityConfidence    Float?
-  searchTokens          String[]
-  searchVector          Unsupported("tsvector")?
+  searchTokens          String?  // JSON string for SQLite compatibility
   titleEmbedding        Bytes?
   unitConfidence        Float?
   unitId                String?
@@ -103,9 +102,10 @@ model Product {
   vendor                Vendor                   @relation(fields: [vendorId], references: [id])
 
   @@unique([title, vendorId], name: "title_vendorId")
-  @@index([searchVector], type: Gin)
   @@index([normalizedName])
-  @@index([searchTokens], type: Gin)
+  @@index([brandId])
+  @@index([vendorId])
+  @@index([price])
 }
 
 model User {

@@ -1,11 +1,13 @@
 from fastapi import FastAPI, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 from typing import Optional, List
 import logging
 
 from .config import settings
-from .search_engine import PharmaSearchEngine
-from .product_processor import EnhancedProductProcessor
+from .search_engine_duckdb import DuckDBPharmaSearchEngine
+from .product_processor_duckdb import DuckDBProductProcessor
+from .database import get_db_pool
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -23,8 +25,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Initialize search engine
-search_engine = PharmaSearchEngine(settings.database_url)
+# Initialize DuckDB search engine
+db_path = settings.get_database_path()
+search_engine = DuckDBPharmaSearchEngine(db_path)
 
 
 @app.on_event("startup")
@@ -86,9 +89,6 @@ async def search(
         if brand_ids:
             filters["brand_ids"] = brand_ids
 
-        # Determine if we should force database search
-        force_db_search = search_type == "database"
-
         # Log search type for debugging
         logger.info(f"Search query: '{q}', type: {search_type}")
 
@@ -98,11 +98,8 @@ async def search(
             group_results=True,
             limit=limit,
             offset=offset,
-            force_db_search=force_db_search,
+            search_type=search_type,
         )
-
-        # Add search metadata to results
-        results["search_type_used"] = "database" if force_db_search else "hybrid"
 
         return results
     except Exception as e:
@@ -114,7 +111,9 @@ async def search(
 async def process_products(batch_size: int = Query(100, ge=10, le=1000)):
     """Trigger product processing"""
     try:
-        processor = EnhancedProductProcessor(settings.database_url)
+        db_path = settings.get_database_path()
+        
+        processor = DuckDBProductProcessor(db_path)
         await processor.connect()
 
         # In production, this should be a background task
@@ -122,7 +121,7 @@ async def process_products(batch_size: int = Query(100, ge=10, le=1000)):
 
         await processor.disconnect()
 
-        return {"status": "completed", "message": "Products processed with enhanced processor successfully"}
+        return {"status": "completed", "message": "Products processed with DuckDB processor successfully"}
     except Exception as e:
         logger.error(f"Processing error: {e}")
         raise HTTPException(status_code=500, detail="Processing failed")
@@ -132,12 +131,14 @@ async def process_products(batch_size: int = Query(100, ge=10, le=1000)):
 async def reprocess_all_products():
     """Reprocess all products with enhanced grouping (clears existing groups)"""
     try:
-        processor = EnhancedProductProcessor(settings.database_url)
+        db_path = settings.get_database_path()
+        
+        processor = DuckDBProductProcessor(db_path)
         await processor.connect()
 
         await processor.reprocess_all_products()
         await processor.disconnect()
-        return {"status": "completed", "message": "All products reprocessed with enhanced grouping"}
+        return {"status": "completed", "message": "All products reprocessed with DuckDB processor"}
     except Exception as e:
         logger.error(f"Reprocessing error: {e}")
         raise HTTPException(status_code=500, detail="Reprocessing failed")
@@ -147,8 +148,12 @@ async def reprocess_all_products():
 async def rebuild_search_index():
     """Force rebuild of the search index (ignores cache)"""
     try:
-        await search_engine.rebuild_index()
-        return {"status": "completed", "message": "Search index rebuilt successfully"}
+        # For DuckDB, we'll clear the cache and reinitialize FTS
+        search_engine._search_cache.clear()
+        # Reconnect to reinitialize FTS
+        await search_engine.disconnect()
+        await search_engine.connect()
+        return {"status": "completed", "message": "DuckDB search index rebuilt successfully"}
     except Exception as e:
         logger.error(f"Index rebuild error: {e}")
         raise HTTPException(status_code=500, detail="Index rebuild failed")
@@ -158,7 +163,9 @@ async def rebuild_search_index():
 async def analyze_processing():
     """Analyze product processing effectiveness"""
     try:
-        processor = EnhancedProductProcessor(settings.database_url)
+        db_path = settings.get_database_path()
+        
+        processor = DuckDBProductProcessor(db_path)
         await processor.connect()
 
         # Use the simplified analyzer from the new processor
@@ -169,38 +176,199 @@ async def analyze_processing():
         return {
             "status": "completed",
             "statistics": stats,
-            "message": "Now using dynamic grouping - no pre-computed groups needed"
+            "message": "DuckDB processing analysis completed"
         }
     except Exception as e:
         logger.error(f"Processing analysis error: {e}")
         raise HTTPException(status_code=500, detail="Processing analysis failed")
 
 
-@app.get("/api/price-comparison")
-async def price_comparison_dynamic(q: str):
-    """Get detailed price comparison using dynamic grouping"""
+@app.get("/api/price-comparison/{group_id}")
+async def get_price_comparison(group_id: str):
+    """Get detailed price comparison for a specific product group"""
     try:
-        search_engine = PharmaSearchEngine(settings.database_url)
-        await search_engine.connect()
-
-        # Use dynamic search to get grouped results
-        results = await search_engine.search(q, group_results=True, limit=10)
-        
-        await search_engine.disconnect()
-
-        if not results.get("groups"):
-            return {
-                "message": f"No products found for '{q}'",
-                "groups": []
-            }
-
-        return {
-            "query": q,
-            "groups": results["groups"],
-            "total_groups": len(results["groups"]),
-            "message": "Price comparison using dynamic grouping"
-        }
+        result = await search_engine.get_price_comparison(group_id)
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         logger.error(f"Price comparison error: {e}")
         raise HTTPException(status_code=500, detail="Price comparison failed")
+
+
+@app.get("/api/grouping-analysis")
+async def get_grouping_analysis():
+    """Get grouping analysis and statistics"""
+    try:
+        result = await search_engine.get_grouping_analysis()
+        return result
+    except Exception as e:
+        logger.error(f"Grouping analysis error: {e}")
+        raise HTTPException(status_code=500, detail="Grouping analysis failed")
+
+
+# New endpoints for scrapers
+@app.get("/api/vendors")
+async def get_vendors(
+    name: Optional[str] = Query(None),
+    limit: int = Query(10, ge=1, le=100)
+):
+    """Get vendors, optionally filtered by name"""
+    try:
+        db_pool = await get_db_pool()
+        async with db_pool.acquire() as conn:
+            if name:
+                vendors = await conn.execute(
+                    "SELECT * FROM Vendor WHERE name = ? LIMIT ?", 
+                    [name, limit]
+                )
+            else:
+                vendors = await conn.execute(
+                    "SELECT * FROM Vendor LIMIT ?", 
+                    [limit]
+                )
+            return vendors
+    except Exception as e:
+        logger.error(f"Vendor lookup error: {e}")
+        raise HTTPException(status_code=500, detail="Vendor lookup failed")
+
+
+@app.get("/api/products")
+async def get_products(
+    title: Optional[str] = Query(None),
+    vendorId: Optional[str] = Query(None),
+    orderBy: Optional[str] = Query(None),
+    limit: int = Query(10, ge=1, le=100)
+):
+    """Get products with optional filtering"""
+    try:
+        db_pool = await get_db_pool()
+        async with db_pool.acquire() as conn:
+            query = "SELECT * FROM Product WHERE 1=1"
+            params = []
+            
+            if title:
+                query += " AND title = ?"
+                params.append(title)
+            if vendorId:
+                query += " AND vendorId = ?"
+                params.append(vendorId)
+            if orderBy:
+                if orderBy.startswith("createdAt:"):
+                    direction = orderBy.split(":")[1].upper()
+                    if direction in ["ASC", "DESC"]:
+                        query += f" ORDER BY createdAt {direction}"
+            
+            query += " LIMIT ?"
+            params.append(limit)
+            
+            products = await conn.execute(query, params)
+            return products
+    except Exception as e:
+        logger.error(f"Product lookup error: {e}")
+        raise HTTPException(status_code=500, detail="Product lookup failed")
+
+
+@app.get("/api/products/count")
+async def get_product_count():
+    """Get total product count"""
+    try:
+        db_pool = await get_db_pool()
+        async with db_pool.acquire() as conn:
+            result = await conn.execute("SELECT COUNT(*) as count FROM Product")
+            return {"count": result[0]["count"] if result else 0}
+    except Exception as e:
+        logger.error(f"Product count error: {e}")
+        raise HTTPException(status_code=500, detail="Product count failed")
+
+
+class ProductCreate(BaseModel):
+    title: str
+    price: float
+    link: str
+    thumbnail: str
+    photos: str
+    vendorId: str
+    category: Optional[str] = None
+
+@app.post("/api/products")
+async def create_product(product: ProductCreate):
+    """Create a new product"""
+    try:
+        db_pool = await get_db_pool()
+        async with db_pool.acquire() as conn:
+            # Generate ID
+            import uuid
+            product_id = str(uuid.uuid4()).replace("-", "")
+            
+            from datetime import datetime
+            now = datetime.now().isoformat()
+            
+            await conn.execute(
+                """INSERT INTO Product 
+                   (id, title, price, link, thumbnail, photos, vendorId, category, createdAt, updatedAt)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                [product_id, product.title, product.price, product.link, product.thumbnail, 
+                 product.photos, product.vendorId, product.category, now, now]
+            )
+            return {"id": product_id, "status": "created"}
+    except Exception as e:
+        logger.error(f"Product creation error: {e}")
+        raise HTTPException(status_code=500, detail="Product creation failed")
+
+
+@app.patch("/api/products/{product_id}")
+async def update_product(
+    product_id: str,
+    price: Optional[float] = None,
+    category: Optional[str] = None
+):
+    """Update a product"""
+    try:
+        db_pool = await get_db_pool()
+        async with db_pool.acquire() as conn:
+            updates = []
+            params = []
+            
+            if price is not None:
+                updates.append("price = ?")
+                params.append(price)
+            if category is not None:
+                updates.append("category = ?")
+                params.append(category)
+            
+            if updates:
+                from datetime import datetime
+                now = datetime.now().isoformat()
+                updates.append("updatedAt = ?")
+                params.append(now)
+                params.append(product_id)
+                
+                query = f"UPDATE Product SET {', '.join(updates)} WHERE id = ?"
+                await conn.execute(query, params)
+            
+            return {"status": "updated"}
+    except Exception as e:
+        logger.error(f"Product update error: {e}")
+        raise HTTPException(status_code=500, detail="Product update failed")
+
+
+class BulkDeleteRequest(BaseModel):
+    ids: List[str]
+
+@app.post("/api/products/bulk-delete")
+async def bulk_delete_products(request: BulkDeleteRequest):
+    """Delete multiple products by IDs"""
+    try:
+        if not request.ids:
+            return {"deleted": 0}
+            
+        db_pool = await get_db_pool()
+        async with db_pool.acquire() as conn:
+            placeholders = ", ".join(["?" for _ in request.ids])
+            await conn.execute(f"DELETE FROM Product WHERE id IN ({placeholders})", request.ids)
+            return {"deleted": len(request.ids)}
+    except Exception as e:
+        logger.error(f"Bulk delete error: {e}")
+        raise HTTPException(status_code=500, detail="Bulk delete failed")
 

@@ -1,6 +1,5 @@
 "use client";
 
-import { Metadata } from "next";
 import React, { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Navbar from "@/components/Navbar";
@@ -9,11 +8,6 @@ import UserSettings from "@/components/UserSettings";
 import UserWishlist from "@/components/UserWishlist";
 import { Button } from "@/components/ui/button";
 import ProfileTabs from "@/components/ProfileTabs";
-
-export const metadata: Metadata = {
-  title: "Profil - Health Shop Savvy",
-  description: "Upravljajte svojim profilom na Health Shop Savvy platformi.",
-};
 
 export default function ProfilePage() {
   const router = useRouter();
