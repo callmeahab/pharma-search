@@ -129,13 +129,17 @@ const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
               <div className="bg-gray-100 dark:bg-gray-800 rounded-lg p-4 flex items-center justify-center space-x-2">
                 <Store className="text-health-secondary" size={20} />
                 <span className="text-gray-600 dark:text-gray-300">
-                  Dostupno u {product.vendorCount || product.prices.length} apoteka
+                  Dostupno u {product.vendorCount || product.prices.length}{" "}
+                  apoteka
                 </span>
               </div>
             </div>
 
             <div className="flex flex-col h-full">
-              <DialogTabs defaultValue="comparison" className="w-full h-full flex flex-col">
+              <DialogTabs
+                defaultValue="comparison"
+                className="w-full h-full flex flex-col"
+              >
                 <DialogTabList className="grid w-full grid-cols-2">
                   <DialogTabTrigger value="comparison">
                     Trenutne cene
@@ -155,7 +159,10 @@ const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
                 </DialogTabContent>
                 <DialogTabContent value="history" className="h-[650px]">
                   <div className="bg-white dark:bg-gray-800 p-4 rounded-lg shadow h-full overflow-y-auto">
-                    <PriceHistoryChart prices={product.prices} isInCard={false} />
+                    <PriceHistoryChart
+                      prices={product.prices}
+                      isInCard={false}
+                    />
                   </div>
                 </DialogTabContent>
               </DialogTabs>

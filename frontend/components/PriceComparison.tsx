@@ -26,7 +26,7 @@ export const PriceComparison: React.FC<PriceComparisonProps> = ({
       store: product.vendor.name,
       price: product.price,
       inStock: true,
-      link: "alooo",
+      link: product.link,
       website: product.vendor.website,
       is_best_deal: product.price_analysis.is_best_deal,
       is_worst_deal: product.price_analysis.is_worst_deal,

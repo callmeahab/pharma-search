@@ -2,6 +2,7 @@ export interface Price {
   store: string;
   price: number;
   inStock: boolean;
+  link?: string;
   is_best_deal?: boolean;
   diff_from_avg?: number;
 }
@@ -67,6 +68,7 @@ export function convertBackendProductToProduct(
         store: backendProduct.vendor_name,
         price: backendProduct.price,
         inStock: true,
+        link: backendProduct.link,
       },
     ],
     vendorCount: group.vendor_count,
@@ -95,6 +97,7 @@ export function convertProductGroupToProducts(group: ProductGroup): Product[] {
       store: p.vendor_name,
       price: p.price,
       inStock: true,
+      link: p.link,
     })),
     vendorCount: group.vendor_count,
   };
