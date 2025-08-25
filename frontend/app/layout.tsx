@@ -8,17 +8,16 @@ import { Analytics } from "../components/Analytics";
 import { Providers } from "../components/Providers";
 import "./globals.css";
 import type { Metadata } from "next";
-import Script from "next/script";
 
 export const metadata: Metadata = {
   title: "Apošteka",
   description:
     "Pronađite najbolje cene za zdravstvene suplemente, vitamine i farmaceutske proizvode u više prodavnica.",
   keywords:
-    "pharmacy, health supplements, vitamins, price comparison, health products",
-  authors: [{ name: "Health Shop Savvy" }],
+    "apoteka, lekovi, vitamini, suplementi, zdravstveni proizvodi, uporedjivanje cena, online kupovina, farmaceutski proizvodi, zdrava ishrana, wellness, dijetetski suplementi, prirodni lekovi, medicinski proizvodi, apotekarske usluge, zdravlje i nega",
+  authors: [{ name: "Kumovi" }],
   openGraph: {
-    title: "Health Shop Savvy - Compare Pharmacy Prices",
+    title: "Apošteka - Uporedi cene lekova i suplemenata",
     description:
       "Pronađite najbolje cene za zdravstvene suplemente, vitamine i farmaceutske proizvode u više prodavnica.",
     type: "website",
