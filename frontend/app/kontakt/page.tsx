@@ -162,7 +162,7 @@ export default function ContactPage() {
                   <div>
                     <p className="font-medium dark:text-gray-200">Adresa</p>
                     <p className="text-gray-600 dark:text-gray-300">
-                      Knez Mihailova 22
+                      WEB
                       <br />
                       11000 Beograd
                       <br />
