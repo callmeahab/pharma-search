@@ -89,9 +89,23 @@ echo "⚡ Step 7: PM2 Setup"
 echo "==================="
 bash "$APP_DIR/deploy/05-pm2-setup.sh"
 
+# Step 8: SSL Setup (Optional)
+echo ""
+echo "🔐 Step 8: SSL Certificate Setup"
+echo "==============================="
+echo "This will set up SSL certificate for aposteka.rs using Let's Encrypt"
+read -p "Do you want to set up SSL certificate now? (Y/n): " -n 1 -r
+echo
+if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+    bash "$APP_DIR/deploy/06-ssl-setup.sh"
+else
+    echo "⏭️ Skipping SSL setup - you can run it later with:"
+    echo "   bash $APP_DIR/deploy/06-ssl-setup.sh"
+fi
+
 # Final checks
 echo ""
-echo "🔍 Step 8: Final Checks"
+echo "🔍 Step 9: Final Checks"
 echo "======================"
 
 echo "🧪 Checking service status..."
@@ -180,7 +194,9 @@ echo ""
 echo "🎉 DEPLOYMENT COMPLETED SUCCESSFULLY!"
 echo "====================================="
 echo ""
-echo "🌐 Your application should now be running at: http://$(curl -s ifconfig.me 2>/dev/null || echo 'YOUR_SERVER_IP')"
+echo "🌐 Your application should now be running at:"
+echo "  • http://aposteka.rs (or https://aposteka.rs if SSL was set up)"
+echo "  • http://$(curl -s ifconfig.me 2>/dev/null || echo 'YOUR_SERVER_IP')"
 echo ""
 echo "📋 Important Information:"
 echo "  • Application Directory: $APP_DIR"
