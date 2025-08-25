@@ -39,6 +39,12 @@ PYTHONPATH="$APP_DIR/backend"
 LOG_LEVEL="info"
 LOG_DIR="$LOG_DIR"
 
+# SMTP Configuration
+SMTP_HOST="smtp.gmail.com"
+SMTP_PORT="587"
+SMTP_USER="apostekafm@gmail.com"
+SMTP_PASS="qloc tgzo oucr mrwh"
+
 # Note: Scrapers run locally, not on server
 EOF
 
@@ -62,6 +68,12 @@ NEXT_PUBLIC_API_URL=""
 
 # Node Environment
 NODE_ENV="production"
+
+# SMTP Configuration
+SMTP_HOST="smtp.gmail.com"
+SMTP_PORT="587"
+SMTP_USER="apostekafm@gmail.com"
+SMTP_PASS="qloc tgzo oucr mrwh"
 EOF
 
 chmod 600 "$APP_DIR/frontend/.env"

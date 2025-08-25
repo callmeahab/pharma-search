@@ -28,53 +28,7 @@ apt install -y \
     htop \
     ufw
 
-# Install Chrome dependencies for Puppeteer
-echo "🌐 Installing Chrome dependencies for Puppeteer..."
-apt install -y \
-    libasound2t64 \
-    libatk1.0-0t64 \
-    libc6 \
-    libcairo2 \
-    libcups2t64 \
-    libdbus-1-3 \
-    libexpat1 \
-    libfontconfig1 \
-    libgcc-s1 \
-    libgdk-pixbuf2.0-0 \
-    libglib2.0-0t64 \
-    libgtk-3-0t64 \
-    libnspr4 \
-    libpango-1.0-0 \
-    libpangocairo-1.0-0 \
-    libstdc++6 \
-    libx11-6 \
-    libx11-xcb1 \
-    libxcb1 \
-    libxcomposite1 \
-    libxcursor1 \
-    libxdamage1 \
-    libxext6 \
-    libxfixes3 \
-    libxi6 \
-    libxrandr2 \
-    libxrender1 \
-    libxss1 \
-    libxtst6 \
-    ca-certificates \
-    fonts-liberation \
-    libappindicator3-1 \
-    libnss3 \
-    lsb-release \
-    xdg-utils \
-    wget \
-    xvfb
-
-# Install Google Chrome
-echo "🦏 Installing Google Chrome..."
-wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | apt-key add -
-echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list
-apt update
-apt install -y google-chrome-stable
+# Note: Scraper packages removed - scrapers run locally, not on server
 
 # Install Node.js 20.x (LTS)
 echo "📚 Installing Node.js 20.x..."
@@ -127,6 +81,9 @@ mkdir -p /var/www/pharma-search
 mkdir -p /var/log/pharma-search
 
 echo "✅ System setup completed successfully!"
+echo "📋 Installed packages: Node.js, Bun, Python, PostgreSQL, Nginx, PM2"
+echo "📝 Note: Scraper packages (Chrome, Xvfb) not installed - scrapers run locally"
+echo ""
 echo "🔑 Next steps:"
 echo "  1. Run 02-postgresql-setup.sh to configure PostgreSQL"
 echo "  2. Copy your application files to /var/www/pharma-search"

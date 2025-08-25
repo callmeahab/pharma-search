@@ -35,7 +35,7 @@ upstream fastapi_backend {
 server {
     listen 80;
     listen [::]:80;
-    server_name _;  # Replace with your domain
+    server_name aposteka.rs www.aposteka.rs;
 
     # Security headers
     add_header X-Frame-Options "SAMEORIGIN" always;
@@ -65,8 +65,14 @@ server {
     client_max_body_size 10M;
 
     # Logging
-    access_log /var/log/nginx/pharma-search.access.log;
-    error_log /var/log/nginx/pharma-search.error.log;
+    access_log /var/log/nginx/aposteka.access.log;
+    error_log /var/log/nginx/aposteka.error.log;
+
+    # Let's Encrypt challenges
+    location /.well-known/acme-challenge/ {
+        root /var/www/html;
+        try_files \$uri =404;
+    }
 
     # API routes (FastAPI backend)
     location /api/ {
