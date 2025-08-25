@@ -24,9 +24,10 @@ DATABASE_URL="postgresql://root:pharma_secure_password_2025@localhost:5432/pharm
 NEXTAUTH_SECRET="$(openssl rand -base64 32)"
 NEXTAUTH_URL="http://localhost:3000"
 
-# API Configuration
+# API Configuration  
 API_BASE_URL="http://localhost:8000"
 BACKEND_URL="http://localhost:8000"
+NEXT_PUBLIC_API_URL=""
 
 # Node Environment
 NODE_ENV="production"
@@ -57,9 +58,10 @@ DATABASE_URL="postgresql://root:pharma_secure_password_2025@localhost:5432/pharm
 NEXTAUTH_SECRET="$(openssl rand -base64 32)"
 NEXTAUTH_URL="http://localhost:3000"
 
-# API Configuration
+# API Configuration  
 API_BASE_URL="http://localhost:8000"
 BACKEND_URL="http://localhost:8000"
+NEXT_PUBLIC_API_URL=""
 
 # Node Environment
 NODE_ENV="production"

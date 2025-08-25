@@ -1,4 +1,6 @@
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+// In production, use relative URLs so nginx can proxy to backend
+// In development, use localhost:8000 directly
+const API_URL = process.env.NEXT_PUBLIC_API_URL || (process.env.NODE_ENV === 'production' ? '' : 'http://localhost:8000');
 
 export interface SearchOptions {
   limit?: number;
