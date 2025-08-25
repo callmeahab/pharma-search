@@ -10,8 +10,8 @@ import {
 } from "@/components/ui/accordion";
 
 export const metadata: Metadata = {
-  title: "FAQ - Health Shop Savvy",
-  description: "Često postavljana pitanja o Health Shop Savvy platformi.",
+  title: "FAQ - Apošteka",
+  description: "Često postavljana pitanja o Apošteka platformi.",
 };
 
 export default function FAQPage() {

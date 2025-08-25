@@ -4,9 +4,9 @@ import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
 
 export const metadata: Metadata = {
-  title: "O nama - Health Shop Savvy",
+  title: "O nama - Apošteka",
   description:
-    "Saznajte više o Health Shop Savvy platformi za poređenje cena zdravstvenih proizvoda.",
+    "Saznajte više o Apošteka platformi za poređenje cena zdravstvenih proizvoda.",
 };
 
 export default function AboutUsPage() {

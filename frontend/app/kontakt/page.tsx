@@ -46,7 +46,7 @@ export default function ContactPage() {
 
           <div className="mb-10 bg-gray-50 dark:bg-gray-800 p-6 rounded-lg">
             <h2 className="text-2xl font-semibold text-health-secondary dark:text-health-accent mb-4">
-              Podrška je naša glavna prioritet
+              Podrška je naš glavni prioritet
             </h2>
             <p className="mb-4 text-gray-700 dark:text-gray-300">
               Mi smo oduševljeni što gradimo pažljivo osmišljene proizvode koji

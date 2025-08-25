@@ -20,7 +20,7 @@ const Footer = () => {
           </div>
 
           <div>
-            <h4 className="font-semibold mb-4 dark:text-gray-200">O nama</h4>
+            <h4 className="font-semibold mb-4 dark:text-gray-200">Naše informacije</h4>
             <ul className="space-y-2 text-gray-600 dark:text-gray-400">
               <li>
                 <Link
@@ -32,10 +32,10 @@ const Footer = () => {
               </li>
               <li>
                 <Link
-                  href="/kontakt"
+                  href="/privatnost"
                   className="hover:text-health-primary dark:hover:text-health-accent"
                 >
-                  Kontaktiraj nas
+                  Politika privatnosti
                 </Link>
               </li>
             </ul>
@@ -43,15 +43,15 @@ const Footer = () => {
 
           <div>
             <h4 className="font-semibold mb-4 dark:text-gray-200">
-              Naše informacije
+              Potrebna Vam je pomoć?
             </h4>
             <ul className="space-y-2 text-gray-600 dark:text-gray-400">
               <li>
                 <Link
-                  href="/privatnost"
+                  href="/kontakt"
                   className="hover:text-health-primary dark:hover:text-health-accent"
                 >
-                  Politika privatnosti
+                  Kontaktiraj nas
                 </Link>
               </li>
               <li>

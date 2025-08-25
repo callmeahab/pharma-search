@@ -83,9 +83,9 @@ const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
           </button>
         </div>
 
-        <CardContent className="pt-4">
-          <h3 className="text-lg font-semibold mb-1 line-clamp-2 h-12">{product.name}</h3>
-          <p className="text-sm text-gray-500 mb-3 line-clamp-2 h-10">{product.description}</p>
+        <CardContent className="pt-4 flex flex-col">
+          <h3 className="text-lg font-semibold mb-1 line-clamp-2 flex-shrink-0">{product.name}</h3>
+          <p className="text-sm text-gray-500 mb-3 line-clamp-2 flex-1 min-h-[2.5rem]">{product.description}</p>
           <div className="flex justify-between items-center">
             <div>
               <p className="text-sm text-gray-500">Već od</p>

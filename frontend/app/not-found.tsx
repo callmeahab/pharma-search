@@ -2,7 +2,7 @@ import Link from "next/link";
 import { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "404 - Stranica nije pronađena | Health Shop Savvy",
+  title: "404 - Stranica nije pronađena | Apošteka",
   description: "Stranica koju tražite nije pronađena.",
 };
 
