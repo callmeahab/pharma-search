@@ -312,3 +312,13 @@ export async function rebuildSearchIndex(): Promise<{ status: string; message: s
 
   return response.json();
 }
+
+export async function submitContact(payload: { name: string; email: string; message: string }): Promise<any> {
+  const response = await fetch(`${API_URL}/api/contact`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) throw new Error('Contact submit failed');
+  return response.json();
+}

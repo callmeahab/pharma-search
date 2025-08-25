@@ -7,10 +7,9 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Mail, MapPin } from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
+import { submitContact } from "@/lib/api";
 
 export const dynamic = 'force-dynamic';
-
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
 
 export default function ContactPage() {
   const { toast } = useToast();
@@ -24,12 +23,7 @@ export default function ContactPage() {
     if (!name || !email || !message) return;
     setSubmitting(true);
     try {
-      const res = await fetch(`${BACKEND_URL}/api/contact`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, email, message }),
-      });
-      if (!res.ok) throw new Error("Request failed");
+      await submitContact({ name, email, message });
       toast({ title: "Poruka je poslata", description: "Javićemo Vam se uskoro." });
       setName("");
       setEmail("");
