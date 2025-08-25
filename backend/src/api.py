@@ -2,6 +2,11 @@ from fastapi import FastAPI, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Optional, List
 import logging
+import os
+import smtplib
+import ssl
+from email.message import EmailMessage
+from pydantic import BaseModel, EmailStr
 
 from .config import settings
 from .search_engine import PharmaSearchEngine
@@ -27,6 +32,60 @@ app.add_middleware(
 search_engine = PharmaSearchEngine(settings.database_url)
 
 
+class ContactPayload(BaseModel):
+    name: str
+    email: EmailStr
+    message: str
+
+
+def send_email_via_smtp(name: str, email: str, message: str) -> dict:
+    contact_email = os.getenv("CONTACT_EMAIL", "apostekafm@gmail.com")
+    host = os.getenv("SMTP_HOST")
+    port_raw = os.getenv("SMTP_PORT")
+    user = os.getenv("SMTP_USER")
+    password = os.getenv("SMTP_PASS")
+
+    if not host or not port_raw or not user or not password:
+        return {
+            "ok": True,
+            "mocked": True,
+            "missing": {
+                "SMTP_HOST": not bool(host),
+                "SMTP_PORT": not bool(port_raw),
+                "SMTP_USER": not bool(user),
+                "SMTP_PASS": not bool(password),
+            },
+        }
+
+    port = int(port_raw)
+
+    email_msg = EmailMessage()
+    email_msg["From"] = f"Pharmagician <no-reply@pharmagician.rs>"
+    email_msg["To"] = contact_email
+    email_msg["Reply-To"] = email
+    email_msg["Subject"] = f"Kontakt forma: {name}"
+    email_msg.set_content(f"Ime: {name}\nEmail: {email}\n\nPoruka:\n{message}")
+
+    # TLS for 587, SSL for 465
+    if port == 465:
+        context = ssl.create_default_context()
+        with smtplib.SMTP_SSL(host, port, context=context) as server:
+            server.login(user, password)
+            server.send_message(email_msg)
+    else:
+        with smtplib.SMTP(host, port) as server:
+            server.ehlo()
+            try:
+                server.starttls()
+            except Exception:
+                # Some providers may not require TLS
+                pass
+            server.login(user, password)
+            server.send_message(email_msg)
+
+    return {"ok": True}
+
+
 @app.on_event("startup")
 async def startup():
     """Initialize connections on startup"""
@@ -45,6 +104,25 @@ async def shutdown():
 async def health_check():
     """Health check endpoint"""
     return {"status": "healthy"}
+
+
+@app.post("/api/contact")
+async def contact(payload: ContactPayload):
+    """Receive contact form submissions and send email via SMTP."""
+    try:
+        name = payload.name.strip()
+        email = str(payload.email)
+        message = payload.message.strip()
+        if not name or not email or not message:
+            raise HTTPException(status_code=400, detail="Missing fields")
+
+        result = send_email_via_smtp(name, email, message)
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Contact error: {e}")
+        raise HTTPException(status_code=500, detail="Contact failed")
 
 
 @app.get("/api/search")

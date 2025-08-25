@@ -7,9 +7,10 @@ class Settings(BaseSettings):
     batch_size: int = 10000
     similarity_threshold: float = 0.85
     api_port: int = 8000
-    model_config = {
-        "env_file": ".env",
-    }
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        extra="allow",  # allow unspecified env vars (e.g., SMTP_*)
+    )
 
 
 settings = Settings()
