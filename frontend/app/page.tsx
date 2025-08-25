@@ -1,7 +1,6 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { useSearchParams } from "next/navigation";
 import Navbar from "../components/Navbar";
 import ProductList from "../components/ProductList";
 import SearchResults from "../components/SearchResults";
@@ -22,12 +21,12 @@ import {
   Product,
 } from "../types/product";
 
-export default function HomePage() {
-  const searchParams = useSearchParams();
-  const urlSearchTerm = searchParams?.get("search") || "";
-  const { wishlist } = useWishlist();
+export const dynamic = 'force-dynamic';
 
-  const [searchTerm, setSearchTerm] = useState(urlSearchTerm);
+export default function HomePage() {
+  const { wishlist } = useWishlist();
+  
+  const [searchTerm, setSearchTerm] = useState("");
 
   // API search state
   const [apiSearchResults, setApiSearchResults] = useState<SearchResult | null>(
@@ -60,27 +59,34 @@ export default function HomePage() {
     }
   };
 
-  // Process URL search parameter on load and when it changes
+  // Process URL search parameter on load
   useEffect(() => {
-    console.log("URL search param changed:", urlSearchTerm);
-    setSearchTerm(urlSearchTerm);
-    setCurrentPage(1); // Reset to first page on new search
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const urlSearchTerm = params.get("search") || "";
+      console.log("URL search param changed:", urlSearchTerm);
+      setSearchTerm(urlSearchTerm);
+      setCurrentPage(1); // Reset to first page on new search
 
-    if (urlSearchTerm && urlSearchTerm.trim()) {
-      // Use API search for actual queries
-      performApiSearch(urlSearchTerm);
-    } else {
-      // Load featured products for browsing/no search
-      setUseApiSearch(false);
-      setApiSearchResults(null);
+      if (urlSearchTerm && urlSearchTerm.trim()) {
+        // Use API search for actual queries
+        performApiSearch(urlSearchTerm);
+      } else {
+        // Load featured products for browsing/no search
+        setUseApiSearch(false);
+        setApiSearchResults(null);
+        loadFeaturedProducts();
+      }
+
+      // Track search from URL parameter if it exists
+      if (urlSearchTerm) {
+        trackSearch(urlSearchTerm, 0); // Will be updated when results come in
+      }
+    } catch {
+      // Fallback if URL parsing fails
       loadFeaturedProducts();
     }
-
-    // Track search from URL parameter if it exists
-    if (urlSearchTerm) {
-      trackSearch(urlSearchTerm, 0); // Will be updated when results come in
-    }
-  }, [urlSearchTerm]);
+  }, []);
 
   // Check for price changes when the component loads and when wishlist changes
   useEffect(() => {

@@ -9,6 +9,8 @@ import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
 import Link from "next/link";
 
+export const dynamic = 'force-dynamic';
+
 export default function RegistrationPage() {
   const router = useRouter();
   const [formData, setFormData] = useState({

@@ -1,6 +1,4 @@
 "use client";
-
-import { Metadata } from "next";
 import React from "react";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
@@ -50,6 +48,8 @@ const resetSchema = z
     message: "Lozinke se ne podudaraju.",
     path: ["confirmPassword"],
   });
+
+export const dynamic = 'force-dynamic';
 
 export default function ResetPasswordPage() {
   // State to track the current step of the password reset flow

@@ -1,12 +1,11 @@
 "use client";
 
 import { useEffect } from "react";
-import { usePathname, useSearchParams } from "next/navigation";
+import { usePathname } from "next/navigation";
 import { initGA, trackPageView } from "@/utils/analytics";
 
 export function Analytics() {
   const pathname = usePathname();
-  const searchParams = useSearchParams();
 
   useEffect(() => {
     initGA();
@@ -14,12 +13,9 @@ export function Analytics() {
 
   useEffect(() => {
     if (pathname) {
-      trackPageView(
-        pathname +
-          (searchParams?.toString() ? `?${searchParams.toString()}` : "")
-      );
+      trackPageView(pathname);
     }
-  }, [pathname, searchParams]);
+  }, [pathname]);
 
   return null;
 }

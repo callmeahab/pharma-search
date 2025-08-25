@@ -1,5 +1,6 @@
 import { Page } from 'puppeteer';
 import { createWorker } from 'tesseract.js';
+import puppeteer from 'puppeteer-extra';
 
 export class ScraperUtils {
   private static worker: Awaited<ReturnType<typeof createWorker>>;
@@ -25,6 +26,30 @@ export class ScraperUtils {
     return this.worker;
   }
 
+  static getBrowserArgs(): string[] {
+    const commonArgs = [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-web-security',
+      '--disable-dev-shm-usage',
+      '--disable-gpu',
+      '--disable-software-rasterizer',
+      '--disable-background-timer-throttling',
+      '--disable-backgrounding-occluded-windows',
+      '--disable-renderer-backgrounding',
+      '--disable-features=TranslateUI',
+      '--disable-ipc-flooding-protection',
+      '--no-first-run',
+      '--no-default-browser-check',
+      '--disable-extensions',
+      '--disable-plugins',
+      '--disable-images',
+      `--window-size=${this.VIEWPORT.width},${this.VIEWPORT.height}`,
+    ];
+
+    return this.IS_HEADLESS ? commonArgs : [...commonArgs, '--start-maximized'];
+  }
+
   static async configurePage(page: Page): Promise<string[]> {
     const userAgent =
       this.USER_AGENTS[Math.floor(Math.random() * this.USER_AGENTS.length)];
@@ -35,14 +60,7 @@ export class ScraperUtils {
     // Set viewport size
     await page.setViewport(this.VIEWPORT);
 
-    const commonArgs = [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-      '--disable-web-security',
-      `--window-size=${this.VIEWPORT.width},${this.VIEWPORT.height}`,
-    ];
-
-    return this.IS_HEADLESS ? commonArgs : [...commonArgs, '--start-maximized'];
+    return this.getBrowserArgs();
   }
 
   static async solveImageCaptcha(page: Page): Promise<boolean> {
@@ -70,6 +88,14 @@ export class ScraperUtils {
 
   static async cleanup() {
     await this.worker?.terminate();
+  }
+
+  static async launchBrowser() {
+    return await puppeteer.launch({
+      headless: this.IS_HEADLESS,
+      defaultViewport: null,
+      args: this.getBrowserArgs(),
+    });
   }
 
   static delay(ms: number): Promise<void> {

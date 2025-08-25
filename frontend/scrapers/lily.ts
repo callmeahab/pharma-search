@@ -84,25 +84,15 @@ async function scrapePage(page: Page, category: string): Promise<Product[]> {
 }
 
 async function scrapeMultipleBaseUrls(): Promise<Product[]> {
-  const tempBrowser = await puppeteer.launch();
-  const tempPage = await tempBrowser.newPage();
-  const args = await ScraperUtils.configurePage(tempPage);
-  await tempBrowser.close();
-
-  const browser = await puppeteer.launch({
+const browser = await puppeteer.launch({
     headless: ScraperUtils.IS_HEADLESS,
     defaultViewport: null,
-    args: [
-      ...args,
-      '--disable-blink-features=AutomationControlled',
-      '--disable-features=IsolateOrigins,site-per-process',
-      '--disable-site-isolation-trials',
-    ],
-    protocolTimeout: 120000, // Increase protocol timeout
+    args: ScraperUtils.getBrowserArgs(),
   });
 
   try {
     const page = await browser.newPage();
+    await ScraperUtils.configurePage(page);
 
     // Set a realistic user agent
     await page.setUserAgent(

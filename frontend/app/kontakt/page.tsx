@@ -1,6 +1,4 @@
 "use client";
-
-import { Metadata } from "next";
 import React from "react";
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
@@ -8,6 +6,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Mail, Phone, MapPin } from "lucide-react";
+
+export const dynamic = 'force-dynamic';
 
 export default function ContactPage() {
   const handleSubmit = (e: React.FormEvent) => {

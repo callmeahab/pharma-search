@@ -1,6 +1,5 @@
 "use client";
 
-import { Metadata } from "next";
 import React, { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -8,6 +7,8 @@ import { useRouter } from "next/navigation";
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
 import Link from "next/link";
+
+export const dynamic = 'force-dynamic';
 
 export default function LoginPage() {
   const router = useRouter();

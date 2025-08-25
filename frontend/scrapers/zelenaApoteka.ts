@@ -101,19 +101,15 @@ async function scrapePage(
 }
 
 async function scrapeMultipleBaseUrls(): Promise<Product[]> {
-  const tempBrowser = await puppeteer.launch();
-  const tempPage = await tempBrowser.newPage();
-  const args = await ScraperUtils.configurePage(tempPage);
-  await tempBrowser.close();
-
-  const browser = await puppeteer.launch({
+const browser = await puppeteer.launch({
     headless: ScraperUtils.IS_HEADLESS,
     defaultViewport: null,
-    args,
+    args: ScraperUtils.getBrowserArgs(),
   });
 
   try {
     const page = await browser.newPage();
+    await ScraperUtils.configurePage(page);
     let allScrapedProducts: Product[] = [];
 
     for (const baseUrl of baseUrls) {

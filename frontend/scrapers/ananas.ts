@@ -343,18 +343,14 @@ async function scrapeMultipleBaseUrls(): Promise<{
   products: Product[];
   totalSkipped: number;
 }> {
-  const tempBrowser = await puppeteer.launch();
-  const tempPage = await tempBrowser.newPage();
-  const args = await ScraperUtils.configurePage(tempPage);
-  await tempBrowser.close();
-
-  const browser = await puppeteer.launch({
+const browser = await puppeteer.launch({
     headless: ScraperUtils.IS_HEADLESS,
     defaultViewport: null,
-    args,
+    args: ScraperUtils.getBrowserArgs(),
   });
 
   const page = await browser.newPage();
+    await ScraperUtils.configurePage(page);
   let allScrapedProducts: Product[] = [];
   let totalSkipped = 0;
 

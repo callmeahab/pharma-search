@@ -4,7 +4,7 @@ import React, { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import ThemeToggle from "./ThemeToggle";
 import SearchBar from "./SearchBar";
-import { usePathname, useSearchParams, useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { trackSearch } from "@/utils/analytics";
 import { User } from "lucide-react";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -13,12 +13,19 @@ import Link from "next/link";
 const Navbar = () => {
   const pathname = usePathname();
   const router = useRouter();
-  const searchParams = useSearchParams();
   const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [urlSearchTerm, setUrlSearchTerm] = useState("");
   const isMobile = useIsMobile();
 
-  // Get URLSearchParams to extract current search term from URL
-  const urlSearchTerm = searchParams?.get("search") || "";
+  // Get search term from URL safely
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      setUrlSearchTerm(params.get("search") || "");
+    } catch {
+      setUrlSearchTerm("");
+    }
+  }, []);
 
   // Check if user is logged in on component mount
   useEffect(() => {
