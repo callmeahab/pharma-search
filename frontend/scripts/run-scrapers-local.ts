@@ -98,6 +98,11 @@ interface ScraperResult {
   products: number;
 }
 
+interface CleanupResult {
+  output: string;
+  exitCode: number;
+}
+
 async function runScraper(
   scraper: string,
 ): Promise<{ exitCode: number; products: number }> {
@@ -153,6 +158,7 @@ async function runScraper(
           if (isDatabaseError && retryCount < MAX_RETRIES) {
             retryCount++;
             console.log('Database error detected, waiting before retry (attempt ' + retryCount + '/' + MAX_RETRIES + ')...');
+            // Instead of killing the process, we'll just wait
             setTimeout(() => {
               console.log('Continuing after database error...');
             }, 2000);
@@ -217,15 +223,93 @@ function formatDuration(ms: number) {
   return `${minutes}m ${seconds.toString().padStart(2, '0')}s`;
 }
 
+async function runCleanup(): Promise<CleanupResult> {
+  return new Promise<CleanupResult>((resolve) => {
+    const cleanupWorker = new Worker(
+      `
+      import { parentPort } from 'worker_threads';
+      import { spawn } from 'child_process';
+      
+      let cleanupOutput = '';
+      const proc = spawn('bun', ['scripts/deleteItemsWithoutPrice.ts'], {
+        stdio: ['ignore', 'pipe', 'pipe']
+      });
+
+      proc.stdout.on('data', (data) => {
+        const chunk = data.toString();
+        cleanupOutput += chunk;
+        // Also show in console for real-time feedback
+        process.stdout.write(chunk);
+      });
+
+      proc.stderr.on('data', (data) => {
+        const chunk = data.toString();
+        cleanupOutput += chunk;
+        process.stderr.write(chunk);
+      });
+
+      proc.on('close', (code) => {
+        parentPort.postMessage({ 
+          output: cleanupOutput,
+          exitCode: code 
+        });
+      });
+    `,
+      { eval: true },
+    );
+
+    cleanupWorker.on('message', resolve);
+  });
+}
+
+async function runDuplicateCleanup(): Promise<CleanupResult> {
+  return new Promise<CleanupResult>((resolve) => {
+    const duplicateWorker = new Worker(
+      `
+      import { parentPort } from 'worker_threads';
+      import { spawn } from 'child_process';
+      
+      let cleanupOutput = '';
+      const proc = spawn('bun', ['scripts/deleteDuplicateProducts.ts'], {
+        stdio: ['ignore', 'pipe', 'pipe']
+      });
+
+      proc.stdout.on('data', (data) => {
+        const chunk = data.toString();
+        cleanupOutput += chunk;
+        // Also show in console for real-time feedback
+        process.stdout.write(chunk);
+      });
+
+      proc.stderr.on('data', (data) => {
+        const chunk = data.toString();
+        cleanupOutput += chunk;
+        process.stderr.write(chunk);
+      });
+
+      proc.on('close', (code) => {
+        parentPort.postMessage({ 
+          output: cleanupOutput,
+          exitCode: code 
+        });
+      });
+    `,
+      { eval: true },
+    );
+
+    duplicateWorker.on('message', resolve);
+  });
+}
+
 async function exportDatabaseToSQL(): Promise<string> {
   const timestamp = new Date().toISOString().slice(0, 16).replace(/[:-]/g, '');
   const exportFile = `../exports/scraped-data-${timestamp}.sql`;
-  
+
   // Create exports directory
   await mkdir('../exports', { recursive: true });
-  
+
   console.log('📦 Exporting database to SQL...');
-  
+
   return new Promise((resolve, reject) => {
     const exportProc = spawn('pg_dump', [
       process.env.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/pharmagician',
@@ -238,7 +322,7 @@ async function exportDatabaseToSQL(): Promise<string> {
     ]);
 
     let errorOutput = '';
-    
+
     exportProc.stderr.on('data', (data) => {
       errorOutput += data.toString();
     });
@@ -259,33 +343,6 @@ async function exportDatabaseToSQL(): Promise<string> {
   });
 }
 
-async function runCleanupScripts(): Promise<void> {
-  console.log('\n🧹 Running cleanup scripts...');
-  
-  const cleanupScripts = [
-    'scripts/deleteItemsWithoutPrice.ts',
-    'scripts/deleteDuplicateProducts.ts'
-  ];
-  
-  for (const script of cleanupScripts) {
-    console.log(`🧹 Running ${script}...`);
-    
-    await new Promise<void>((resolve, reject) => {
-      const proc = spawn('bun', [script], { stdio: 'inherit' });
-      
-      proc.on('close', (code) => {
-        if (code === 0) {
-          resolve();
-        } else {
-          reject(new Error(`Cleanup script ${script} failed with code ${code}`));
-        }
-      });
-      
-      proc.on('error', reject);
-    });
-  }
-}
-
 async function main() {
   const globalStartTime = Date.now();
   console.log(`🔄 Starting local scrapers with concurrency: ${CONCURRENCY}`);
@@ -300,7 +357,7 @@ async function main() {
   await writeFile(
     logFile,
     'Time                    Duration    Exit    Products    Scraper\n' +
-      '----                    --------    ----    --------    -------\n',
+    '----                    --------    ----    --------    -------\n',
   );
 
   const queue = [...scrapers];
@@ -380,16 +437,60 @@ async function main() {
     );
   }
 
-  console.log(`\n📊 Total Products Scraped: ${totalProducts}`);
+  // Run cleanup script twice and capture its output
+  console.log('\n🧹 Running first cleanup...');
+  const firstCleanup = await runCleanup();
 
-  // Run cleanup scripts
-  await runCleanupScripts();
+  console.log('\n🧹 Running second cleanup...');
+  const secondCleanup = await runCleanup();
+
+  // Run duplicate products cleanup
+  console.log('\n🔍 Running duplicate products cleanup...');
+  const duplicateCleanup = await runDuplicateCleanup();
+
+  // Extract deleted items count from cleanup outputs
+  const getDeletedCount = (output: string) => {
+    const match = output.match(
+      /Deleted (\d+) zero-price products from database/,
+    );
+    return match ? parseInt(match[1], 10) : 0;
+  };
+
+  // Extract duplicate products count
+  const getDuplicatesCount = (output: string) => {
+    const match = output.match(/Total products deleted: (\d+)/);
+    return match ? parseInt(match[1], 10) : 0;
+  };
+
+  const firstDeletedCount = getDeletedCount(firstCleanup.output);
+  const secondDeletedCount = getDeletedCount(secondCleanup.output);
+  const duplicatesDeletedCount = getDuplicatesCount(duplicateCleanup.output);
+  const totalDeletedItems = firstDeletedCount + secondDeletedCount;
+  const finalProductCount =
+    totalProducts - totalDeletedItems - duplicatesDeletedCount;
+
+  // Add cleanup summaries to log file
+  await writeFile(
+    logFile,
+    '\nCleanup Results:\n--------------\n' +
+    `Deleted ${firstDeletedCount} zero-price products in first cleanup\n` +
+    `Deleted ${secondDeletedCount} zero-price products in second cleanup\n` +
+    `Deleted ${duplicatesDeletedCount} duplicate products\n` +
+    `Products Deleted: ${totalDeletedItems + duplicatesDeletedCount}\n` +
+    `Final Products Count: ${finalProductCount}\n`,
+    { flag: 'a' },
+  );
+
+  console.log(
+    `\n📊 Products Deleted: ${totalDeletedItems + duplicatesDeletedCount}`,
+  );
+  console.log(`📊 Final Products Count: ${finalProductCount}`);
 
   // Export database to SQL
   try {
     const exportFile = await exportDatabaseToSQL();
     console.log(`\n📁 SQL export ready: ${exportFile}`);
-    
+
     // Add export info to log
     await writeFile(
       logFile,
