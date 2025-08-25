@@ -45,11 +45,10 @@ export const trackPageView = (path: string) => {
 
 // Track search queries
 export const trackSearch = (searchTerm: string, resultCount: number) => {
-  ReactGA.event({
+  ReactGA.event('Product Search', {
     category: "Search",
     action: "Product Search",
-    label: searchTerm,
-    value: resultCount,
+    searchTerm: searchTerm,
   });
   
   console.log(`[Analytics] Search tracked: "${searchTerm}" with ${resultCount} results`);
@@ -57,10 +56,10 @@ export const trackSearch = (searchTerm: string, resultCount: number) => {
 
 // Track product clicks
 export const trackProductClick = (productId: string, productName: string, category: string) => {
-  ReactGA.event({
+  ReactGA.event('Product Click', {
     category: "Product",
     action: "Product Click",
-    label: productName,
+    product: productName,
   });
   
   console.log(`[Analytics] Product click tracked: ${productName} (ID: ${productId})`);
@@ -68,30 +67,12 @@ export const trackProductClick = (productId: string, productName: string, catego
 
 // Track store link clicks
 export const trackStoreClick = (storeName: string, targetUrl: string, productName: string | null = null) => {
-  ReactGA.gtag("event", "Store Link Click", {
-    category: "Store",
-    label: storeName,
-    storeUrl: targetUrl,
-    productName
+  ReactGA.event('Store Link Click', {
+      category: "Store",
+      action: "Store Link Click",
+      label: storeName,
+      storeUrl: targetUrl,
   });
-  // ReactGA.event({
-  //   category: "Store",
-  //   action: "Store Link Click",
-  //   label: storeName,
-  // },
-  // // ovo sa drugim parametrom ne radi, tj. sa ovim drugim viticastim zagradama
-  // {
-  //   storeUrl: targetUrl,
-  //   productName
-  // }
-  // );
-
-  // window.dataLayer.push({
-  //   event: "storeLinkClick",
-  //   url: targetUrl,
-  //   label: storeName,
-  //   productName: productName,
-  // });
   
   console.log(`[Analytics] Store click tracked: ${storeName}${productName ? ` for product ${productName}` : ''}`);
 };
