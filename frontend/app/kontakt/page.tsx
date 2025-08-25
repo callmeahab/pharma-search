@@ -1,19 +1,42 @@
 "use client";
-import React from "react";
+import React, { useState } from "react";
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Mail, Phone, MapPin } from "lucide-react";
+import { Mail, MapPin } from "lucide-react";
+import { useToast } from "@/components/ui/use-toast";
 
 export const dynamic = 'force-dynamic';
 
 export default function ContactPage() {
-  const handleSubmit = (e: React.FormEvent) => {
+  const { toast } = useToast();
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [message, setMessage] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    // Handle form submission logic here
-    console.log("Kontakt forma poslata");
+    if (!name || !email || !message) return;
+    setSubmitting(true);
+    try {
+      const res = await fetch("/api/contact", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, email, message }),
+      });
+      if (!res.ok) throw new Error("Request failed");
+      toast({ title: "Poruka je poslata", description: "Javićemo Vam se uskoro." });
+      setName("");
+      setEmail("");
+      setMessage("");
+    } catch (err) {
+      toast({ title: "Greška", description: "Pokušajte ponovo.", variant: "destructive" });
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -69,6 +92,8 @@ export default function ContactPage() {
                   <Input
                     id="name"
                     placeholder="Unesite vaše ime i prezime"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
                     required
                   />
                 </div>
@@ -84,6 +109,8 @@ export default function ContactPage() {
                     id="email"
                     type="email"
                     placeholder="vas@email.com"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
                     required
                   />
                 </div>
@@ -97,14 +124,16 @@ export default function ContactPage() {
                   </label>
                   <Textarea
                     id="message"
-                    placeholder="Kako vam možemo pomoći?"
+                    placeholder="Kako Vam možemo pomoći?"
                     className="min-h-[150px]"
+                    value={message}
+                    onChange={(e) => setMessage(e.target.value)}
                     required
                   />
                 </div>
 
-                <Button type="submit" className="w-full">
-                  Pošalji poruku
+                <Button type="submit" className="w-full" disabled={submitting}>
+                  {submitting ? "Slanje..." : "Pošalji poruku"}
                 </Button>
               </form>
             </div>
@@ -120,23 +149,10 @@ export default function ContactPage() {
                   <div>
                     <p className="font-medium dark:text-gray-200">Email</p>
                     <a
-                      href="mailto:info@aposteka.com"
+                      href="mailto:apostekafm@gmail.com"
                       className="text-gray-600 dark:text-gray-300 hover:text-health-primary dark:hover:text-health-accent"
                     >
-                      info@aposteka.com
-                    </a>
-                  </div>
-                </div>
-
-                <div className="flex items-start">
-                  <Phone className="w-5 h-5 text-health-primary dark:text-health-accent mr-3 mt-0.5" />
-                  <div>
-                    <p className="font-medium dark:text-gray-200">Telefon</p>
-                    <a
-                      href="tel:+38112345678"
-                      className="text-gray-600 dark:text-gray-300 hover:text-health-primary dark:hover:text-health-accent"
-                    >
-                      +381 1 234 5678
+                      apostekafm@gmail.com
                     </a>
                   </div>
                 </div>

@@ -4,8 +4,8 @@ import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
 
 export const metadata: Metadata = {
-  title: "Privatnost - Health Shop Savvy",
-  description: "Politika privatnosti za Health Shop Savvy platformu.",
+  title: "Privatnost - Apošteka",
+  description: "Politika privatnosti za Apošteka platformu.",
 };
 
 export default function PrivacyPage() {
@@ -203,10 +203,10 @@ export default function PrivacyPage() {
             <p>
               📧 Email:{" "}
               <a
-                href="mailto:kontakt@aposteka.com"
+                href="mailto:apostekafm@gmail.com"
                 className="text-health-secondary dark:text-health-accent hover:underline"
               >
-                kontakt@aposteka.com
+                apostekafm@gmail.com
               </a>
             </p>
 

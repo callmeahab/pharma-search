@@ -50,6 +50,7 @@
     "lucide-react": "^0.460.0",
     "next": "^15.3.4",
     "next-themes": "^0.4.6",
+    "nodemailer": "^7.0.5",
     "puppeteer": "^24.11.1",
     "puppeteer-extra": "^3.3.6",
     "puppeteer-extra-plugin-stealth": "^2.11.2",
@@ -70,6 +71,7 @@
   "devDependencies": {
     "@tailwindcss/typography": "^0.5.16",
     "@types/node": "^22.15.34",
+    "@types/nodemailer": "^7.0.1",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
     "@types/tesseract.js": "^2.0.0",

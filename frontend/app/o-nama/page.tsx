@@ -177,10 +177,10 @@ export default function AboutUsPage() {
               <p className="mb-2">
                 Za medijske upite, kontaktirajte nas na:{" "}
                 <a
-                  href="mailto:kontakt@aposteka.com"
+                  href="mailto:apostekafm@gmail.com"
                   className="text-health-primary dark:text-health-accent hover:underline"
                 >
-                  kontakt@aposteka.com
+                  apostekafm@gmail.com
                 </a>
               </p>
               <p>
