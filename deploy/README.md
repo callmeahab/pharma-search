@@ -8,9 +8,9 @@ The deployment consists of:
 - **Frontend**: Next.js application (Port 3000)
 - **Backend**: FastAPI Python service (Port 8000)
 - **Database**: PostgreSQL with extensions
-- **Scrapers**: Automated data collection workers
 - **Reverse Proxy**: Nginx (Port 80/443)
-- **Process Manager**: PM2 for all services
+- **Process Manager**: PM2 for frontend and backend services
+- **Data Collection**: Scrapers run locally and data uploaded via SQL
 
 ## 🚀 Quick Deployment
 
@@ -85,7 +85,7 @@ Sets up reverse proxy, SSL-ready, security headers, compression.
 ```bash
 bash deploy/05-pm2-setup.sh
 ```
-Configures all services, monitoring, and automatic restarts.
+Configures frontend and backend services, monitoring, and automatic restarts.
 
 ## 🔧 Configuration Files
 
@@ -94,12 +94,11 @@ Located at `/var/www/pharma-search/.env`:
 - `DATABASE_URL`: postgresql://root:pharma_secure_password_2025@localhost:5432/pharma_search
 - `NEXTAUTH_SECRET`: Authentication secret  
 - `API_BASE_URL`: Backend API URL
-- Custom scraper settings
+- Production environment settings
 
 ### PM2 Ecosystem (ecosystem.config.js)
-- **pharma-nextjs**: Frontend application
-- **pharma-fastapi**: Backend API service  
-- **pharma-scrapers**: Data collection workers
+- **pharma-nextjs**: Frontend application (Port 3000)
+- **pharma-fastapi**: Backend API service (Port 8000)
 
 ### Nginx Configuration
 - Rate limiting for API endpoints
@@ -134,7 +133,7 @@ pm2 status
 # View logs
 pm2 logs
 pm2 logs pharma-nextjs
-pm2 logs pharma-scrapers
+pm2 logs pharma-fastapi
 
 # Update application
 /var/www/pharma-search/update.sh
@@ -240,15 +239,57 @@ pm2 status
 ## 🔄 Automated Maintenance
 
 The deployment includes automated:
-- **Daily scrapers**: Run every 24 hours (once daily)
 - **Log rotation**: Daily with 14-day retention
 - **Database backups**: Daily at 3 AM, 7-day retention
 - **Process monitoring**: PM2 auto-restart on failures
+- **Data Collection**: Run scrapers locally and upload data via SQL scripts
+
+## 🕷️ Data Collection (Local Scrapers)
+
+The scrapers now run on your local machine for better performance and reliability.
+
+### Running Scrapers Locally
+```bash
+# Navigate to frontend directory
+cd frontend
+
+# Run all scrapers and export to SQL
+bun scripts/run-scrapers-local.ts
+
+# This will:
+# 1. Run all 86+ scrapers with concurrency
+# 2. Run cleanup scripts
+# 3. Export database to SQL file in ../exports/
+```
+
+### Uploading Data to Server
+```bash
+# First, configure the server details in the script
+# Edit: frontend/scripts/upload-data-to-server.ts
+# Update SERVER_CONFIG with your server IP and credentials
+
+# Then upload the latest scraped data
+bun scripts/upload-data-to-server.ts
+
+# This will:
+# 1. Create backup on server
+# 2. Upload SQL file via SCP
+# 3. Execute SQL on remote database
+# 4. Clean up temporary files
+```
+
+### Automation Options
+You can automate this process with:
+```bash
+# Create a daily cron job on your local machine
+# Add to crontab: crontab -e
+0 2 * * * cd /path/to/pharma-search/frontend && bun scripts/run-scrapers-local.ts && bun scripts/upload-data-to-server.ts
+```
 
 ## 📞 Support
 
 For issues:
-1. Check logs in `/var/log/pharma-search/`
+1. Check logs in `/var/log/pharma-search/` (server) or `../scrapers_logs/` (local)
 2. Run the monitor script: `/var/www/pharma-search/monitor.sh`
 3. Check individual service status
 4. Review this documentation
@@ -293,8 +334,9 @@ sudo certbot --nginx -d yourdomain.com
 - [ ] Environment variables configured
 - [ ] Database migrated
 - [ ] Nginx configured and running
-- [ ] PM2 services started
+- [ ] PM2 services started (frontend + backend)
 - [ ] SSL certificate installed (if needed)
 - [ ] Firewall configured
-- [ ] Monitoring and backups enabled
+- [ ] Database backups enabled
 - [ ] Application accessible via web browser
+- [ ] Local scraper setup configured

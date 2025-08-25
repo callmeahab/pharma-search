@@ -45,3 +45,5 @@ logs/
 
 # Docker
 .dockerignore 
+
+scrapers_logs/

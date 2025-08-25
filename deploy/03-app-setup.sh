@@ -39,10 +39,7 @@ PYTHONPATH="$APP_DIR/backend"
 LOG_LEVEL="info"
 LOG_DIR="$LOG_DIR"
 
-# Scrapers Configuration
-SCRAPER_CONCURRENCY=5
-SCRAPER_DELAY=1000
-SCRAPER_TIMEOUT=30000
+# Note: Scrapers run locally, not on server
 EOF
 
 # Set proper permissions for environment file
@@ -105,7 +102,7 @@ pip install -r requirements.txt
 echo "📝 Creating log directories..."
 mkdir -p "$LOG_DIR/frontend"
 mkdir -p "$LOG_DIR/backend" 
-mkdir -p "$LOG_DIR/scrapers"
+# mkdir -p "$LOG_DIR/scrapers"  # Scrapers now run locally
 mkdir -p "$LOG_DIR/pm2"
 
 echo "✅ Application setup completed successfully!"

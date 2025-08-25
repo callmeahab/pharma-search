@@ -44,6 +44,12 @@ export class ScraperUtils {
       '--disable-extensions',
       '--disable-plugins',
       '--disable-images',
+      '--ignore-certificate-errors',
+      '--ignore-ssl-errors',
+      '--ignore-certificate-errors-spki-list',
+      '--ignore-certificate-errors-spki-list-log',
+      '--ignore-ssl-errors-ignore-ssl-errors',
+      '--disable-features=VizDisplayCompositor',
       `--window-size=${this.VIEWPORT.width},${this.VIEWPORT.height}`,
     ];
 
