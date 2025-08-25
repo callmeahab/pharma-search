@@ -48,25 +48,36 @@ const Navbar = () => {
   const handleSearch = (term: string) => {
     console.log("Search triggered with term:", term);
 
-    // Update URL immediately since this is now only called on form submit
-    // Create a new URL object from the current pathname only
-    const url = new URL(window.location.origin + pathname);
-
-    // Update or remove the search parameter based on the term
     if (term && term.trim()) {
-      url.searchParams.set("search", term);
       trackSearch(term, 0); // Results count will be determined on the main page
-    } else {
-      url.searchParams.delete("search");
-    }
 
-    // Update the URL without causing navigation or page refresh
-    window.history.replaceState(null, "", url.toString());
+      // If we're not on the home page, navigate there with the search term
+      if (pathname !== "/") {
+        router.push(`/?q=${encodeURIComponent(term.trim())}`);
+        return;
+      }
+
+      // If we're already on the home page, just update the URL and dispatch event
+      const url = new URL(window.location.origin + pathname);
+      url.searchParams.set("q", term.trim());
+      window.history.replaceState(null, "", url.toString());
+    } else {
+      // Clear search - navigate to home page
+      if (pathname !== "/") {
+        router.push("/");
+        return;
+      }
+
+      // If already on home page, just clear the URL
+      const url = new URL(window.location.origin + pathname);
+      url.searchParams.delete("q");
+      window.history.replaceState(null, "", url.toString());
+    }
 
     // Dispatch a custom event to notify other components about URL change
     window.dispatchEvent(
       new CustomEvent("urlSearchChanged", {
-        detail: { term },
+        detail: { searchTerm: term },
       })
     );
   };

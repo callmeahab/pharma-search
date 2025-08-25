@@ -1,13 +1,12 @@
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Search, X, Package, TrendingDown } from "lucide-react";
-import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
+import { Search, X } from "lucide-react";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { searchProducts, ProductGroup } from "@/lib/api";
+import { Product } from "@/types/product";
 import ProductDetailModal from "./ProductDetailModal";
-import { Product, ProductGroup } from "@/types/product";
-import { trackSearch, trackProductClick } from "@/utils/analytics";
-import { searchProducts } from "@/lib/api";
-import { humanizeTitle, formatPrice } from "@/lib/utils";
+import { Spinner } from "@/components/ui/spinner";
 
 interface SearchBarProps {
   onSearch: (term: string) => void;
@@ -133,127 +132,117 @@ const SearchBar: React.FC<SearchBarProps> = ({
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
     setSearchTerm(value);
+    setHasUnsearchedChanges(true);
 
-    // Mark that there are unsearched changes
-    setHasUnsearchedChanges(value !== initialTerm);
-
-    // Real-time API search for dropdown suggestions only
-    fetchSearchGroups(value);
-    setIsDropdownOpen(value.trim() !== "");
-
-    // Don't call onSearch here - only on form submit or suggestion click
-  };
-
-  const handleSuggestionClick = (suggestion: string) => {
-    setSearchTerm(suggestion);
-    setHasUnsearchedChanges(false);
-    onSearch(suggestion);
-    setIsDropdownOpen(false);
-  };
-
-  const handleProductSelect = (productId: string) => {
-    const product = null;
-    if (product) {
-      setSelectedProduct(product);
-      setShowModal(true);
-      // Track product click from search
-      // trackProductClick(product.id, product.name, product.category);
+    if (value.trim() === "") {
+      setIsDropdownOpen(false);
+      setSearchGroups([]);
+      setFilteredSuggestions([]);
+    } else {
+      setIsDropdownOpen(true);
+      fetchSearchGroups(value);
     }
   };
 
   const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault(); // Prevent default form submission
-    console.log("Form submitted with term:", searchTerm);
-    
-    // Only perform search if there's a search term
+    e.preventDefault();
     if (searchTerm.trim()) {
-      setHasUnsearchedChanges(false);
-      onSearch(searchTerm);
+      onSearch(searchTerm.trim());
       setIsDropdownOpen(false);
-      
-      // Track search when form is submitted
-      trackSearch(searchTerm, 0); // Will be updated when results come in
+      setHasUnsearchedChanges(false);
     }
+  };
+
+  const handleSuggestionClick = (name: string) => {
+    setSearchTerm(name);
+    onSearch(name);
+    setIsDropdownOpen(false);
+    setHasUnsearchedChanges(false);
+  };
+
+  const handleProductSelect = (productId: string) => {
+    // Find the product from search groups
+    const product = searchGroups
+      .flatMap((group) => group.products)
+      .find((p) => p.id === productId);
+
+    if (product) {
+      // Map the BackendProduct to match the Product type
+      const mappedProduct: Product = {
+        id: product.id,
+        name: product.title,
+        description: `Dostupno u apoteci ${product.vendor_name}`,
+        category: '',
+        image: product.thumbnail || '/medicine-placeholder.svg',
+        prices: [{
+          store: product.vendor_name,
+          price: product.price,
+          inStock: true,
+          link: product.link
+        }],
+        vendorCount: 1
+      };
+      setSelectedProduct(mappedProduct);
+      setShowModal(true);
+    }
+  };
+
+  const handlePopularSearchClick = (
+    e: React.MouseEvent,
+    term: string
+  ) => {
+    e.preventDefault();
+    setSearchTerm(term);
+    onSearch(term);
+    setHasUnsearchedChanges(false);
   };
 
   const clearSearch = () => {
     setSearchTerm("");
-    setHasUnsearchedChanges(false);
     setIsDropdownOpen(false);
-    setFilteredSuggestions([]);
     setSearchGroups([]);
-    setIsLoadingGroups(false);
-    // Clear any pending timeout
-    if (searchTimeoutRef.current) {
-      clearTimeout(searchTimeoutRef.current);
-    }
-    onSearch(""); // Call onSearch with empty string to reset grid results
-    if (inputRef.current) {
-      inputRef.current.focus();
-    }
-  };
-
-  const handlePopularSearchClick = (e: React.MouseEvent, term: string) => {
-    e.preventDefault(); // Prevent any default behavior
-    setSearchTerm(term);
+    setFilteredSuggestions([]);
     setHasUnsearchedChanges(false);
-    fetchSearchGroups(term);
-    setIsDropdownOpen(true);
-    onSearch(term); // Trigger grid search for popular searches
-
-    // Track popular search click
-    trackSearch(term, 0); // Will be updated when API results come in
   };
 
   return (
-    <div className="w-full relative" ref={dropdownRef}>
-      <form onSubmit={handleSubmit} className="relative">
-        <div className="flex relative">
-          <div className="relative flex-grow">
-            <Input
-              ref={inputRef}
-              type="text"
-              placeholder="Pretraži vitamine, suplemente, lekove..."
-              value={searchTerm}
-              onChange={handleInputChange}
-              onFocus={() =>
-                searchTerm.trim() !== "" && setIsDropdownOpen(true)
+    <div className="relative w-full max-w-4xl mx-auto" ref={dropdownRef}>
+      <form onSubmit={handleSubmit} className="flex">
+        <div className="relative flex-1">
+          <Input
+            ref={inputRef}
+            type="text"
+            placeholder="Pretražite proizvode, brendove ili kategorije..."
+            value={searchTerm}
+            onChange={handleInputChange}
+            onFocus={() => {
+              if (searchTerm.trim()) {
+                setIsDropdownOpen(true);
               }
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault();
-                  handleSubmit(e);
-                }
-              }}
-              className="w-full pr-12 rounded-r-none h-14 text-lg border-r-0 focus-visible:ring-health-primary dark:bg-gray-800 dark:border-gray-700 dark:text-gray-100 dark:placeholder:text-gray-400"
-            />
-            {searchTerm && (
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.preventDefault();
-                  clearSearch();
-                }}
-                className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
-                aria-label="Clear search"
-              >
-                <X size={20} />
-              </button>
-            )}
-          </div>
-          <Button
-            type="submit"
-            className={`h-14 px-6 rounded-l-none bg-health-primary hover:bg-health-secondary dark:bg-health-secondary dark:hover:bg-health-primary ${
-              hasUnsearchedChanges ? 'ring-2 ring-health-secondary ring-opacity-50' : ''
-            }`}
-          >
-            <Search className="mr-2 h-5 w-5" />
-            <span className="text-base">Pretraži</span>
-            {hasUnsearchedChanges && (
-              <span className="ml-1 w-2 h-2 bg-health-secondary rounded-full"></span>
-            )}
-          </Button>
+            }}
+            className="h-14 rounded-r-none border-r-0 text-base"
+          />
+          {searchTerm && (
+            <button
+              type="button"
+              onClick={clearSearch}
+              className="absolute right-3 top-1/2 -translate-y-1/2 p-1 hover:bg-gray-100 rounded-full transition-colors"
+            >
+              <X className="h-4 w-4 text-gray-400" />
+            </button>
+          )}
         </div>
+        <Button
+          type="submit"
+          className={`h-14 px-6 rounded-l-none bg-health-primary hover:bg-health-secondary dark:bg-health-secondary dark:hover:bg-health-primary ${hasUnsearchedChanges ? 'ring-2 ring-health-secondary ring-opacity-50' : ''
+            }`}
+        >
+          <Search className="mr-2 h-5 w-5" />
+          <span className="text-base">Pretraži</span>
+          {hasUnsearchedChanges && (
+            <span className="ml-1 w-2 h-2 bg-health-secondary rounded-full"></span>
+          )}
+        </Button>
       </form>
 
       {/* Dropdown for search suggestions */}
@@ -263,8 +252,8 @@ const SearchBar: React.FC<SearchBarProps> = ({
           isLoadingGroups) && (
           <div className="absolute z-10 w-full mt-1 bg-white rounded-md shadow-lg max-h-80 overflow-auto dark:bg-gray-800 dark:border dark:border-gray-700">
             {isLoadingGroups && (
-              <div className="px-4 py-3 text-center text-gray-500 dark:text-gray-400">
-                <div className="animate-pulse">Pretraživanje...</div>
+              <div className="px-4 py-6 text-center">
+                <Spinner size="md" text="Pretraživanje..." />
               </div>
             )}
 
@@ -272,43 +261,33 @@ const SearchBar: React.FC<SearchBarProps> = ({
             {searchGroups.length > 0 && (
               <div>
                 <div className="px-4 py-2 text-xs font-medium text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-700">
-                  PROIZVODI
+                  REZULTATI PRETRAGE
                 </div>
                 <ul className="py-1">
                   {searchGroups.map((group) => (
                     <li
                       key={group.id}
-                      onClick={() => {
-                        handleSuggestionClick(
-                          humanizeTitle(group.normalized_name)
-                        );
-                      }}
-                      className="px-4 py-3 hover:bg-gray-100 cursor-pointer dark:hover:bg-gray-700 dark:text-gray-200 transition-colors"
+                      onClick={() => handleSuggestionClick(group.normalized_name)}
+                      className="px-4 py-3 hover:bg-gray-100 cursor-pointer flex items-center justify-between dark:hover:bg-gray-700 dark:text-gray-200 transition-colors"
                     >
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                          <div className="flex items-center justify-center h-10 w-10 rounded-md bg-health-light dark:bg-health-secondary">
-                            <Package className="h-5 w-5 text-health-primary dark:text-health-accent" />
-                          </div>
-                          <div>
-                            <div className="text-base font-medium">
-                              {humanizeTitle(group.normalized_name)}
-                              {group.dosage_value && (
-                                <span className="text-sm text-gray-500 ml-1">
-                                  {group.dosage_value} {group.dosage_unit}
-                                </span>
-                              )}
-                            </div>
-                            <div className="text-xs text-gray-500 dark:text-gray-400">
-                              {group.vendor_count} apoteka
-                            </div>
-                          </div>
-                        </div>
-                        <div className="text-right">
-                          <div className="text-sm font-medium text-health-primary dark:text-health-accent flex items-center">
-                            <TrendingDown className="h-4 w-4 mr-1" />
-                            {formatPrice(group.price_range.min)}
-                          </div>
+                      <div className="flex items-center gap-3">
+                        <Avatar className="h-10 w-10 rounded-md">
+                          <AvatarImage
+                            src={group.products[0]?.thumbnail || ""}
+                            alt={group.normalized_name}
+                          />
+                          <AvatarFallback className="rounded-md bg-gray-200 dark:bg-gray-700">
+                            {group.normalized_name.charAt(0)}
+                          </AvatarFallback>
+                        </Avatar>
+                        <span className="text-base">{group.normalized_name}</span>
+                      </div>
+                      <div className="text-right">
+                        <span className="text-sm text-gray-500 dark:text-gray-400">
+                          {group.product_count} proizvoda
+                        </span>
+                        <div className="text-xs text-gray-400 dark:text-gray-500">
+                          od {group.vendor_count} apoteka
                         </div>
                       </div>
                     </li>
@@ -391,7 +370,7 @@ const SearchBar: React.FC<SearchBarProps> = ({
           Probiotici
         </button>
       </div>
-      
+
       {hasUnsearchedChanges && (
         <div className="mt-1 text-xs text-health-primary dark:text-health-accent">
           Pritisnite Enter ili kliknite "Pretraži" da pretražite rezultate

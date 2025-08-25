@@ -1,31 +1,21 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import Navbar from "../components/Navbar";
-import ProductList from "../components/ProductList";
-import SearchResults from "../components/SearchResults";
-import Footer from "../components/Footer";
-import { trackSearch } from "../utils/analytics";
-import { useWishlist } from "../contexts/WishlistContext";
-import { initPriceChecking } from "../utils/priceNotifications";
-import HeroSection from "../components/HeroSection";
-import {
-  searchProducts,
-  searchAllProducts,
-  getFeaturedProducts,
-} from "../lib/api";
-import {
-  SearchResult,
-  ProductGroup,
-  convertProductGroupToProducts,
-  Product,
-} from "../types/product";
+import { useWishlist } from "@/contexts/WishlistContext";
+import Navbar from "@/components/Navbar";
+import HeroSection from "@/components/HeroSection";
+import ProductList from "@/components/ProductList";
+import { searchProducts, getFeaturedProducts, SearchResult } from "@/lib/api";
+import { convertProductGroupToProducts } from "@/types/product";
+import { Spinner } from "@/components/ui/spinner";
+import { SpinnerInline } from "@/components/ui/spinner";
+import Footer from "@/components/Footer";
 
 export const dynamic = 'force-dynamic';
 
 export default function HomePage() {
   const { wishlist } = useWishlist();
-  
+
   const [searchTerm, setSearchTerm] = useState("");
 
   // API search state
@@ -61,151 +51,95 @@ export default function HomePage() {
 
   // Process URL search parameter on load
   useEffect(() => {
-    try {
-      const params = new URLSearchParams(window.location.search);
-      const urlSearchTerm = params.get("search") || "";
-      console.log("URL search param changed:", urlSearchTerm);
+    const searchParams = new URLSearchParams(window.location.search);
+    const urlSearchTerm = searchParams.get("q");
+    if (urlSearchTerm && urlSearchTerm.trim()) {
       setSearchTerm(urlSearchTerm);
-      setCurrentPage(1); // Reset to first page on new search
-
-      if (urlSearchTerm && urlSearchTerm.trim()) {
-        // Use API search for actual queries
-        performApiSearch(urlSearchTerm);
-      } else {
-        // Load featured products for browsing/no search
-        setUseApiSearch(false);
-        setApiSearchResults(null);
-        loadFeaturedProducts();
-      }
-
-      // Track search from URL parameter if it exists
-      if (urlSearchTerm) {
-        trackSearch(urlSearchTerm, 0); // Will be updated when results come in
-      }
-    } catch {
-      // Fallback if URL parsing fails
+      setUseApiSearch(true);
+      handleSearch(urlSearchTerm);
+    } else {
       loadFeaturedProducts();
     }
   }, []);
 
-  // Check for price changes when the component loads and when wishlist changes
+  // Listen for URL search changes from other components
   useEffect(() => {
-    const isLoggedIn = localStorage.getItem("isLoggedIn") === "true";
-    if (isLoggedIn && wishlist.length > 0) {
-      initPriceChecking(wishlist, []);
-    }
-  }, [wishlist]);
-
-  // API search function with pagination support
-  const performApiSearch = async (query: string, loadMore: boolean = false) => {
-    if (!query.trim()) return;
-
-    if (!loadMore) {
-      setIsSearching(true);
-      setCurrentPage(1);
-    } else {
-      setIsLoadingMore(true);
-    }
-
-    setSearchError(null);
-    setUseApiSearch(true);
-
-    try {
-      console.log(
-        "Performing API search for:",
-        query,
-        "Page:",
-        loadMore ? currentPage + 1 : 1
-      );
-
-      // Let the backend decide the best search type
-      const searchType = "auto";
-
-      const results = await searchProducts(query, {
-        limit: itemsPerPage,
-        offset: loadMore ? currentPage * itemsPerPage : 0,
-        searchType: searchType,
-      });
-
-      console.log("API search results:", results);
-      console.log("Search type used:", results.search_type_used);
-
-      if (loadMore && apiSearchResults) {
-        // Append new results to existing ones
-        setApiSearchResults({
-          ...results,
-          groups: [...apiSearchResults.groups, ...results.groups],
-          offset: 0,
-          limit: apiSearchResults.groups.length + results.groups.length,
-        });
-        setCurrentPage(currentPage + 1);
-      } else {
-        setApiSearchResults(results);
-      }
-
-      // Track search with actual result count
-      if (!loadMore) {
-        trackSearch(query, results.total);
-      }
-    } catch (error) {
-      console.error("API search error:", error);
-      setSearchError(
-        error instanceof Error ? error.message : "Pretraga nije uspešna"
-      );
-
-      // Fallback to featured products when search fails
-      if (!loadMore) {
-        setUseApiSearch(false);
-        setApiSearchResults(null);
-        loadFeaturedProducts();
-      }
-    } finally {
-      setIsSearching(false);
-      setIsLoadingMore(false);
-    }
-  };
-
-  // Load more results
-  const handleLoadMore = () => {
-    if (searchTerm) {
-      performApiSearch(searchTerm, true);
-    }
-  };
-
-  // Listen for custom URL change events
-  useEffect(() => {
-    const handleUrlSearchChanged = (event: CustomEvent<{ term: string }>) => {
-      const term = event.detail.term;
-      setSearchTerm(term);
-      setCurrentPage(1); // Reset pagination
-
-      if (term && term.trim()) {
-        // Use API search for actual queries
-        performApiSearch(term);
-      } else {
-        // Load featured products for browsing/no search
-        setUseApiSearch(false);
-        setApiSearchResults(null);
-        loadFeaturedProducts();
+    const handleUrlSearchChanged = (event: CustomEvent) => {
+      const { searchTerm: newSearchTerm } = event.detail;
+      if (newSearchTerm !== searchTerm) {
+        setSearchTerm(newSearchTerm);
+        setUseApiSearch(true);
+        handleSearch(newSearchTerm);
       }
     };
 
-    // Add event listener
     window.addEventListener(
       "urlSearchChanged",
       handleUrlSearchChanged as EventListener
     );
 
-    // Cleanup
     return () => {
       window.removeEventListener(
         "urlSearchChanged",
         handleUrlSearchChanged as EventListener
       );
     };
-  }, []);
+  }, [searchTerm]);
 
+  const handleSearch = async (term: string) => {
+    if (!term || !term.trim()) {
+      setApiSearchResults(null);
+      setUseApiSearch(false);
+      setSearchError(null);
+      loadFeaturedProducts();
+      return;
+    }
 
+    setIsSearching(true);
+    setSearchError(null);
+    setCurrentPage(1);
+
+    try {
+      const results = await searchProducts(term, { limit: itemsPerPage });
+      setApiSearchResults(results);
+      setUseApiSearch(true);
+    } catch (error) {
+      console.error("Search error:", error);
+      setSearchError("Greška pri pretraživanju. Pokušajte ponovo.");
+      setApiSearchResults(null);
+    } finally {
+      setIsSearching(false);
+    }
+  };
+
+  const handleLoadMore = async () => {
+    if (!apiSearchResults || !hasMoreResults) return;
+
+    setIsLoadingMore(true);
+    try {
+      const nextPage = currentPage + 1;
+      const offset = (nextPage - 1) * itemsPerPage;
+
+      const moreResults = await searchProducts(searchTerm, {
+        limit: itemsPerPage,
+        offset,
+      });
+
+      // Merge new results with existing ones
+      setApiSearchResults({
+        ...moreResults,
+        groups: [...apiSearchResults.groups, ...moreResults.groups],
+        offset: 0, // Reset offset since we're merging
+      });
+
+      setCurrentPage(nextPage);
+    } catch (error) {
+      console.error("Load more error:", error);
+      setSearchError("Greška pri učitavanju dodatnih rezultata.");
+    } finally {
+      setIsLoadingMore(false);
+    }
+  };
 
   // Calculate if there are more results to load
   const hasMoreResults =
@@ -261,12 +195,11 @@ export default function HomePage() {
 
           {useApiSearch ? (
             isSearching && !isLoadingMore ? (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {[...Array(6)].map((_, i) => (
-                  <div key={i} className="animate-pulse">
-                    <div className="bg-gray-200 dark:bg-gray-700 rounded-lg h-64"></div>
-                  </div>
-                ))}
+              <div className="flex flex-col items-center justify-center py-16">
+                <Spinner size="xl" text="Pretraživanje proizvoda..." />
+                <p className="mt-4 text-gray-600 dark:text-gray-400 text-center max-w-md">
+                  Pretražujemo bazu proizvoda i pronalazimo najbolje rezultate za vašu pretragu
+                </p>
               </div>
             ) : searchError ? (
               <div className="text-center py-12">
@@ -290,29 +223,7 @@ export default function HomePage() {
                       className="px-6 py-3 bg-health-blue text-white rounded-md hover:bg-health-purple transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       {isLoadingMore ? (
-                        <span className="flex items-center">
-                          <svg
-                            className="animate-spin -ml-1 mr-3 h-5 w-5 text-white"
-                            xmlns="http://www.w3.org/2000/svg"
-                            fill="none"
-                            viewBox="0 0 24 24"
-                          >
-                            <circle
-                              className="opacity-25"
-                              cx="12"
-                              cy="12"
-                              r="10"
-                              stroke="currentColor"
-                              strokeWidth="4"
-                            ></circle>
-                            <path
-                              className="opacity-75"
-                              fill="currentColor"
-                              d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                            ></path>
-                          </svg>
-                          Učitavanje...
-                        </span>
+                        <SpinnerInline size="sm" text="Učitavanje..." />
                       ) : (
                         `Učitaj još (${apiSearchResults.total - totalProductsShown
                         } preostalo)`
@@ -326,34 +237,27 @@ export default function HomePage() {
                 <p className="text-lg text-gray-600 dark:text-gray-400">
                   Nema rezultata za vašu pretragu
                 </p>
-                <p className="text-sm text-gray-500 dark:text-gray-500 mt-2">
+                <p className="mt-2 text-sm text-gray-500 dark:text-gray-500">
                   Pokušajte sa drugačijim ključnim rečima
                 </p>
               </div>
             )
-          ) : isLoadingFeatured ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {[...Array(6)].map((_, i) => (
-                <div key={i} className="animate-pulse">
-                  <div className="bg-gray-200 dark:bg-gray-700 rounded-lg h-64"></div>
-                </div>
-              ))}
-            </div>
-          ) : featuredProducts && featuredProducts.groups.length > 0 ? (
-            <ProductList
-              products={featuredProducts.groups.flatMap((group) =>
-                convertProductGroupToProducts(group)
-              )}
-            />
           ) : (
-            <div className="text-center py-12">
-              <p className="text-lg text-gray-600 dark:text-gray-400">
-                Trenutno nema dostupnih proizvoda
-              </p>
-              <p className="text-sm text-gray-500 dark:text-gray-500 mt-2">
-                Molimo pokušajte kasnije
-              </p>
-            </div>
+            <>
+              {isLoadingFeatured ? (
+                <div className="flex flex-col items-center justify-center py-16">
+                  <Spinner size="lg" text="Učitavanje popularnih proizvoda..." />
+                </div>
+              ) : (
+                featuredProducts && (
+                  <ProductList
+                    products={featuredProducts.groups.flatMap((group) =>
+                      convertProductGroupToProducts(group)
+                    )}
+                  />
+                )
+              )}
+            </>
           )}
         </section>
       </main>
