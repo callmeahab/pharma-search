@@ -10,6 +10,8 @@ import { useToast } from "@/components/ui/use-toast";
 
 export const dynamic = 'force-dynamic';
 
+const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
+
 export default function ContactPage() {
   const { toast } = useToast();
   const [name, setName] = useState("");
@@ -22,7 +24,7 @@ export default function ContactPage() {
     if (!name || !email || !message) return;
     setSubmitting(true);
     try {
-      const res = await fetch("/api/contact", {
+      const res = await fetch(`${BACKEND_URL}/api/contact`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name, email, message }),
