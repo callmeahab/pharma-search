@@ -90,6 +90,7 @@ frontend/bun.lockb
 *.sqlite
 *.db
 pharma_search.db
+*.sql.backup
 scrapers_logs/
 .vscode/
 .idea/

@@ -1,10 +1,13 @@
 from fastapi import FastAPI, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from typing import Optional, List
 import logging
 import os
 import smtplib
 import ssl
+import json
+import asyncio
 from email.message import EmailMessage
 from pydantic import BaseModel, EmailStr
 
@@ -125,6 +128,108 @@ async def contact(payload: ContactPayload):
         raise HTTPException(status_code=500, detail="Contact failed")
 
 
+@app.get("/api/autocomplete")
+async def autocomplete(
+    q: str = Query(..., description="Search query for autocomplete"),
+    limit: int = Query(8, ge=1, le=20),
+):
+    """Fast autocomplete search endpoint"""
+    try:
+        # Use the fast autocomplete function with explicit type casting
+        async with search_engine.pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT * FROM fast_autocomplete_search($1::text, $2::integer)",
+                q, limit
+            )
+            
+            # Convert to simple format for autocomplete
+            suggestions = []
+            for row in rows:
+                suggestions.append({
+                    "id": row["id"],
+                    "title": row["title"],
+                    "price": float(row["price"]),
+                    "vendor_name": row["vendor_name"],
+                })
+            
+            return {
+                "suggestions": suggestions,
+                "query": q,
+                "limit": limit
+            }
+    except Exception as e:
+        logger.error(f"Autocomplete error: {e}")
+        raise HTTPException(status_code=500, detail="Autocomplete failed")
+
+@app.get("/api/search-groups")
+async def search_groups(
+    q: str = Query(..., description="Search query"),
+    limit: int = Query(20, ge=1, le=100),
+):
+    """Fast search using precomputed groups"""
+    try:
+        async with search_engine.pool.acquire() as conn:
+            # Try precomputed groups first
+            groups = await conn.fetch(
+                "SELECT * FROM search_product_groups($1::text, $2::integer)",
+                q, limit
+            )
+            
+            if not groups:
+                # Fallback to regular search
+                return await search(q, limit, 0)
+            
+            # Convert to our format
+            result_groups = []
+            for group in groups:
+                # Get sample products from this group
+                products = await conn.fetch("""
+                    SELECT p.id, p.title, p.price, p."vendorId", v.name as vendor_name, 
+                           p.link, p.thumbnail, b.name as brand_name
+                    FROM "Product" p
+                    JOIN "Vendor" v ON v.id = p."vendorId"
+                    LEFT JOIN "Brand" b ON b.id = p."brandId"
+                    WHERE p.id = ANY($1::text[])
+                    ORDER BY p.price ASC
+                    LIMIT 20
+                """, group["product_ids"])
+                
+                result_groups.append({
+                    "id": f"group_{group['group_id']}",
+                    "normalized_name": group["display_name"],
+                    "products": [
+                        {
+                            "id": p["id"],
+                            "title": p["title"],
+                            "price": float(p["price"]),
+                            "vendor_id": p["vendorId"],
+                            "vendor_name": p["vendor_name"],
+                            "link": p["link"],
+                            "thumbnail": p["thumbnail"],
+                            "brand_name": p["brand_name"] or ""
+                        } for p in products
+                    ],
+                    "price_range": {
+                        "min": float(group["min_price"]),
+                        "max": float(group["max_price"]),
+                        "avg": float(group["avg_price"]) if group["avg_price"] else 0
+                    },
+                    "vendor_count": int(group["vendor_count"]),
+                    "product_count": int(group["product_count"]),
+                })
+            
+            return {
+                "groups": result_groups,
+                "total": len(result_groups),
+                "offset": 0,
+                "limit": limit,
+                "search_type_used": "precomputed_groups"
+            }
+    except Exception as e:
+        logger.error(f"Groups search error: {e}")
+        # Fallback to regular search
+        return await search(q, limit, 0)
+
 @app.get("/api/search")
 async def search(
     q: str = Query(..., description="Search query"),
@@ -186,6 +291,76 @@ async def search(
     except Exception as e:
         logger.error(f"Search error: {e}")
         raise HTTPException(status_code=500, detail="Search failed")
+
+
+@app.get("/api/search-stream")
+async def search_stream(
+    q: str = Query(..., description="Search query"),
+    limit: int = Query(50, ge=1, le=200),
+):
+    """Streaming search endpoint - returns results as they're found"""
+    
+    async def generate_search_stream():
+        try:
+            # Send initial response
+            yield f"data: {json.dumps({'type': 'start', 'query': q})}\n\n"
+            
+            # Get search results in batches
+            batch_size = 10
+            offset = 0
+            total_sent = 0
+            
+            while total_sent < limit:
+                current_batch_size = min(batch_size, limit - total_sent)
+                
+                # Search for this batch
+                results = await search_engine.search(
+                    query=q,
+                    filters=None,
+                    group_results=True,
+                    limit=current_batch_size,
+                    offset=offset,
+                    force_db_search=False,
+                )
+                
+                if not results.get("groups"):
+                    break
+                
+                # Send batch results
+                batch_data = {
+                    'type': 'batch',
+                    'groups': results["groups"],
+                    'offset': offset,
+                    'batch_size': len(results["groups"])
+                }
+                yield f"data: {json.dumps(batch_data)}\n\n"
+                
+                total_sent += len(results["groups"])
+                offset += current_batch_size
+                
+                # Small delay to prevent overwhelming
+                await asyncio.sleep(0.05)
+                
+                # Stop if we got fewer results than requested
+                if len(results["groups"]) < current_batch_size:
+                    break
+            
+            # Send completion signal
+            yield f"data: {json.dumps({'type': 'complete', 'total': total_sent})}\n\n"
+            
+        except Exception as e:
+            logger.error(f"Streaming search error: {e}")
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+    
+    return StreamingResponse(
+        generate_search_stream(),
+        media_type="text/plain",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # Disable nginx buffering
+        }
+    )
 
 
 @app.post("/api/process")

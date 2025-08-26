@@ -161,9 +161,11 @@ main() {
     echo "4) Everything"
     echo "5) Just restart services"
     echo "6) Run database migrations"
+    echo "7) Optimize search performance"
+    echo "8) Apply ALL search optimizations"
     echo "q) Quit"
     
-    read -p "Choose (1-6,q): " -n 1 -r
+    read -p "Choose (1-8,q): " -n 1 -r
     echo
     
     case $REPLY in
@@ -190,6 +192,34 @@ main() {
                 pm2 restart pharma-nextjs
 EOF
             print_success "Migrations completed"
+            ;;
+        7)
+            ssh -p "$SERVER_PORT" "$SERVER_USER@$SERVER_IP" << 'EOF'
+                cd /var/www/pharma-search
+                echo "⚡ Running search performance optimization..."
+                if [ -f "/var/www/pharma-search/deploy/optimize-search.sh" ]; then
+                    sudo bash /var/www/pharma-search/deploy/optimize-search.sh
+                else
+                    echo "❌ Search optimization script not found!"
+                    echo "Please ensure optimize-search.sh is synced to the server"
+                fi
+EOF
+            print_success "Search optimization completed"
+            ;;
+        8)
+            ssh -p "$SERVER_PORT" "$SERVER_USER@$SERVER_IP" << 'EOF'
+                cd /var/www/pharma-search
+                echo "🚀 Running comprehensive search optimization..."
+                if [ -f "/var/www/pharma-search/deploy/apply-search-optimizations.sh" ]; then
+                    sudo bash /var/www/pharma-search/deploy/apply-search-optimizations.sh
+                    echo "🔄 Restarting backend services..."
+                    pm2 restart pharma-backend
+                else
+                    echo "❌ Comprehensive optimization script not found!"
+                    echo "Please ensure apply-search-optimizations.sh is synced to the server"
+                fi
+EOF
+            print_success "Comprehensive search optimization completed"
             ;;
         q) 
             print_warning "Cancelled"

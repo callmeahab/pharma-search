@@ -85,6 +85,53 @@ sed -i "s/#listen_addresses = 'localhost'/listen_addresses = 'localhost'/" "$PG_
 echo "🔄 Restarting PostgreSQL..."
 systemctl restart postgresql
 
+# Apply search optimizations
+echo "⚡ Applying search performance optimizations..."
+APP_DIR="/var/www/pharma-search"
+DB_NAME="pharma_search"
+
+# Apply basic search indexes
+if [ -f "$APP_DIR/backend/sql/optimize_search_indexes.sql" ]; then
+    sudo -u postgres psql -d "$DB_NAME" -f "$APP_DIR/backend/sql/optimize_search_indexes.sql"
+    echo "✅ Basic search indexes applied"
+else
+    echo "⚠️ Warning: optimize_search_indexes.sql not found in backend/sql/"
+fi
+
+# Apply enhanced search functions (CRITICAL)
+echo "🔍 Applying enhanced search functions..."
+if [ -f "$APP_DIR/backend/sql/enhanced_search_functions.sql" ]; then
+    sudo -u postgres psql -d "$DB_NAME" -f "$APP_DIR/backend/sql/enhanced_search_functions.sql"
+    echo "✅ Enhanced search functions applied successfully"
+    echo "   - Pharmaceutical abbreviation expansion enabled"
+    echo "   - Fuzzy search with trigram matching enabled"
+    echo "   - Dosage-aware search functions installed"
+else
+    echo "❌ ERROR: enhanced_search_functions.sql not found!"
+    echo "   Search functionality will be severely limited without this file"
+    echo "   Please ensure $APP_DIR/backend/sql/enhanced_search_functions.sql exists"
+    exit 1
+fi
+
+# Test the search functions
+echo "🧪 Testing search functions..."
+SEARCH_TEST=$(sudo -u postgres psql -d "$DB_NAME" -t -c "SELECT expand_pharma_abbreviations('vitc');" 2>/dev/null || echo "error")
+if [ "$SEARCH_TEST" != "error" ]; then
+    echo "✅ Search functions test passed"
+    echo "   abbreviation expansion: vitc → $(echo $SEARCH_TEST | xargs)"
+else
+    echo "⚠️ Warning: Could not test search functions"
+fi
+
+# All search optimizations and functions are now handled by enhanced_search_functions.sql
+echo ""
+echo "🎉 PostgreSQL setup completed successfully!"
+echo "   Database: $DB_NAME"
+echo "   Enhanced search functionality: ✅ Enabled"
+echo "   Ready for application deployment!"
+
+echo "✅ All search optimizations applied successfully"
+
 # Test connection
 echo "🧪 Testing database connection..."
 sudo -u postgres psql -d pharma_search -c "SELECT 'Database connection successful!' as status;"

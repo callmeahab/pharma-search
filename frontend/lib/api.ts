@@ -61,6 +61,35 @@ export interface SearchResult {
   search_type_used?: "auto" | "similarity" | "database";
 }
 
+export interface AutocompleteResult {
+  suggestions: {
+    id: string;
+    title: string;
+    price: number;
+    vendor_name: string;
+  }[];
+  query: string;
+  limit: number;
+}
+
+export async function autocomplete(
+  query: string,
+  limit: number = 8
+): Promise<AutocompleteResult> {
+  const params = new URLSearchParams({
+    q: query,
+    limit: limit.toString(),
+  });
+
+  const response = await fetch(`${API_URL}/api/autocomplete?${params}`);
+
+  if (!response.ok) {
+    throw new Error(`Autocomplete failed: ${response.status} ${response.statusText}`);
+  }
+
+  return response.json();
+}
+
 export async function searchProducts(
   query: string,
   options?: SearchOptions
@@ -94,6 +123,61 @@ export async function searchProducts(
   }
 
   return response.json();
+}
+
+export async function searchProductsStreaming(
+  query: string,
+  onBatch: (groups: ProductGroup[], isComplete: boolean) => void,
+  options?: { limit?: number }
+): Promise<void> {
+  const params = new URLSearchParams({
+    q: query,
+    limit: (options?.limit || 50).toString(),
+  });
+
+  const response = await fetch(`${API_URL}/api/search-stream?${params}`);
+  
+  if (!response.ok) {
+    throw new Error(`Streaming search failed: ${response.status}`);
+  }
+
+  const reader = response.body?.getReader();
+  const decoder = new TextDecoder();
+
+  if (!reader) {
+    throw new Error("No response body available");
+  }
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      
+      if (done) break;
+      
+      const chunk = decoder.decode(value);
+      const lines = chunk.split('\n');
+      
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          try {
+            const data = JSON.parse(line.slice(6));
+            
+            if (data.type === 'batch' && data.groups) {
+              onBatch(data.groups, false);
+            } else if (data.type === 'complete') {
+              onBatch([], true);
+            } else if (data.type === 'error') {
+              throw new Error(data.message);
+            }
+          } catch (parseError) {
+            console.warn('Failed to parse streaming data:', parseError);
+          }
+        }
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
 }
 
 export async function searchAllProducts(

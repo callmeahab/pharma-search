@@ -5,6 +5,7 @@ import logging
 import os
 import hashlib
 import asyncio
+import re
 from functools import lru_cache
 from rapidfuzz import fuzz
 from collections import defaultdict
@@ -30,6 +31,7 @@ class PharmaSearchEngine:
         # Removed FAISS similarity matcher
         self.pool: asyncpg.pool.Pool
         self._search_cache = {}
+        self._cache_stats = {"hits": 0, "misses": 0}
 
     async def connect(self):
         """Initialize connection"""
@@ -109,8 +111,14 @@ class PharmaSearchEngine:
         if cache_key in self._search_cache:
             cache_entry = self._search_cache[cache_key]
             if self._is_cache_valid(cache_entry):
-                logger.debug(f"Cache hit for query: {query}")
+                self._cache_stats["hits"] += 1
+                logger.debug(f"Cache hit for query: {query} (hit rate: {self._cache_stats['hits']/(self._cache_stats['hits']+self._cache_stats['misses']):.2%})")
                 return cache_entry["result"]
+            else:
+                # Remove expired cache entry
+                del self._search_cache[cache_key]
+        
+        self._cache_stats["misses"] += 1
         
         # Execute search using database only
         if group_results:
@@ -144,7 +152,7 @@ class PharmaSearchEngine:
         is_specific_product_query = len(query_words) >= 3 and any(len(word) > 2 for word in query_words)
 
         # Get exact matches using enhanced scoring - but return products, not groups
-        exact_matches = await self._get_exact_matches(query_lower)
+        exact_matches = await self._get_exact_matches(query_lower, limit)
         
         logger.info(f"Database search found {len(exact_matches)} matches for query: '{query}'")
 
@@ -159,196 +167,36 @@ class PharmaSearchEngine:
             exact_matches, query_lower, filters, limit, offset
         )
 
-    async def _get_exact_matches(self, query: str) -> List[str]:
-        """Get product IDs that match the query exactly or as a whole word"""
+    async def _get_exact_matches(self, query: str, limit: int = 100) -> List[str]:
+        """Get product IDs that match the query exactly or as a whole word - OPTIMIZED"""
         async with self.pool.acquire() as conn:
             query_len = len(query.strip())
             query_words = query.lower().split()
             is_specific_product_query = len(query_words) >= 3 and any(len(word) > 2 for word in query_words)
 
+            # Limit results early to reduce grouping overhead
+            search_limit = min(limit * 5, 300)  # Much smaller limit
+            
             if query_len <= 3:
+                # Use the optimized search function for short queries
                 rows = await conn.fetch(
                     """
-                    SELECT DISTINCT p.id,
-                        -- Prioritize full-text search matches
-                        CASE WHEN p."searchVector" @@ plainto_tsquery('english', $1) THEN 0
-                             WHEN p.title ILIKE ($1 || '%') THEN 1
-                             WHEN p."normalizedName" ILIKE ($1 || '%') THEN 2
-                             WHEN b.name ILIKE ($1 || '%') THEN 3
-                             ELSE 4 END as priority_score
-                    FROM "Product" p
-                    LEFT JOIN "Brand" b ON p."brandId" = b.id
-                    WHERE
-                        -- Use full-text search for better performance
-                        p."searchVector" @@ plainto_tsquery('english', $1) OR
-                        -- Prefix matches (starts with)
-                        p.title ILIKE ($1 || '%') OR
-                        p."normalizedName" ILIKE ($1 || '%') OR
-                        b.name ILIKE ($1 || '%') OR
-                        -- Token array search
-                        $1 = ANY(p."searchTokens") OR
-                        -- Partial token matching
-                        EXISTS (
-                            SELECT 1 FROM unnest(p."searchTokens") AS token
-                            WHERE token ILIKE ($1 || '%')
-                        )
-                    ORDER BY priority_score
+                    SELECT id, relevance_score as priority_score
+                    FROM fast_product_search($1::text, NULL, NULL, NULL, NULL, $2::integer)
+                    ORDER BY relevance_score DESC
                     """,
-                    query,
+                    query, search_limit
                 )
             else:
-                # For longer, specific queries, prioritize phrase matching over token matching
-                if is_specific_product_query:
-                    rows = await conn.fetch(
-                        """
-                        SELECT DISTINCT p.id, 
-                            -- Enhanced relevance score with fuzzy matching and length normalization
-                            (CASE 
-                                -- Exact title match (highest priority)
-                                WHEN p.title ILIKE $1 OR p."normalizedName" ILIKE $1 THEN 4000
-                                -- High similarity using trigrams (very high priority) - CHECK BEFORE phrase match
-                                WHEN similarity(p.title, $1) > 0.8 OR similarity(p."normalizedName", $1) > 0.8 THEN 
-                                    2500 + (GREATEST(similarity(p.title, $1), similarity(p."normalizedName", $1)) * 500)::int
-                                -- Medium similarity using trigrams - CHECK BEFORE phrase match
-                                WHEN similarity(p.title, $1) > 0.6 OR similarity(p."normalizedName", $1) > 0.6 THEN 
-                                    2000 + (GREATEST(similarity(p.title, $1), similarity(p."normalizedName", $1)) * 300)::int
-                                -- Very close phrase matches (boosted priority, but penalize if target is too short)
-                                WHEN p.title ILIKE ('%' || $1 || '%') OR p."normalizedName" ILIKE ('%' || $1 || '%') THEN 
-                                    CASE 
-                                        WHEN length(COALESCE(p."normalizedName", p.title)) < length($1) * 0.7 THEN 800  -- Penalize if target much shorter than query
-                                        WHEN length(COALESCE(p."normalizedName", p.title)) < 10 THEN 1200  -- Moderate penalty for very short names
-                                        ELSE 3000 
-                                    END
-                                -- Brand exact match
-                                WHEN b.name ILIKE $1 THEN 2200
-                                -- Brand phrase match (with length check)
-                                WHEN b.name ILIKE ('%' || $1 || '%') THEN 
-                                    CASE WHEN length(b.name) < 8 THEN 900 ELSE 1800 END
-                                -- Brand similarity
-                                WHEN similarity(b.name, $1) > 0.7 THEN 1600 + (similarity(b.name, $1) * 200)::int
-                                -- Prefix match (medium-high priority, with length normalization)
-                                WHEN p.title ILIKE ($1 || '%') OR p."normalizedName" ILIKE ($1 || '%') OR b.name ILIKE ($1 || '%') THEN 
-                                    CASE WHEN length(COALESCE(p."normalizedName", p.title)) < 15 THEN 700 ELSE 1400 END
-                                -- Full-text search match (medium priority)
-                                WHEN p."searchVector" @@ plainto_tsquery('english', $1) THEN 
-                                    (ts_rank(p."searchVector", plainto_tsquery('english', $1)) * 100 + 800)::int
-                                -- Medium similarity for fuzzy matching
-                                WHEN similarity(p.title, $1) > 0.4 OR similarity(p."normalizedName", $1) > 0.4 THEN 
-                                    800 + (GREATEST(similarity(p.title, $1), similarity(p."normalizedName", $1)) * 400)::int
-                                -- Token exact match (lower priority for specific queries, heavily penalize short names)
-                                WHEN $1 = ANY(p."searchTokens") THEN 
-                                    CASE WHEN length(COALESCE(p."normalizedName", p.title)) < 10 THEN 200 ELSE 600 END
-                                -- Token prefix match (lowest priority)
-                                WHEN EXISTS (
-                                    SELECT 1 FROM unnest(p."searchTokens") AS token 
-                                    WHERE token ILIKE ($1 || '%')
-                                ) THEN 
-                                    CASE WHEN length(COALESCE(p."normalizedName", p.title)) < 10 THEN 100 ELSE 400 END
-                                ELSE 50
-                            END) as relevance_score
-                        FROM "Product" p
-                        LEFT JOIN "Brand" b ON p."brandId" = b.id
-                        WHERE 
-                            -- Much broader search - any occurrence anywhere
-                            p.title ILIKE ('%' || $1 || '%') OR
-                            p."normalizedName" ILIKE ('%' || $1 || '%') OR
-                            b.name ILIKE ('%' || $1 || '%') OR
-                            -- Exact matches
-                            p.title ILIKE $1 OR
-                            p."normalizedName" ILIKE $1 OR
-                            b.name ILIKE $1 OR
-                            -- Prefix matches
-                            p.title ILIKE ($1 || '%') OR
-                            p."normalizedName" ILIKE ($1 || '%') OR
-                            b.name ILIKE ($1 || '%') OR
-                            -- Trigram similarity (lower threshold)
-                            similarity(p.title, $1) > 0.3 OR
-                            similarity(p."normalizedName", $1) > 0.3 OR
-                            similarity(b.name, $1) > 0.3 OR
-                            -- Full-text search
-                            p."searchVector" @@ plainto_tsquery('english', $1) OR
-                            -- Token matching (no length restrictions)
-                            $1 = ANY(p."searchTokens") OR
-                            EXISTS (
-                                SELECT 1 FROM unnest(p."searchTokens") AS token 
-                                WHERE token ILIKE ($1 || '%')
-                            )
-                        ORDER BY relevance_score DESC
-                        """,
-                        query,
-                    )
-                else:
-                    # Enhanced logic for non-specific queries
-                    rows = await conn.fetch(
-                        """
-                        SELECT DISTINCT p.id, 
-                            -- Enhanced relevance score with fuzzy matching
-                            (CASE 
-                                -- Exact title match (highest priority)
-                                WHEN p.title ILIKE $1 OR p."normalizedName" ILIKE $1 THEN 2000
-                                -- Near exact match using similarity (very high priority)
-                                WHEN similarity(p.title, $1) > 0.8 OR similarity(p."normalizedName", $1) > 0.8 THEN 
-                                    1500 + (GREATEST(similarity(p.title, $1), similarity(p."normalizedName", $1)) * 300)::int
-                                -- Brand exact match
-                                WHEN b.name ILIKE $1 THEN 1400
-                                -- Full-text search match (high priority)
-                                WHEN p."searchVector" @@ plainto_tsquery('english', $1) THEN 
-                                    (ts_rank(p."searchVector", plainto_tsquery('english', $1)) * 150 + 800)::int
-                                -- Medium similarity fuzzy matching
-                                WHEN similarity(p.title, $1) > 0.5 OR similarity(p."normalizedName", $1) > 0.5 THEN 
-                                    1000 + (GREATEST(similarity(p.title, $1), similarity(p."normalizedName", $1)) * 200)::int
-                                -- Brand similarity
-                                WHEN similarity(b.name, $1) > 0.6 THEN 900 + (similarity(b.name, $1) * 100)::int
-                                -- Prefix match (medium-high priority)
-                                WHEN p.title ILIKE ($1 || '%') OR
-                                    p."normalizedName" ILIKE ($1 || '%') OR
-                                    b.name ILIKE ($1 || '%') THEN 700
-                                -- Token exact match
-                                WHEN $1 = ANY(p."searchTokens") THEN 600
-                                -- Substring match (medium priority)
-                                WHEN p.title ILIKE ('%' || $1 || '%') OR
-                                    p."normalizedName" ILIKE ('%' || $1 || '%') THEN 500
-                                -- Lower similarity fuzzy matching
-                                WHEN similarity(p.title, $1) > 0.3 OR similarity(p."normalizedName", $1) > 0.3 THEN 
-                                    400 + (GREATEST(similarity(p.title, $1), similarity(p."normalizedName", $1)) * 100)::int
-                                -- Token prefix match
-                                WHEN EXISTS (
-                                    SELECT 1 FROM unnest(p."searchTokens") AS token 
-                                    WHERE token ILIKE ($1 || '%')
-                                ) THEN 300
-                                ELSE 100
-                            END) as relevance_score
-                        FROM "Product" p
-                        LEFT JOIN "Brand" b ON p."brandId" = b.id
-                        WHERE 
-                            -- Broadest possible search - any occurrence anywhere
-                            p.title ILIKE ('%' || $1 || '%') OR
-                            p."normalizedName" ILIKE ('%' || $1 || '%') OR
-                            b.name ILIKE ('%' || $1 || '%') OR
-                            -- Exact matches
-                            p.title ILIKE $1 OR
-                            p."normalizedName" ILIKE $1 OR
-                            b.name ILIKE $1 OR
-                            -- Prefix matching
-                            p.title ILIKE ($1 || '%') OR
-                            p."normalizedName" ILIKE ($1 || '%') OR
-                            b.name ILIKE ($1 || '%') OR
-                            -- Trigram similarity (very low threshold)
-                            similarity(p.title, $1) > 0.2 OR
-                            similarity(p."normalizedName", $1) > 0.2 OR
-                            similarity(b.name, $1) > 0.2 OR
-                            -- Full-text search
-                            p."searchVector" @@ plainto_tsquery('english', $1) OR
-                            -- Token matching (no restrictions)
-                            $1 = ANY(p."searchTokens") OR
-                            EXISTS (
-                                SELECT 1 FROM unnest(p."searchTokens") AS token 
-                                WHERE token ILIKE ($1 || '%')
-                            )
-                        ORDER BY relevance_score DESC
-                        """,
-                            query,
-                    )
+                # Use the optimized search function for all longer queries
+                rows = await conn.fetch(
+                    """
+                    SELECT id, relevance_score
+                    FROM fast_product_search($1::text, NULL, NULL, NULL, NULL, $2::integer)
+                    ORDER BY relevance_score DESC
+                    """,
+                    query, search_limit
+                )
 
             return [row["id"] for row in rows]
 
@@ -541,101 +389,343 @@ class PharmaSearchEngine:
             }
 
     def _group_products_dynamically(self, products: List[Dict], query: str, product_ids: List[str]) -> List[Dict]:
-        """Group products dynamically based on similarity and query context with enhanced criteria"""
+        """Improved dynamic grouping with better similarity matching"""
         
-        query_words = set(query.lower().split())
-        has_dosage_in_query = any(word for word in query_words if any(char.isdigit() for char in word))
+        if not products:
+            return []
         
-        # Extract enhanced identity for each product
-        product_identities = {}
-        for product in products:
-            name = product.get("normalizedName") or product.get("title") or ""
-            identity = self._extract_enhanced_product_identity(name, query, has_dosage_in_query)
-            product_identities[product["id"]] = identity
+        # Create groups using improved similarity matching
+        groups = []
+        ungrouped_products = products.copy()
         
-        # Group products by enhanced similarity
-        groups_dict = defaultdict(list)
-        processed = set()
-        
-        for product in products:
-            if product["id"] in processed:
-                continue
-                
-            product_identity = product_identities[product["id"]]
-            group_key = product_identity["core"]
+        while ungrouped_products:
+            # Start new group with first ungrouped product
+            current_product = ungrouped_products.pop(0)
+            current_group = [current_product]
             
-            # Find similar products to group with
-            group_products = [product]
-            processed.add(product["id"])
+            # Find all products that should be grouped with current product
+            remaining = []
+            for product in ungrouped_products:
+                if self._should_group_products(current_product, product):
+                    current_group.append(product)
+                else:
+                    remaining.append(product)
             
-            for other_product in products:
-                if other_product["id"] in processed:
-                    continue
-                    
-                other_identity = product_identities[other_product["id"]]
-                
-                # Check if they should be grouped using enhanced criteria
-                if self._should_group_enhanced(product_identity, other_identity, query):
-                    group_products.append(other_product)
-                    processed.add(other_product["id"])
+            ungrouped_products = remaining
             
-            groups_dict[group_key] = group_products
-        
-        # Convert to output format
-        result_groups = []
-        for group_name, group_products in groups_dict.items():
-            if not group_products:
-                continue
+            # Create group data structure
+            if current_group:
+                # Sort by price
+                current_group.sort(key=lambda x: float(x.get('price', 0)))
                 
-            # Keep all products from all vendors
-            final_products = group_products
-            final_products.sort(key=lambda x: x["price"])
-            
-            if final_products:
-                min_price = min(p["price"] for p in final_products)
-                max_price = max(p["price"] for p in final_products)
+                # Generate group name from the most common/representative product name
+                group_name = self._generate_group_name([p['title'] for p in current_group])
                 
-                result_groups.append({
-                    "id": f"dynamic_{hash(group_name)}",
+                prices = [float(p.get('price', 0)) for p in current_group]
+                
+                groups.append({
+                    "id": f"improved_{abs(hash(group_name))}",
                     "normalized_name": group_name,
                     "products": [
                         {
-                            "id": p["id"],
-                            "title": p["title"],
-                            "price": float(p["price"]),
-                            "vendor_id": p["vendorId"],
-                            "vendor_name": p["vendor_name"],
-                            "link": p["link"],
-                            "thumbnail": p["thumbnail"],
-                            "brand_name": p["brand_name"]
-                        } for p in final_products
+                            "id": p.get("id", ""),
+                            "title": p.get("title", ""),
+                            "price": float(p.get("price", 0)),
+                            "vendor_id": p.get("vendorId", p.get("vendor_id", "")),
+                            "vendor_name": p.get("vendor_name", ""),
+                            "link": p.get("link", ""),
+                            "thumbnail": p.get("thumbnail", ""),
+                            "brand_name": p.get("brand_name", "")
+                        } for p in current_group
                     ],
                     "price_range": {
-                        "min": float(min_price),
-                        "max": float(max_price)
+                        "min": float(min(prices)) if prices else 0.0,
+                        "max": float(max(prices)) if prices else 0.0
                     },
-                    "vendor_count": len(set(p["vendorId"] for p in final_products)),
-                    "product_count": len(final_products),
+                    "vendor_count": len(set(p.get("vendorId", p.get("vendor_id", "")) for p in current_group)),
+                    "product_count": len(current_group),
                     "dosage_value": None,
                     "dosage_unit": None
                 })
         
-        # Sort groups by preserving search relevance order from product_ids
-        # Create a mapping of product_id to its position in the search results
+        # Sort groups by search relevance
         product_positions = {pid: idx for idx, pid in enumerate(product_ids)}
         
-        # For each group, find the best (earliest) position of any product in the group
-        for group in result_groups:
-            min_position = len(product_ids)  # Default to end if not found
-            for product in group["products"]:
-                product_pos = product_positions.get(product["id"], len(product_ids))
-                min_position = min(min_position, product_pos)
-            group["search_rank"] = min_position
+        for group in groups:
+            first_product_pos = product_positions.get(group["products"][0]["id"], len(product_ids))
+            group["search_rank"] = first_product_pos
         
-        # Sort by search rank (preserves search relevance), then by vendor count as tiebreaker
-        result_groups.sort(key=lambda x: (x["search_rank"], -x["vendor_count"], -x["product_count"]))
+        groups.sort(key=lambda x: (x["search_rank"], -x["vendor_count"]))
         
-        return result_groups
+        return groups
+
+    def _normalize_product_name_for_grouping(self, name: str) -> str:
+        """
+        Normalize product name for grouping, preserving dosage but removing packaging counts.
+        """
+        if not name:
+            return ""
+        
+        # Convert to lowercase and strip
+        normalized = name.lower().strip()
+        
+        # Remove brand/manufacturer prefixes that appear at the beginning
+        prefixes_pattern = r'^(abela\s+pharm\s*)?'
+        normalized = re.sub(prefixes_pattern, '', normalized, flags=re.IGNORECASE)
+        
+        # Remove registered trademark symbols and similar
+        normalized = re.sub(r'[®™©]', '', normalized)
+        
+        # Standardize punctuation and spacing
+        normalized = re.sub(r'[,\.\(\)\[\]\/\\]+', ' ', normalized)
+        normalized = re.sub(r'\s+', ' ', normalized.strip())
+        
+        # Remove PACKAGING counts (number of items in package) - these should NOT affect grouping
+        packaging_patterns = [
+            r'\b(a\d+)\b',  # a10, a30 - "a" followed by number (packaging count)
+            r'\b(\d+)x\b',  # 10x, 30x - number followed by "x" (packaging count)
+            r'\b\d+\s+(kom|komada|pack|box|pcs)\b',  # 10 kom, 30 komada (packaging count)
+            r'\b(cps|caps)\.?\s*(a\d+|\d+x?)\b',  # caps a10, cps 30x (form + packaging count)
+            r'\b(tbl|tableta|tablete)\.?\s*(a\d+|\d+x?)\b',  # tbl a10 (form + packaging count)
+            r'\b(kapsula|kapsule)\s*(a\d+|\d+x?)\b',  # kapsula a10 (form + packaging count)
+            r'\b(kesica|kesice)\s*(a\d+|\d+x?)\b',  # kesica a10 (form + packaging count)
+        ]
+        
+        for pattern in packaging_patterns:
+            normalized = re.sub(pattern, '', normalized, flags=re.IGNORECASE)
+        
+        # Remove promotional text
+        promo_patterns = [
+            r'\b\d+\+\d+\s*gratis\b',
+            r'\b(gratis|besplatno|bonus)\b',
+            r'\b(akcija|popust|discount)\b',
+        ]
+        
+        for pattern in promo_patterns:
+            normalized = re.sub(pattern, '', normalized, flags=re.IGNORECASE)
+        
+        # Remove standalone numbers that are NOT dosage units
+        # Keep dosage (500mg, 1000iu) but remove isolated numbers
+        normalized = re.sub(r'\b\d+\b(?!\s*(mg|mcg|iu|µg|g|ml|l|%))', '', normalized)
+        
+        # Clean up extra whitespace
+        normalized = re.sub(r'\s+', ' ', normalized.strip())
+        
+        return normalized
+
+    def _extract_core_product_identity(self, name: str) -> Dict[str, str]:
+        """
+        Extract key components of product identity for sophisticated grouping.
+        """
+        normalized = self._normalize_product_name_for_grouping(name)
+        original_lower = name.lower()
+        
+        identity = {
+            'base_name': '',
+            'variant': '',
+            'strength': '',
+            'form': '',
+            'quantity': '',
+            'full_identity': ''
+        }
+        
+        # For probiotik enterobiotik, handle specially
+        if 'probiotik' in original_lower and 'enterobiotik' in original_lower:
+            identity['base_name'] = 'probiotik enterobiotik'
+            
+            # Check for variant in original name (before normalization removes it)
+            variant_pattern = r'\b(forte|plus|max|ultra|premium|advanced|complex|complete|extra|special|imuno|junior)\b'
+            variant_match = re.search(variant_pattern, original_lower)
+            if variant_match:
+                identity['variant'] = variant_match.group(1).lower()
+        else:
+            # For other products, extract base name more carefully
+            # First remove dosage/strength info to get clean base name
+            temp_name = re.sub(r'\b\d+(?:\.\d+)?\s*(mg|mcg|iu|g|ml|l|%)\b', '', normalized)
+            temp_name = re.sub(r'\b\d+\s*(kesica|kesice|kapsula|kapsule|tableta|tablete)\b', '', temp_name)
+            
+            words = temp_name.split()
+            # Take first 2-3 meaningful words as base name
+            meaningful_words = [w for w in words if len(w) > 2][:3]
+            identity['base_name'] = ' '.join(meaningful_words)
+            
+            # Extract variant
+            variant_pattern = r'\b(forte|plus|max|ultra|premium|advanced|complex|complete|extra|special)\b'
+            variant_match = re.search(variant_pattern, normalized)
+            if variant_match:
+                identity['variant'] = variant_match.group(1).lower()
+        
+        # Enhanced strength/dosage extraction
+        strength_patterns = [
+            r'\b(\d+(?:\.\d+)?)\s*(mg|mcg|iu|µg)\b',  # Standard dosage units
+            r'\b(\d+(?:\.\d+)?)\s*g\b',  # Grams
+            r'\b(\d+(?:\.\d+)?)\s*(ml|l)\b',  # Volume
+            r'\b(\d+)\s*%\b',  # Percentage
+            r'\b(\d+)\s*(k|mil|thousand|million|billion)\s*(iu|mg|mcg)?\b'  # Large numbers with units
+        ]
+        
+        for pattern in strength_patterns:
+            match = re.search(pattern, original_lower)
+            if match:
+                # Normalize the strength representation
+                full_match = match.group(0).lower().strip()
+                identity['strength'] = full_match
+                break
+        
+        # Extract quantity/packaging count
+        quantity_patterns = [
+            r'\b(\d+)\s*(kesica|kesice)\b',  # sachets
+            r'\b(\d+)\s*(kapsula|kapsule)\b',  # capsules
+            r'\b(\d+)\s*(tableta|tablete|tbl)\b',  # tablets
+            r'\b(\d+)\s*(kom)\b',  # pieces
+            r'\ba(\d+)\b',  # a10, a30 format
+            r'\b(\d+)x\b'  # 10x format
+        ]
+        
+        for pattern in quantity_patterns:
+            match = re.search(pattern, original_lower)
+            if match:
+                identity['quantity'] = match.group(1)  # Just the number
+                break
+        
+        # Extract form from original name
+        form_pattern = r'\b(kapsula|kapsule|tableta|tablete|sprej|kapi|sirup|gel|mast|krema|prah|caps|kesica|kesice)\b'
+        form_match = re.search(form_pattern, original_lower)
+        if form_match:
+            identity['form'] = form_match.group(1).lower()
+        
+        # Create full identity for precise grouping
+        identity_parts = []
+        if identity['base_name']:
+            identity_parts.append(identity['base_name'])
+        if identity['variant']:
+            identity_parts.append(identity['variant'])
+        if identity['strength']:
+            identity_parts.append(identity['strength'])
+        if identity['form'] and identity['form'] not in ['kapsula', 'kapsule', 'tableta', 'tablete']:
+            # Only include form if it's not a common tablet/capsule form
+            identity_parts.append(identity['form'])
+            
+        identity['full_identity'] = ' '.join(identity_parts)
+        
+        return identity
+
+    def _should_group_products(self, product1: Dict, product2: Dict, threshold: float = 0.85) -> bool:
+        """
+        Determine if two products should be grouped together using multiple criteria including dosage.
+        """
+        name1 = product1.get('title', '')
+        name2 = product2.get('title', '')
+        
+        if not name1 or not name2:
+            return False
+        
+        # Extract identities
+        identity1 = self._extract_core_product_identity(name1)
+        identity2 = self._extract_core_product_identity(name2)
+        
+        # Must have same base product name
+        if identity1['base_name'] != identity2['base_name']:
+            # Use fuzzy matching as fallback for slight variations
+            if fuzz.ratio(identity1['base_name'], identity2['base_name']) < 90:
+                return False
+        
+        # If one has a variant and the other doesn't, or they have different variants, don't group
+        if identity1['variant'] != identity2['variant']:
+            return False
+        
+        # CRITICAL: If both have different strengths/dosages, don't group them
+        # This ensures 500mg and 1000mg products are in separate groups
+        if identity1['strength'] and identity2['strength']:
+            if identity1['strength'] != identity2['strength']:
+                return False
+        
+        # If one has strength and the other doesn't, only group if they're very similar otherwise
+        if bool(identity1['strength']) != bool(identity2['strength']):
+            # One has dosage info, the other doesn't - be more strict
+            norm1 = self._normalize_product_name_for_grouping(name1)
+            norm2 = self._normalize_product_name_for_grouping(name2)
+            similarity = fuzz.token_set_ratio(norm1, norm2)
+            return similarity >= 95  # Very high threshold
+        
+        # If both have different forms that matter (not just tablet vs capsule), consider separating
+        significant_forms = {'sprej', 'kapi', 'sirup', 'gel', 'mast', 'krema', 'prah', 'kesica', 'kesice'}
+        if (identity1['form'] in significant_forms and identity2['form'] in significant_forms and 
+            identity1['form'] != identity2['form']):
+            return False
+        
+        # Use full identity for precise matching
+        if identity1['full_identity'] and identity2['full_identity']:
+            if identity1['full_identity'] == identity2['full_identity']:
+                return True
+            # If full identities differ significantly, don't group
+            full_similarity = fuzz.ratio(identity1['full_identity'], identity2['full_identity'])
+            if full_similarity < 80:
+                return False
+        
+        # Use normalized name similarity as final check
+        norm1 = self._normalize_product_name_for_grouping(name1)
+        norm2 = self._normalize_product_name_for_grouping(name2)
+        
+        similarity = max(
+            fuzz.ratio(norm1, norm2),
+            fuzz.token_sort_ratio(norm1, norm2),
+            fuzz.token_set_ratio(norm1, norm2)
+        )
+        
+        return similarity >= threshold
+
+    def _generate_group_name(self, product_names: List[str]) -> str:
+        """
+        Generate a representative group name from multiple product names including dosage.
+        """
+        if not product_names:
+            return "Unknown Product"
+        
+        if len(product_names) == 1:
+            # For single product, use its identity for the group name
+            identity = self._extract_core_product_identity(product_names[0])
+            return identity.get('full_identity', product_names[0]).title()
+        
+        # Extract identities from all products to find common elements
+        identities = [self._extract_core_product_identity(name) for name in product_names]
+        
+        # Find the most representative identity (most common full_identity)
+        full_identity_counts = defaultdict(int)
+        for identity in identities:
+            if identity['full_identity']:
+                full_identity_counts[identity['full_identity']] += 1
+        
+        if full_identity_counts:
+            # Use the most common full identity
+            most_common_identity = max(full_identity_counts.items(), key=lambda x: x[1])
+            return most_common_identity[0].title()
+        
+        # Fallback: construct from most common components
+        base_names = [identity['base_name'] for identity in identities if identity['base_name']]
+        variants = [identity['variant'] for identity in identities if identity['variant']]
+        strengths = [identity['strength'] for identity in identities if identity['strength']]
+        
+        # Most common base name
+        if base_names:
+            base_name = max(set(base_names), key=base_names.count)
+        else:
+            base_name = "Unknown Product"
+        
+        # Most common variant (if any)
+        variant = max(set(variants), key=variants.count) if variants else ""
+        
+        # Most common strength (if any)
+        strength = max(set(strengths), key=strengths.count) if strengths else ""
+        
+        # Construct group name
+        name_parts = [base_name]
+        if variant:
+            name_parts.append(variant)
+        if strength:
+            name_parts.append(strength)
+        
+        return ' '.join(name_parts).title()
 
     def _extract_core_for_grouping(self, name: str, query: str, preserve_dosage: bool) -> str:
         """Extract core product identity for dynamic grouping with more granular criteria"""

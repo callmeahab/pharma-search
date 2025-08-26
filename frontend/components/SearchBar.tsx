@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Search, X } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { searchProducts, ProductGroup } from "@/lib/api";
+import { searchProducts, autocomplete, ProductGroup, AutocompleteResult } from "@/lib/api";
 import { Product } from "@/types/product";
 import ProductDetailModal from "./ProductDetailModal";
 import { Spinner } from "@/components/ui/spinner";
@@ -23,6 +23,7 @@ const SearchBar: React.FC<SearchBarProps> = ({
     Array<{ id: string; name: string; category: string; image: string }>
   >([]);
   const [searchGroups, setSearchGroups] = useState<ProductGroup[]>([]);
+  const [autocompleteSuggestions, setAutocompleteSuggestions] = useState<AutocompleteResult["suggestions"]>([]);
   const [isLoadingGroups, setIsLoadingGroups] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [showModal, setShowModal] = useState(false);
@@ -37,7 +38,7 @@ const SearchBar: React.FC<SearchBarProps> = ({
       setSearchTerm(initialTerm);
       setHasUnsearchedChanges(false); // Reset unsearched changes when URL changes
       if (initialTerm.trim() !== "") {
-        fetchSearchGroups(initialTerm);
+        fetchAutocompleteSuggestions(initialTerm);
       }
     }
   }, [initialTerm]);
@@ -68,9 +69,10 @@ const SearchBar: React.FC<SearchBarProps> = ({
     };
   }, []);
 
-  // Fetch search groups from API
-  const fetchSearchGroups = async (value: string) => {
+  // Fetch autocomplete suggestions from API
+  const fetchAutocompleteSuggestions = async (value: string) => {
     if (value.trim() === "") {
+      setAutocompleteSuggestions([]);
       setSearchGroups([]);
       setFilteredSuggestions([]);
       return;
@@ -84,49 +86,19 @@ const SearchBar: React.FC<SearchBarProps> = ({
     // Set loading state
     setIsLoadingGroups(true);
 
-    // Debounce API calls
+    // Use fast autocomplete for dropdown suggestions
     searchTimeoutRef.current = setTimeout(async () => {
       try {
-        const results = await searchProducts(value, { limit: 6 });
-        setSearchGroups(results.groups);
-
-        // Also keep some sample product suggestions as fallback
-        // const sampleFiltered: Product[] = []
-        //   .filter(
-        //     (product) =>
-        //       product.name.toLowerCase().includes(value.toLowerCase()) ||
-        //       product.category.toLowerCase().includes(value.toLowerCase())
-        //   )
-        //   .map((product) => ({
-        //     id: product.id,
-        //     name: product.name,
-        //     category: product.category,
-        //     image: product.image,
-        //   }));
-
-        // setFilteredSuggestions(sampleFiltered.slice(0, 3)); // Show fewer sample suggestions
+        const results = await autocomplete(value, 8);
+        setAutocompleteSuggestions(results.suggestions);
+        setSearchGroups([]); // Clear groups for dropdown
       } catch (error) {
-        console.error("Error fetching search groups:", error);
-        // Fallback to sample products on error
-        // const filtered = sampleProducts
-        //   .filter(
-        //     (product) =>
-        //       product.name.toLowerCase().includes(value.toLowerCase()) ||
-        //       product.category.toLowerCase().includes(value.toLowerCase())
-        //   )
-        //   .map((product) => ({
-        //     id: product.id,
-        //     name: product.name,
-        //     category: product.category,
-        //     image: product.image,
-        //   }));
-
-        // setFilteredSuggestions(filtered.slice(0, 6));
-        setSearchGroups([]);
+        console.error("Error fetching autocomplete:", error);
+        setAutocompleteSuggestions([]);
       } finally {
         setIsLoadingGroups(false);
       }
-    }, 300); // 300ms debounce
+    }, value.length <= 2 ? 400 : 150); // Faster for autocomplete
   };
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -136,11 +108,12 @@ const SearchBar: React.FC<SearchBarProps> = ({
 
     if (value.trim() === "") {
       setIsDropdownOpen(false);
+      setAutocompleteSuggestions([]);
       setSearchGroups([]);
       setFilteredSuggestions([]);
     } else {
       setIsDropdownOpen(true);
-      fetchSearchGroups(value);
+      fetchAutocompleteSuggestions(value);
     }
   };
 
@@ -200,6 +173,7 @@ const SearchBar: React.FC<SearchBarProps> = ({
   const clearSearch = () => {
     setSearchTerm("");
     setIsDropdownOpen(false);
+    setAutocompleteSuggestions([]);
     setSearchGroups([]);
     setFilteredSuggestions([]);
     setHasUnsearchedChanges(false);
@@ -247,7 +221,7 @@ const SearchBar: React.FC<SearchBarProps> = ({
 
       {/* Dropdown for search suggestions */}
       {isDropdownOpen &&
-        (searchGroups.length > 0 ||
+        (autocompleteSuggestions.length > 0 ||
           filteredSuggestions.length > 0 ||
           isLoadingGroups) && (
           <div className="absolute z-10 w-full mt-1 bg-white rounded-md shadow-lg max-h-80 overflow-auto dark:bg-gray-800 dark:border dark:border-gray-700">
@@ -257,37 +231,33 @@ const SearchBar: React.FC<SearchBarProps> = ({
               </div>
             )}
 
-            {/* Search Groups from API */}
-            {searchGroups.length > 0 && (
+            {/* Autocomplete Suggestions from API */}
+            {autocompleteSuggestions.length > 0 && (
               <div>
                 <div className="px-4 py-2 text-xs font-medium text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-700">
-                  REZULTATI PRETRAGE
+                  PREDLOZI
                 </div>
                 <ul className="py-1">
-                  {searchGroups.map((group) => (
+                  {autocompleteSuggestions.map((suggestion) => (
                     <li
-                      key={group.id}
-                      onClick={() => handleSuggestionClick(group.normalized_name)}
+                      key={suggestion.id}
+                      onClick={() => handleSuggestionClick(suggestion.title)}
                       className="px-4 py-3 hover:bg-gray-100 cursor-pointer flex items-center justify-between dark:hover:bg-gray-700 dark:text-gray-200 transition-colors"
                     >
                       <div className="flex items-center gap-3">
-                        <Avatar className="h-10 w-10 rounded-md">
-                          <AvatarImage
-                            src={group.products[0]?.thumbnail || ""}
-                            alt={group.normalized_name}
-                          />
-                          <AvatarFallback className="rounded-md bg-gray-200 dark:bg-gray-700">
-                            {group.normalized_name.charAt(0)}
+                        <Avatar className="h-8 w-8 rounded-md">
+                          <AvatarFallback className="rounded-md bg-gray-200 dark:bg-gray-700 text-xs">
+                            {suggestion.title.charAt(0)}
                           </AvatarFallback>
                         </Avatar>
-                        <span className="text-base">{group.normalized_name}</span>
+                        <span className="text-sm">{suggestion.title}</span>
                       </div>
                       <div className="text-right">
-                        <span className="text-sm text-gray-500 dark:text-gray-400">
-                          {group.product_count} proizvoda
+                        <span className="text-sm font-medium text-green-600 dark:text-green-400">
+                          {suggestion.price.toLocaleString('sr-RS')} RSD
                         </span>
                         <div className="text-xs text-gray-400 dark:text-gray-500">
-                          od {group.vendor_count} apoteka
+                          {suggestion.vendor_name}
                         </div>
                       </div>
                     </li>
