@@ -23,6 +23,7 @@ export const PriceComparison: React.FC<PriceComparisonProps> = ({
   // Handle both legacy prices and new products format
   const priceData = products
     ? products.map(product => ({
+      title: product.title,
       store: product.vendor.name,
       price: product.price,
       inStock: true,
@@ -62,33 +63,28 @@ export const PriceComparison: React.FC<PriceComparisonProps> = ({
           key={`${price.store}-${index}`}
           onClick={() => handleStoreClick(price)}
           className={cn(
-            "flex justify-between items-center p-3 rounded transition-colors duration-200 w-full text-left",
+            "flex justify-between items-center p-3 rounded transition-colors duration-200 w-full text-left gap-3",
             price.is_best_deal || index === 0
               ? "bg-health-light dark:bg-green-800/30 border-l-4 border-health-primary dark:border-green-500"
               : "hover:bg-gray-50 dark:hover:bg-gray-700 border-l-4 border-transparent"
           )}
           aria-label={`Visit ${price.store} website`}
         >
-          <div className="flex items-center">
-            <div
-              className={cn(
-                "w-6 h-6 flex items-center justify-center mr-2 rounded-full border",
-                price.is_best_deal || index === 0
-                  ? "bg-health-primary text-white border-health-primary dark:bg-green-600 dark:border-green-500"
-                  : "bg-white dark:bg-gray-600 border-gray-200 dark:border-gray-700"
-              )}
-            >
-              {index + 1}
+          <div className="flex items-center flex-1 min-w-0 pr-4">
+            <div className="flex flex-col min-w-0">
+              <span className="font-medium dark:text-gray-200 hover:text-health-primary dark:hover:text-green-300 inline-flex items-center group gap-1 min-w-0 whitespace-normal break-words">
+                <span className="whitespace-normal break-words">
+                  {price.title || productName || price.store}
+                </span>
+                <ExternalLink
+                  size={14}
+                  className="ml-1 hidden sm:inline-block opacity-60 group-hover:opacity-100 transition-opacity flex-shrink-0"
+                />
+              </span>
+              <span className="text-xs font-medium text-orange-600 dark:text-orange-400 truncate">{price.store}</span>
             </div>
-            <span className="font-medium dark:text-gray-200 hover:text-health-primary dark:hover:text-green-300 flex items-center group">
-              {price.store}
-              <ExternalLink
-                size={14}
-                className="ml-1 inline-block opacity-60 group-hover:opacity-100 transition-opacity"
-              />
-            </span>
           </div>
-          <div className="flex flex-col items-end">
+          <div className="flex flex-col items-end shrink-0 text-right">
             <span
               className={cn(
                 "font-semibold",

@@ -52,7 +52,7 @@ const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-w-4xl max-h-[95vh] overflow-y-auto">
+      <DialogContent className="max-w-6xl max-h-[95vh] overflow-y-auto bg-white dark:bg-gray-900 shadow-2xl drop-shadow-xl rounded-2xl border border-gray-300 dark:border-gray-700 ring-1 ring-black/10">
         <div className="absolute right-4 top-4 flex items-center space-x-2">
           <button
             onClick={handleWishClick}
@@ -93,7 +93,7 @@ const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
         <div className="pt-2">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="flex flex-col space-y-4">
-              <div className="aspect-square w-full overflow-hidden rounded-lg">
+              <div className="aspect-square w-full overflow-hidden rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900">
                 <img
                   src={imageError ? "/medicine-placeholder.svg" : product.image}
                   alt={product.name}
@@ -102,7 +102,7 @@ const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
                 />
               </div>
 
-              <div className="bg-health-light dark:bg-gray-700 rounded-lg p-4">
+              <div className="bg-health-light dark:bg-gray-700 rounded-xl p-4 border border-gray-200 dark:border-gray-700 shadow-sm">
                 <div className="flex justify-between items-center">
                   <div>
                     <p className="text-sm text-gray-500 dark:text-gray-300">
@@ -126,7 +126,7 @@ const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
                 </div>
               </div>
 
-              <div className="bg-gray-100 dark:bg-gray-800 rounded-lg p-4 flex items-center justify-center space-x-2">
+              <div className="bg-gray-100 dark:bg-gray-800 rounded-xl p-4 flex items-center justify-center space-x-2 border border-gray-200 dark:border-gray-700 shadow-sm">
                 <Store className="text-health-secondary" size={20} />
                 <span className="text-gray-600 dark:text-gray-300">
                   Dostupno u {product.vendorCount || product.prices.length}{" "}
@@ -149,7 +149,7 @@ const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
                   </DialogTabTrigger>
                 </DialogTabList>
                 <DialogTabContent value="comparison" className="h-[650px]">
-                  <div className="bg-white dark:bg-gray-800 p-4 rounded-lg shadow h-full overflow-y-auto">
+                  <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded-xl shadow-md border border-gray-200 dark:border-gray-700 h-full overflow-y-auto">
                     <PriceComparison
                       prices={product.prices}
                       isInCard={false}
@@ -158,7 +158,7 @@ const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
                   </div>
                 </DialogTabContent>
                 <DialogTabContent value="history" className="h-[650px]">
-                  <div className="bg-white dark:bg-gray-800 p-4 rounded-lg shadow h-full overflow-y-auto">
+                  <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded-xl shadow-md border border-gray-200 dark:border-gray-700 h-full overflow-y-auto">
                     <PriceHistoryChart
                       prices={product.prices}
                       isInCard={false}
