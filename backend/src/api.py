@@ -1,6 +1,5 @@
-from fastapi import FastAPI, Query, HTTPException
+from fastapi import FastAPI, Query, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
 from typing import Optional, List
 import logging
 import os
@@ -14,6 +13,7 @@ from pydantic import BaseModel, EmailStr
 from .config import settings
 from .search_engine import PharmaSearchEngine
 from .product_processor import EnhancedProductProcessor
+from .routes.exports import register_export_routes
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -33,6 +33,7 @@ app.add_middleware(
 
 # Initialize search engine
 search_engine = PharmaSearchEngine(settings.database_url)
+register_export_routes(app, search_engine)
 
 
 class ContactPayload(BaseModel):
@@ -352,6 +353,7 @@ async def search_stream(
             logger.error(f"Streaming search error: {e}")
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
     
+    from fastapi.responses import StreamingResponse
     return StreamingResponse(
         generate_search_stream(),
         media_type="text/plain",
@@ -456,4 +458,4 @@ async def price_comparison_dynamic(q: str):
     except Exception as e:
         logger.error(f"Price comparison error: {e}")
         raise HTTPException(status_code=500, detail="Price comparison failed")
-
+# CSV export routes registered from routes/exports.py

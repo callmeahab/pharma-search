@@ -33,7 +33,11 @@ export const PriceComparison: React.FC<PriceComparisonProps> = ({
       is_worst_deal: product.price_analysis.is_worst_deal,
       diff_from_avg: product.price_analysis.diff_from_avg,
     }))
-    : (prices || []);
+    : (prices || []).map(p => ({
+      ...p,
+      // Ensure a title exists for legacy price items
+      title: productName || (p as any).title || p.store,
+    }));
 
   // console.log('priceData:', priceData);
   // Sort prices from lowest to highest
