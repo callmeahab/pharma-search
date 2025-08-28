@@ -87,7 +87,17 @@ const Navbar = () => {
       <div className="container mx-auto px-4">
         <div className="flex flex-col md:flex-row justify-between items-center">
           <div className="w-full flex justify-between items-center mb-4 md:mb-0 md:w-auto">
-            <Link href="/" className="flex items-center">
+            <Link
+              href="/"
+              className="flex items-center"
+              onClick={(e) => {
+                e.preventDefault();
+                handleSearch("");
+                if (pathname !== "/") {
+                  router.push("/");
+                }
+              }}
+            >
               <span className="text-green-400 dark:text-green-300 font-bold text-2xl">
                 Apo
               </span>
