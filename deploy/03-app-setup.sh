@@ -51,8 +51,8 @@ EOF
 # Set proper permissions for environment file
 chmod 600 "$ENV_FILE"
 
-# Also create .env file in frontend directory for Prisma
-echo "🔧 Creating frontend environment file for Prisma..."
+# Create frontend .env file
+echo "🔧 Creating frontend environment file..."
 cat << EOF > "$APP_DIR/frontend/.env"
 # Database Configuration
 DATABASE_URL="postgresql://root:pharma_secure_password_2025@localhost:5432/pharma_search"
@@ -87,9 +87,8 @@ echo "📦 Installing frontend dependencies..."
 export PATH="/root/.bun/bin:$PATH"
 bun install
 
-# Generate Prisma client
-echo "🔨 Generating Prisma client..."
-bunx prisma generate
+# Prisma not used in this version
+echo "ℹ️ Database managed via direct SQL connections"
 
 # Build the application with memory limits
 echo "🏗️ Building Next.js application..."
@@ -114,12 +113,10 @@ pip install -r requirements.txt
 echo "📝 Creating log directories..."
 mkdir -p "$LOG_DIR/frontend"
 mkdir -p "$LOG_DIR/backend" 
-# mkdir -p "$LOG_DIR/scrapers"  # Scrapers now run locally
 mkdir -p "$LOG_DIR/pm2"
 
 echo "✅ Application setup completed successfully!"
 echo "🔄 Next steps:"
-echo "  1. Run database migrations: cd frontend && bunx prisma migrate deploy"
-echo "  2. Seed database (optional): cd frontend && bun run prisma db seed"
-echo "  3. Configure Nginx with 04-nginx-setup.sh"
-echo "  4. Setup PM2 services with 05-pm2-setup.sh"
+echo "  1. Import database schema if needed"
+echo "  2. Configure Nginx with 04-nginx-setup.sh"
+echo "  3. Setup PM2 services with 05-pm2-setup.sh"

@@ -69,11 +69,10 @@ bash deploy/03-app-setup.sh
 ```
 Installs dependencies, builds applications, creates environment files.
 
-### 5. Database Migration
+### 5. Database Setup
 ```bash
-cd /var/www/pharma-search/frontend
-bunx prisma migrate deploy
-# Optional: bun run prisma db seed
+# Database schema is managed separately
+# Import your schema if needed using standard PostgreSQL tools
 ```
 
 ### 6. Nginx Configuration

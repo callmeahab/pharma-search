@@ -60,22 +60,12 @@ echo "🎨 Step 4: Application Setup"
 echo "==========================="
 bash "$APP_DIR/deploy/03-app-setup.sh"
 
-# Step 5: Database Migration
+# Step 5: Database Setup
 echo ""
-echo "🗄️ Step 5: Database Migration"
-echo "============================="
-cd "$APP_DIR/frontend"
-export PATH="/root/.bun/bin:$PATH"
-export DATABASE_URL="postgresql://root:pharma_secure_password_2025@localhost:5432/pharma_search"
-bunx prisma migrate deploy
-
-# Optional: Seed database
-echo ""
-read -p "🌱 Do you want to seed the database? (y/N): " -n 1 -r
-echo
-if [[ $REPLY =~ ^[Yy]$ ]]; then
-    cd "$APP_DIR/frontend" && export DATABASE_URL="postgresql://root:pharma_secure_password_2025@localhost:5432/pharma_search" && bun run prisma db seed
-fi
+echo "🗄️ Step 5: Database Setup"
+echo "=========================="
+echo "✅ Database setup completed in PostgreSQL script"
+echo "ℹ️ Note: Import your database schema manually if needed"
 
 # Step 6: Nginx Setup
 echo ""
@@ -147,11 +137,8 @@ cd ../backend
 source venv/bin/activate
 pip install -r requirements.txt
 
-# Run migrations
-echo "🗄️ Running database migrations..."
-cd ../frontend
-export DATABASE_URL="postgresql://root:pharma_secure_password_2025@localhost:5432/pharma_search"
-bunx prisma migrate deploy
+# Database is managed separately
+echo "ℹ️ Database schema managed separately from application"
 
 # Restart services
 echo "🔄 Restarting services..."
