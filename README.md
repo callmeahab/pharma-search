@@ -14,7 +14,6 @@ A full-stack application for searching and comparing pharmaceutical product pric
 
 - **Backend**: Python 3.12, FastAPI, PostgreSQL, Sentence Transformers, FAISS
 - **Frontend**: Next.js 15 with React 19 (minimal implementation)
-- **Database**: PostgreSQL with Prisma schema
 
 ## Setup
 
@@ -43,25 +42,8 @@ docker-compose exec backend python scripts/process_products.py
 5. Access the application:
    - Frontend: http://localhost:3000
    - API: http://localhost:8000/docs
-   - 
-### DB Startup
+   -
 
-Ensure you have a PostgreSQL database running. Update the `.env` files with your database credentials.
-```bash
-bunx prisma generate  # Generate Prisma client
-bunx prisma db push   # Push schema to database
-bunx prisma db seed   # Seed initial data
-```
-
-### Starting Services
-
-**Database Viewer (Prisma Studio)**
-
-```bash
-bunx prisma studio
-```
-
-Access at: http://localhost:5555
 ### Manual Setup
 
 #### Backend
