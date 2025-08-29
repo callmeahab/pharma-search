@@ -49,21 +49,7 @@ if [ ! -d "$APP_DIR/frontend" ] || [ ! -d "$APP_DIR/backend" ]; then
     echo "  - $APP_DIR/frontend/ (Next.js application)"
     echo "  - $APP_DIR/backend/ (FastAPI application)"
     echo "  - $APP_DIR/deploy/ (deployment scripts)"
-    echo "  - $APP_DIR/optimize_search_indexes.sql (search optimization)"
     exit 1
-fi
-
-# Check for required SQL files
-if [ ! -f "$APP_DIR/backend/sql/enhanced_search_functions.sql" ]; then
-    echo "❌ ERROR: enhanced_search_functions.sql not found in backend/sql/"
-    echo "   This file is CRITICAL for search functionality"
-    echo "   Search will not work properly without it"
-    exit 1
-fi
-
-if [ ! -f "$APP_DIR/backend/sql/optimize_search_indexes.sql" ]; then
-    echo "⚠️ Warning: optimize_search_indexes.sql not found in backend/sql/"
-    echo "   Search performance may be suboptimal without database indexes"
 fi
 
 echo "✅ Application files verified"
@@ -166,12 +152,6 @@ echo "🗄️ Running database migrations..."
 cd ../frontend
 export DATABASE_URL="postgresql://root:pharma_secure_password_2025@localhost:5432/pharma_search"
 bunx prisma migrate deploy
-
-# Apply enhanced search functions (critical for search functionality)
-echo "🔍 Updating search functions..."
-cd "$APP_DIR"
-sudo -u postgres psql -d pharma_search -f "backend/sql/enhanced_search_functions.sql"
-echo "✅ Enhanced search functions updated"
 
 # Restart services
 echo "🔄 Restarting services..."

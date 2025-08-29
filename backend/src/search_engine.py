@@ -10,12 +10,14 @@ from functools import lru_cache
 from rapidfuzz import fuzz
 from collections import defaultdict
 
-# Removed FAISS similarity matcher - using database search only
 try:
     from .product_processor import EnhancedProductProcessor
+    from .preprocessor import preprocessor
+    from .ml_preprocessor import get_ml_preprocessor
 except ImportError:
-    # Handle relative import when running directly
     from product_processor import EnhancedProductProcessor
+    from preprocessor import preprocessor
+    from ml_preprocessor import get_ml_preprocessor
 
 logger = logging.getLogger(__name__)
 
@@ -26,9 +28,7 @@ class PharmaSearchEngine:
     def __init__(self, db_url: str, cache_dir: str = "backend/cache"):
         self.db_url = db_url
         self.cache_dir = cache_dir
-        # Ensure cache directory exists
         os.makedirs(cache_dir, exist_ok=True)
-        # Removed FAISS similarity matcher
         self.pool: asyncpg.pool.Pool
         self._search_cache = {}
         self._cache_stats = {"hits": 0, "misses": 0}
@@ -37,7 +37,7 @@ class PharmaSearchEngine:
         """Initialize connection"""
         self.pool = await asyncpg.create_pool(self.db_url)
         await self._process_products_if_needed()
-        # Removed FAISS index loading
+
 
     async def disconnect(self):
         """Close connections"""
@@ -168,7 +168,7 @@ class PharmaSearchEngine:
         )
 
     async def _get_exact_matches(self, query: str, limit: int = 100) -> List[str]:
-        """Get product IDs that match the query exactly or as a whole word - OPTIMIZED"""
+        """Get product IDs that match the query exactly or as a whole word - OPTIMIZED with preprocessor"""
         async with self.pool.acquire() as conn:
             query_len = len(query.strip())
             query_words = query.lower().split()
@@ -177,8 +177,12 @@ class PharmaSearchEngine:
             # Limit results early to reduce grouping overhead
             search_limit = min(limit * 5, 300)  # Much smaller limit
             
+            # Use preprocessor to enhance query
+            query_identity = preprocessor.preprocess_product(query)
+            enhanced_tokens = query_identity.search_tokens
+            
             if query_len <= 3:
-                # Use the optimized search function for short queries
+                # Use the optimized search function for short queries with enhanced tokens
                 rows = await conn.fetch(
                     """
                     SELECT id, relevance_score as priority_score
@@ -187,6 +191,20 @@ class PharmaSearchEngine:
                     """,
                     query, search_limit
                 )
+                
+                # Also search with enhanced tokens if different from original
+                if enhanced_tokens and any(token not in query.lower() for token in enhanced_tokens):
+                    for token in enhanced_tokens[:3]:  # Limit to avoid too many queries
+                        if token != query.lower():
+                            enhanced_rows = await conn.fetch(
+                                """
+                                SELECT id, relevance_score as priority_score
+                                FROM fast_product_search($1::text, NULL, NULL, NULL, NULL, $2::integer)
+                                ORDER BY relevance_score DESC
+                                """,
+                                token, search_limit // 3
+                            )
+                            rows.extend(enhanced_rows)
             else:
                 # Use the optimized search function for all longer queries
                 rows = await conn.fetch(
@@ -198,7 +216,16 @@ class PharmaSearchEngine:
                     query, search_limit
                 )
 
-            return [row["id"] for row in rows]
+            # Remove duplicates while preserving order
+            seen = set()
+            unique_ids = []
+            for row in rows:
+                product_id = row["id"]
+                if product_id not in seen:
+                    seen.add(product_id)
+                    unique_ids.append(product_id)
+
+            return unique_ids
 
     async def _search_products(
         self, query: str, filters: Optional[Dict], limit: int, offset: int
@@ -389,79 +416,290 @@ class PharmaSearchEngine:
             }
 
     def _group_products_dynamically(self, products: List[Dict], query: str, product_ids: List[str]) -> List[Dict]:
-        """Improved dynamic grouping with better similarity matching"""
+        """Improved dynamic grouping with preprocessor-enhanced similarity matching"""
         
         if not products:
             return []
         
-        # Create groups using improved similarity matching
-        groups = []
-        ungrouped_products = products.copy()
+        # Use preprocessor for enhanced grouping
+        return self._group_products_with_preprocessor(products, query, product_ids)
+    
+    def _group_products_with_preprocessor(self, products: List[Dict], query: str, product_ids: List[str]) -> List[Dict]:
+        """Group products using the advanced preprocessor and ML for better accuracy"""
         
-        while ungrouped_products:
-            # Start new group with first ungrouped product
-            current_product = ungrouped_products.pop(0)
-            current_group = [current_product]
+        if not products:
+            return []
+        
+        # Try ML-enhanced clustering first
+        ml_preprocessor = get_ml_preprocessor()
+        if ml_preprocessor:
+            try:
+                ml_clusters = ml_preprocessor.get_ml_clusters(product_ids, eps=0.15, min_samples=2)
+                if ml_clusters:
+                    logger.info(f"ML clustering found {len(ml_clusters)} clusters")
+                    return self._create_groups_from_ml_clusters(products, ml_clusters, product_ids)
+            except Exception as e:
+                logger.warning(f"ML clustering failed, falling back to rule-based: {e}")
+        
+        # Fallback to rule-based grouping with ML similarity where available
+        return self._group_products_hybrid(products, query, product_ids)
+        
+    def _create_groups_from_ml_clusters(self, products: List[Dict], ml_clusters: Dict, product_ids: List[str]) -> List[Dict]:
+        """Create groups from ML clustering results"""
+        
+        # Create product lookup
+        product_lookup = {p.get('id'): p for p in products}
+        
+        final_groups = []
+        unclustered_products = list(products)
+        
+        # Process each ML cluster
+        for cluster_id, cluster_product_ids in ml_clusters.items():
+            cluster_products = []
             
-            # Find all products that should be grouped with current product
-            remaining = []
-            for product in ungrouped_products:
-                if self._should_group_products(current_product, product):
-                    current_group.append(product)
-                else:
-                    remaining.append(product)
+            for product_id in cluster_product_ids:
+                if product_id in product_lookup:
+                    product = product_lookup[product_id]
+                    cluster_products.append(product)
+                    
+                    # Remove from unclustered
+                    if product in unclustered_products:
+                        unclustered_products.remove(product)
             
-            ungrouped_products = remaining
+            if cluster_products:
+                # Create group from cluster
+                group = self._create_group_from_products(cluster_products, product_ids, f"ml_cluster_{cluster_id}")
+                final_groups.append(group)
+        
+        # Handle unclustered products (create individual groups)
+        for product in unclustered_products:
+            group = self._create_group_from_products([product], product_ids, f"single_{product.get('id', 'unknown')}")
+            final_groups.append(group)
+        
+        # Sort groups by relevance
+        final_groups.sort(key=lambda x: (x.get("search_rank", 999), -x["vendor_count"]))
+        
+        return final_groups
+    
+    def _group_products_hybrid(self, products: List[Dict], query: str, product_ids: List[str]) -> List[Dict]:
+        """Hybrid grouping using both rule-based and ML similarity"""
+        
+        # Preprocess all products to extract structured identities
+        product_identities = []
+        for product in products:
+            title = product.get('title', '')
+            brand = product.get('brand_name', '')
             
-            # Create group data structure
-            if current_group:
-                # Sort by price
-                current_group.sort(key=lambda x: float(x.get('price', 0)))
+            identity = preprocessor.preprocess_product(title, brand)
+            product_identities.append({
+                'product': product,
+                'identity': identity,
+                'grouping_key': identity.grouping_key
+            })
+        
+        # Group by similar grouping keys with ML enhancement
+        groups_dict = defaultdict(list)
+        ungrouped = []
+        ml_preprocessor = get_ml_preprocessor()
+        
+        for item in product_identities:
+            key = item['grouping_key']
+            product_id = item['product'].get('id')
+            
+            if not key:
+                ungrouped.append(item)
+                continue
+            
+            # Find existing group with similar key
+            grouped = False
+            for existing_key in groups_dict.keys():
+                # First try rule-based similarity
+                rule_based_similar = preprocessor.should_group_by_keys(key, existing_key, similarity_threshold=0.75)
                 
-                # Generate group name from the most common/representative product name
-                group_name = self._generate_group_name([p['title'] for p in current_group])
+                # Enhance with ML similarity if available
+                ml_similar = False
+                if ml_preprocessor and groups_dict[existing_key]:
+                    existing_product_id = groups_dict[existing_key][0]['product'].get('id')
+                    if existing_product_id and product_id:
+                        ml_similar = ml_preprocessor.should_group_products_ml(product_id, existing_product_id, threshold=0.80)
                 
-                prices = [float(p.get('price', 0)) for p in current_group]
+                # Group if either method suggests similarity
+                if rule_based_similar or ml_similar:
+                    groups_dict[existing_key].append(item)
+                    grouped = True
+                    break
+            
+            if not grouped:
+                groups_dict[key].append(item)
+        
+        # Handle ungrouped products with ML fallback
+        for item in ungrouped:
+            best_group_key = None
+            best_similarity = 0
+            product_id = item['product'].get('id')
+            
+            for group_key, group_items in groups_dict.items():
+                if not group_items:
+                    continue
                 
-                groups.append({
-                    "id": f"improved_{abs(hash(group_name))}",
-                    "normalized_name": group_name,
-                    "products": [
-                        {
-                            "id": p.get("id", ""),
-                            "title": p.get("title", ""),
-                            "price": float(p.get("price", 0)),
-                            "vendor_id": p.get("vendorId", p.get("vendor_id", "")),
-                            "vendor_name": p.get("vendor_name", ""),
-                            "link": p.get("link", ""),
-                            "thumbnail": p.get("thumbnail", ""),
-                            "brand_name": p.get("brand_name", "")
-                        } for p in current_group
-                    ],
-                    "price_range": {
-                        "min": float(min(prices)) if prices else 0.0,
-                        "max": float(max(prices)) if prices else 0.0
-                    },
-                    "vendor_count": len(set(p.get("vendorId", p.get("vendor_id", "")) for p in current_group)),
-                    "product_count": len(current_group),
-                    "dosage_value": None,
-                    "dosage_unit": None
-                })
+                # Try ML similarity first
+                if ml_preprocessor and product_id:
+                    group_product_id = group_items[0]['product'].get('id')
+                    if group_product_id:
+                        ml_similarity = ml_preprocessor.compute_similarity(product_id, group_product_id)
+                        if ml_similarity > best_similarity and ml_similarity > 0.7:
+                            best_similarity = ml_similarity
+                            best_group_key = group_key
+                            continue
+                
+                # Fallback to text similarity
+                product_title = item['product'].get('title', '')
+                group_title = group_items[0]['product'].get('title', '')
+                text_similarity = max(
+                    fuzz.ratio(product_title.lower(), group_title.lower()),
+                    fuzz.token_sort_ratio(product_title.lower(), group_title.lower()),
+                    fuzz.token_set_ratio(product_title.lower(), group_title.lower())
+                ) / 100.0
+                
+                if text_similarity > best_similarity and text_similarity > 0.7:
+                    best_similarity = text_similarity
+                    best_group_key = group_key
+            
+            if best_group_key:
+                groups_dict[best_group_key].append(item)
+            else:
+                # Create new group for this product
+                groups_dict[item['grouping_key'] or f"single_{item['product'].get('id', 'unknown')}"].append(item)
+        
+        # Convert to final group format
+        final_groups = []
+        
+        for group_key, group_items in groups_dict.items():
+            if not group_items:
+                continue
+            
+            group_products = [item['product'] for item in group_items]
+            group = self._create_group_from_products(group_products, product_ids, f"hybrid_{abs(hash(group_key))}")
+            final_groups.append(group)
         
         # Sort groups by search relevance
-        product_positions = {pid: idx for idx, pid in enumerate(product_ids)}
+        final_groups.sort(key=lambda x: (x.get("search_rank", 999), -x["vendor_count"]))
         
-        for group in groups:
-            first_product_pos = product_positions.get(group["products"][0]["id"], len(product_ids))
-            group["search_rank"] = first_product_pos
+        return final_groups
+    
+    def _create_group_from_products(self, group_products: List[Dict], product_ids: List[str], group_id_prefix: str) -> Dict:
+        """Create a group data structure from a list of products"""
         
-        groups.sort(key=lambda x: (x["search_rank"], -x["vendor_count"]))
+        if not group_products:
+            return {}
         
-        return groups
+        # Sort by price
+        group_products.sort(key=lambda x: float(x.get('price', 0)))
+        
+        # Generate group name
+        if len(group_products) == 1:
+            # Single product group
+            product = group_products[0]
+            identity = preprocessor.preprocess_product(product.get('title', ''), product.get('brand_name', ''))
+            group_name = identity.normalized_name or product.get('title', 'Unknown Product')
+        else:
+            # Multi-product group - find most representative name
+            titles = [p.get('title', '') for p in group_products]
+            identities = [preprocessor.preprocess_product(title, p.get('brand_name', '')) for title, p in zip(titles, group_products)]
+            group_name = self._generate_preprocessed_group_name(identities)
+        
+        # Extract dosage info
+        dosage_value = None
+        dosage_unit = None
+        
+        for product in group_products:
+            identity = preprocessor.preprocess_product(product.get('title', ''), product.get('brand_name', ''))
+            if identity.strength:
+                strength_parts = identity.strength.split()
+                if len(strength_parts) >= 2:
+                    try:
+                        dosage_value = float(strength_parts[0])
+                        dosage_unit = strength_parts[1]
+                        break
+                    except (ValueError, IndexError):
+                        continue
+        
+        prices = [float(p.get('price', 0)) for p in group_products if p.get('price')]
+        
+        # Calculate search rank
+        search_rank = len(product_ids)  # Default to end
+        if group_products:
+            product_positions = {pid: idx for idx, pid in enumerate(product_ids)}
+            first_product_pos = product_positions.get(group_products[0].get("id"), len(product_ids))
+            search_rank = first_product_pos
+        
+        return {
+            "id": group_id_prefix,
+            "normalized_name": group_name,
+            "products": [
+                {
+                    "id": p.get("id", ""),
+                    "title": p.get("title", ""),
+                    "price": float(p.get("price", 0)),
+                    "vendor_id": p.get("vendorId", p.get("vendor_id", "")),
+                    "vendor_name": p.get("vendor_name", ""),
+                    "link": p.get("link", ""),
+                    "thumbnail": p.get("thumbnail", ""),
+                    "brand_name": p.get("brand_name", "")
+                } for p in group_products
+            ],
+            "price_range": {
+                "min": float(min(prices)) if prices else 0.0,
+                "max": float(max(prices)) if prices else 0.0
+            },
+            "vendor_count": len(set(p.get("vendorId", p.get("vendor_id", "")) for p in group_products)),
+            "product_count": len(group_products),
+            "dosage_value": dosage_value,
+            "dosage_unit": dosage_unit,
+            "search_rank": search_rank
+        }
+    
+    def _generate_preprocessed_group_name(self, identities: List) -> str:
+        """Generate group name from preprocessed identities"""
+        if not identities:
+            return "Unknown Product"
+        
+        if len(identities) == 1:
+            identity = identities[0]
+            return identity.normalized_name or identity.base_name.title() or "Unknown Product"
+        
+        # Find most common normalized name
+        normalized_names = [identity.normalized_name for identity in identities if identity.normalized_name]
+        if normalized_names:
+            name_counts = defaultdict(int)
+            for name in normalized_names:
+                name_counts[name] += 1
+            return max(name_counts.items(), key=lambda x: x[1])[0]
+        
+        # Fallback to most common base name
+        base_names = [identity.base_name for identity in identities if identity.base_name]
+        if base_names:
+            name_counts = defaultdict(int)
+            for name in base_names:
+                name_counts[name] += 1
+            most_common_base = max(name_counts.items(), key=lambda x: x[1])[0]
+            
+            # Add common strength if present
+            strengths = [identity.strength for identity in identities if identity.strength]
+            if strengths:
+                strength_counts = defaultdict(int)
+                for strength in strengths:
+                    strength_counts[strength] += 1
+                common_strength = max(strength_counts.items(), key=lambda x: x[1])[0]
+                return f"{most_common_base.title()} {common_strength}"
+            
+            return most_common_base.title()
+        
+        return "Unknown Product"
 
     def _normalize_product_name_for_grouping(self, name: str) -> str:
         """
-        Normalize product name for grouping, preserving dosage but removing packaging counts.
+        Normalize product name for grouping, being less aggressive to preserve product identity.
         """
         if not name:
             return ""
@@ -469,44 +707,39 @@ class PharmaSearchEngine:
         # Convert to lowercase and strip
         normalized = name.lower().strip()
         
-        # Remove brand/manufacturer prefixes that appear at the beginning
-        prefixes_pattern = r'^(abela\s+pharm\s*)?'
+        # Only remove very specific brand prefixes, keep most brand info
+        prefixes_pattern = r'^(abela\s+pharm\s*|dr\.\s*|prof\.\s*)'
         normalized = re.sub(prefixes_pattern, '', normalized, flags=re.IGNORECASE)
         
         # Remove registered trademark symbols and similar
         normalized = re.sub(r'[®™©]', '', normalized)
         
-        # Standardize punctuation and spacing
+        # Standardize punctuation but keep hyphens and basic structure
         normalized = re.sub(r'[,\.\(\)\[\]\/\\]+', ' ', normalized)
         normalized = re.sub(r'\s+', ' ', normalized.strip())
         
-        # Remove PACKAGING counts (number of items in package) - these should NOT affect grouping
+        # Remove only obvious PACKAGING indicators, be more conservative
         packaging_patterns = [
             r'\b(a\d+)\b',  # a10, a30 - "a" followed by number (packaging count)
-            r'\b(\d+)x\b',  # 10x, 30x - number followed by "x" (packaging count)
-            r'\b\d+\s+(kom|komada|pack|box|pcs)\b',  # 10 kom, 30 komada (packaging count)
-            r'\b(cps|caps)\.?\s*(a\d+|\d+x?)\b',  # caps a10, cps 30x (form + packaging count)
-            r'\b(tbl|tableta|tablete)\.?\s*(a\d+|\d+x?)\b',  # tbl a10 (form + packaging count)
-            r'\b(kapsula|kapsule)\s*(a\d+|\d+x?)\b',  # kapsula a10 (form + packaging count)
-            r'\b(kesica|kesice)\s*(a\d+|\d+x?)\b',  # kesica a10 (form + packaging count)
+            r'\b(\d+)x(?!\d)\b',  # 10x, 30x - number followed by "x" but not 10x10 (size)
+            r'\b\d+\s+(kom|komada|pack|box|pcs|pieces)\b',  # 10 kom, 30 komada (packaging count)
         ]
         
         for pattern in packaging_patterns:
             normalized = re.sub(pattern, '', normalized, flags=re.IGNORECASE)
         
-        # Remove promotional text
+        # Remove promotional text but be less aggressive
         promo_patterns = [
             r'\b\d+\+\d+\s*gratis\b',
-            r'\b(gratis|besplatno|bonus)\b',
-            r'\b(akcija|popust|discount)\b',
+            r'\b(gratis|besplatno|bonus|akcija|popust|discount)\b',
         ]
         
         for pattern in promo_patterns:
             normalized = re.sub(pattern, '', normalized, flags=re.IGNORECASE)
         
-        # Remove standalone numbers that are NOT dosage units
-        # Keep dosage (500mg, 1000iu) but remove isolated numbers
-        normalized = re.sub(r'\b\d+\b(?!\s*(mg|mcg|iu|µg|g|ml|l|%))', '', normalized)
+        # Keep more numbers - only remove standalone numbers that are clearly not dosage
+        # Be more conservative about what we consider non-dosage numbers
+        normalized = re.sub(r'\b\d+\b(?!\s*(mg|mcg|iu|µg|g|ml|l|%|mm|cm|kg|gram|miligram))', '', normalized)
         
         # Clean up extra whitespace
         normalized = re.sub(r'\s+', ' ', normalized.strip())
@@ -610,7 +843,7 @@ class PharmaSearchEngine:
         
         return identity
 
-    def _should_group_products(self, product1: Dict, product2: Dict, threshold: float = 0.85) -> bool:
+    def _should_group_products(self, product1: Dict, product2: Dict, threshold: float = 0.70) -> bool:
         """
         Determine if two products should be grouped together using multiple criteria including dosage.
         """
@@ -620,60 +853,54 @@ class PharmaSearchEngine:
         if not name1 or not name2:
             return False
         
-        # Extract identities
-        identity1 = self._extract_core_product_identity(name1)
-        identity2 = self._extract_core_product_identity(name2)
-        
-        # Must have same base product name
-        if identity1['base_name'] != identity2['base_name']:
-            # Use fuzzy matching as fallback for slight variations
-            if fuzz.ratio(identity1['base_name'], identity2['base_name']) < 90:
-                return False
-        
-        # If one has a variant and the other doesn't, or they have different variants, don't group
-        if identity1['variant'] != identity2['variant']:
-            return False
-        
-        # CRITICAL: If both have different strengths/dosages, don't group them
-        # This ensures 500mg and 1000mg products are in separate groups
-        if identity1['strength'] and identity2['strength']:
-            if identity1['strength'] != identity2['strength']:
-                return False
-        
-        # If one has strength and the other doesn't, only group if they're very similar otherwise
-        if bool(identity1['strength']) != bool(identity2['strength']):
-            # One has dosage info, the other doesn't - be more strict
-            norm1 = self._normalize_product_name_for_grouping(name1)
-            norm2 = self._normalize_product_name_for_grouping(name2)
-            similarity = fuzz.token_set_ratio(norm1, norm2)
-            return similarity >= 95  # Very high threshold
-        
-        # If both have different forms that matter (not just tablet vs capsule), consider separating
-        significant_forms = {'sprej', 'kapi', 'sirup', 'gel', 'mast', 'krema', 'prah', 'kesica', 'kesice'}
-        if (identity1['form'] in significant_forms and identity2['form'] in significant_forms and 
-            identity1['form'] != identity2['form']):
-            return False
-        
-        # Use full identity for precise matching
-        if identity1['full_identity'] and identity2['full_identity']:
-            if identity1['full_identity'] == identity2['full_identity']:
-                return True
-            # If full identities differ significantly, don't group
-            full_similarity = fuzz.ratio(identity1['full_identity'], identity2['full_identity'])
-            if full_similarity < 80:
-                return False
-        
-        # Use normalized name similarity as final check
+        # First try simple normalized comparison for obvious matches
         norm1 = self._normalize_product_name_for_grouping(name1)
         norm2 = self._normalize_product_name_for_grouping(name2)
         
-        similarity = max(
+        # If normalized names are very similar, they should probably be grouped
+        basic_similarity = max(
             fuzz.ratio(norm1, norm2),
             fuzz.token_sort_ratio(norm1, norm2),
             fuzz.token_set_ratio(norm1, norm2)
         )
         
-        return similarity >= threshold
+        # Lower threshold for basic grouping - pharmaceutical names have many variations
+        if basic_similarity >= 75:
+            return True
+        
+        # Extract identities for more detailed analysis
+        identity1 = self._extract_core_product_identity(name1)
+        identity2 = self._extract_core_product_identity(name2)
+        
+        # Must have similar base product names (more lenient than before)
+        if identity1['base_name'] and identity2['base_name']:
+            base_similarity = fuzz.ratio(identity1['base_name'], identity2['base_name'])
+            if base_similarity < 70:  # Reduced from 90
+                return False
+        
+        # Allow different variants to be grouped (removed strict variant matching)
+        # Products like "Vitamin D" and "Vitamin D3" should be grouped
+        
+        # Only separate different strengths/dosages if they're significantly different
+        if identity1['strength'] and identity2['strength']:
+            if identity1['strength'] != identity2['strength']:
+                # Check if they're the same base strength (e.g., "500 mg" vs "500mg")
+                strength1_clean = re.sub(r'\s+', '', identity1['strength'].lower())
+                strength2_clean = re.sub(r'\s+', '', identity2['strength'].lower())
+                if strength1_clean != strength2_clean:
+                    return False
+        
+        # Allow different forms to be grouped unless they're very different
+        # (tablets vs capsules should be grouped, but tablets vs syrup should not)
+        significant_forms = {'sprej', 'kapi', 'sirup', 'gel', 'mast', 'krema', 'prah'}
+        minor_forms = {'kapsula', 'kapsule', 'tableta', 'tablete', 'tbl', 'caps', 'kesica', 'kesice'}
+        
+        if (identity1['form'] in significant_forms and identity2['form'] in significant_forms and 
+            identity1['form'] != identity2['form']):
+            return False
+        
+        # Use normalized name similarity as final check with lower threshold
+        return basic_similarity >= threshold
 
     def _generate_group_name(self, product_names: List[str]) -> str:
         """
@@ -819,13 +1046,13 @@ class PharmaSearchEngine:
                 # For products without distinguishing features, use moderate threshold
                 return max_similarity >= 80
         
-        # Stricter thresholds for better granularity
+        # More lenient thresholds to group similar products together
         if query_specificity <= 1:
-            threshold = 85  # Stricter for single word queries
+            threshold = 70  # More lenient for single word queries
         elif query_specificity <= 2:
-            threshold = 90  # Very strict for 2-word queries
+            threshold = 75  # Moderate for 2-word queries
         else:
-            threshold = 95  # Extremely strict for very specific queries
+            threshold = 80  # Still reasonable for specific queries
             
         return max_similarity >= threshold
 
@@ -960,11 +1187,11 @@ class PharmaSearchEngine:
         # More lenient grouping for enhanced identity matching
         query_specificity = len(query.split())
         if query_specificity <= 1:
-            threshold = 75  # Moderate for single word queries
+            threshold = 65  # More lenient for single word queries
         elif query_specificity <= 2:
-            threshold = 80  # Balanced for 2-word queries
+            threshold = 70  # Balanced for 2-word queries
         else:
-            threshold = 85  # Stricter for very specific queries
+            threshold = 75  # Reasonable for very specific queries
         
         return core_similarity >= threshold
 
