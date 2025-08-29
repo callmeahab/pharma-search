@@ -13,7 +13,7 @@ from pydantic import BaseModel, EmailStr
 from .config import settings
 from .search_engine import PharmaSearchEngine
 from .product_processor import EnhancedProductProcessor
-from .routes.exports import register_export_routes
+# from .routes.exports import register_export_routes  # TODO: Create export routes if needed
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
