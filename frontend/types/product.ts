@@ -3,6 +3,7 @@ export interface Price {
   price: number;
   inStock: boolean;
   link?: string;
+  title?: string; // Individual product title for this price entry
   is_best_deal?: boolean;
   diff_from_avg?: number;
 }
@@ -69,6 +70,7 @@ export function convertBackendProductToProduct(
         price: backendProduct.price,
         inStock: true,
         link: backendProduct.link,
+        title: backendProduct.title, // Include individual product title
       },
     ],
     vendorCount: group.vendor_count,
@@ -81,11 +83,10 @@ export function convertProductGroupToProducts(group: ProductGroup): Product[] {
   const firstProduct = group.products[0];
 
   // Find the most common or representative title
-  // For now, use the first product's title, but this could be enhanced
-  // to find the most frequent title or the shortest/clearest one
+  // Use the actual product title instead of normalized name
   const productTitle = firstProduct?.title
     ? humanizeTitle(firstProduct.title)
-    : humanizeTitle(group.normalized_name);
+    : "Nepoznat proizvod";
 
   const mainProduct: Product = {
     id: group.id,
@@ -98,6 +99,7 @@ export function convertProductGroupToProducts(group: ProductGroup): Product[] {
       price: p.price,
       inStock: true,
       link: p.link,
+      title: p.title, // Include individual product title
     })),
     vendorCount: group.vendor_count,
   };

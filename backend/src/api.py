@@ -136,11 +136,35 @@ async def autocomplete(
 ):
     """Fast autocomplete search endpoint"""
     try:
-        # Use the fast autocomplete function with explicit type casting
+        # Use direct query on preprocessed data for autocomplete
         async with search_engine.pool.acquire() as conn:
             rows = await conn.fetch(
-                "SELECT * FROM fast_autocomplete_search($1::text, $2::integer)",
-                q, limit
+                """
+                SELECT 
+                    p.id,
+                    p.title,
+                    p.price,
+                    v.name as vendor_name
+                FROM "Product" p
+                JOIN "Vendor" v ON v.id = p."vendorId"
+                WHERE 
+                    p."processedAt" IS NOT NULL
+                    AND (
+                        p.title ILIKE ($1 || '%') OR
+                        p.title ILIKE ('%' || $1 || '%') OR
+                        COALESCE(p."normalizedName", '') ILIKE ($1 || '%') OR
+                        $1 = ANY(COALESCE(p."searchTokens", ARRAY[]::TEXT[]))
+                    )
+                ORDER BY 
+                    CASE 
+                        WHEN p.title ILIKE ($1 || '%') THEN 0
+                        WHEN $1 = ANY(COALESCE(p."searchTokens", ARRAY[]::TEXT[])) THEN 1
+                        ELSE 2
+                    END,
+                    p.price ASC
+                LIMIT $2
+                """,
+                q.lower().strip(), limit
             )
             
             # Convert to simple format for autocomplete
@@ -170,10 +194,36 @@ async def search_groups(
     """Fast search using precomputed groups"""
     try:
         async with search_engine.pool.acquire() as conn:
-            # Try precomputed groups first
+            # Search using preprocessed data and create dynamic groups
             groups = await conn.fetch(
-                "SELECT * FROM search_product_groups($1::text, $2::integer)",
-                q, limit
+                """
+                SELECT 
+                    COALESCE(p."productGroupId", 'single_' || p.id) as group_id,
+                    COALESCE(p.title, p."normalizedName") as display_name,
+                    ARRAY_AGG(p.id ORDER BY p.price ASC) as product_ids,
+                    MIN(p.price) as min_price,
+                    MAX(p.price) as max_price,
+                    AVG(p.price) as avg_price,
+                    COUNT(DISTINCT p."vendorId") as vendor_count,
+                    COUNT(*) as product_count
+                FROM "Product" p
+                LEFT JOIN "Brand" b ON p."brandId" = b.id
+                WHERE 
+                    p."processedAt" IS NOT NULL
+                    AND (
+                        p.title ILIKE ('%' || $1 || '%') OR
+                        COALESCE(p."normalizedName", '') ILIKE ('%' || $1 || '%') OR
+                        b.name ILIKE ('%' || $1 || '%') OR
+                        $1 = ANY(COALESCE(p."searchTokens", ARRAY[]::TEXT[]))
+                    )
+                GROUP BY 
+                    COALESCE(p."productGroupId", 'single_' || p.id),
+                    COALESCE(p.title, p."normalizedName")
+                HAVING COUNT(*) > 0
+                ORDER BY product_count DESC, min_price ASC
+                LIMIT $2
+                """,
+                q.lower().strip(), limit
             )
             
             if not groups:

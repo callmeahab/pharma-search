@@ -35,8 +35,8 @@ export const PriceComparison: React.FC<PriceComparisonProps> = ({
     }))
     : (prices || []).map(p => ({
       ...p,
-      // Ensure a title exists for legacy price items
-      title: productName || (p as any).title || p.store,
+      // Use individual product title if available, otherwise use store name
+      title: (p as any).title || p.store,
     }));
 
   // console.log('priceData:', priceData);
@@ -60,6 +60,8 @@ export const PriceComparison: React.FC<PriceComparisonProps> = ({
     window.open(targetUrl, "_blank");
   };
 
+    console.log('displayPrices', displayPrices);
+
   const PriceList = () => (
     <div className="space-y-2">
       {displayPrices.map((price, index) => (
@@ -78,7 +80,7 @@ export const PriceComparison: React.FC<PriceComparisonProps> = ({
             <div className="flex flex-col min-w-0">
               <span className="font-medium dark:text-gray-200 hover:text-health-primary dark:hover:text-green-300 inline-flex items-center group gap-1 min-w-0 whitespace-normal break-words">
                 <span className="whitespace-normal break-words">
-                  {price.title || productName || price.store}
+                  {price.title || price.store}
                 </span>
                 <ExternalLink
                   size={14}

@@ -109,7 +109,7 @@ const SearchResults: React.FC<SearchResultsProps> = ({
               <div className="flex justify-between items-start">
                 <div className="flex-1">
                   <CardTitle className="text-lg text-health-primary dark:text-health-accent">
-                    {humanizeTitle(group.normalized_name)}
+                    {humanizeTitle(group.products[0]?.title || group.normalized_name)}
                     {group.dosage_value && (
                       <span className="ml-2 font-normal text-gray-600 dark:text-gray-400">
                         {group.dosage_value} {group.dosage_unit}

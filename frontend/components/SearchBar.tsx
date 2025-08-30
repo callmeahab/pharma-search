@@ -177,6 +177,8 @@ const SearchBar: React.FC<SearchBarProps> = ({
     setSearchGroups([]);
     setFilteredSuggestions([]);
     setHasUnsearchedChanges(false);
+    // Clear the URL parameters by calling onSearch with empty string
+    onSearch("");
   };
 
   return (

@@ -168,52 +168,124 @@ class PharmaSearchEngine:
         )
 
     async def _get_exact_matches(self, query: str, limit: int = 100) -> List[str]:
-        """Get product IDs that match the query exactly or as a whole word - OPTIMIZED with preprocessor"""
+        """Get product IDs using preprocessed data - normalized names and search tokens"""
         async with self.pool.acquire() as conn:
             query_len = len(query.strip())
-            query_words = query.lower().split()
-            is_specific_product_query = len(query_words) >= 3 and any(len(word) > 2 for word in query_words)
-
+            query_lower = query.lower().strip()
+            query_words = query_lower.split()
+            
             # Limit results early to reduce grouping overhead
-            search_limit = min(limit * 5, 300)  # Much smaller limit
+            search_limit = min(limit * 5, 300)
             
             # Use preprocessor to enhance query
             query_identity = preprocessor.preprocess_product(query)
-            enhanced_tokens = query_identity.search_tokens
+            enhanced_tokens = query_identity.search_tokens or []
             
+            # Build search using preprocessed data
             if query_len <= 3:
-                # Use the optimized search function for short queries with enhanced tokens
+                # Short query: prioritize exact token matches and title starts
                 rows = await conn.fetch(
                     """
-                    SELECT id, relevance_score as priority_score
-                    FROM fast_product_search($1::text, NULL, NULL, NULL, NULL, $2::integer)
-                    ORDER BY relevance_score DESC
+                    SELECT 
+                        p.id,
+                        (CASE 
+                            WHEN LOWER(p.title) = $1 THEN 5000
+                            WHEN p.title ILIKE ($1 || '%') THEN 4500
+                            WHEN $1 = ANY(COALESCE(p."searchTokens", ARRAY[]::TEXT[])) THEN 4000
+                            WHEN COALESCE(p."normalizedName", '') ILIKE ($1 || '%') THEN 3500
+                            WHEN p.title ILIKE ('%' || $1 || '%') THEN 2000
+                            WHEN COALESCE(p."normalizedName", '') ILIKE ('%' || $1 || '%') THEN 1500
+                            WHEN b.name ILIKE ('%' || $1 || '%') THEN 1000
+                            ELSE 100
+                        END) as priority_score
+                    FROM "Product" p
+                    LEFT JOIN "Brand" b ON p."brandId" = b.id
+                    WHERE 
+                        p."processedAt" IS NOT NULL
+                        AND (
+                            LOWER(p.title) = $1 OR
+                            p.title ILIKE ($1 || '%') OR
+                            $1 = ANY(COALESCE(p."searchTokens", ARRAY[]::TEXT[])) OR
+                            COALESCE(p."normalizedName", '') ILIKE ($1 || '%') OR
+                            p.title ILIKE ('%' || $1 || '%') OR
+                            COALESCE(p."normalizedName", '') ILIKE ('%' || $1 || '%') OR
+                            b.name ILIKE ('%' || $1 || '%')
+                        )
+                    ORDER BY priority_score DESC, p.price ASC
+                    LIMIT $2
                     """,
-                    query, search_limit
+                    query_lower, search_limit
                 )
                 
                 # Also search with enhanced tokens if different from original
-                if enhanced_tokens and any(token not in query.lower() for token in enhanced_tokens):
+                all_rows = list(rows)
+                if enhanced_tokens and any(token != query_lower for token in enhanced_tokens):
                     for token in enhanced_tokens[:3]:  # Limit to avoid too many queries
-                        if token != query.lower():
+                        if token != query_lower:
                             enhanced_rows = await conn.fetch(
                                 """
-                                SELECT id, relevance_score as priority_score
-                                FROM fast_product_search($1::text, NULL, NULL, NULL, NULL, $2::integer)
-                                ORDER BY relevance_score DESC
+                                SELECT 
+                                    p.id,
+                                    (CASE 
+                                        WHEN LOWER(p.title) = $1 THEN 4000
+                                        WHEN p.title ILIKE ($1 || '%') THEN 3500
+                                        WHEN $1 = ANY(COALESCE(p."searchTokens", ARRAY[]::TEXT[])) THEN 3000
+                                        WHEN COALESCE(p."normalizedName", '') ILIKE ('%' || $1 || '%') THEN 1500
+                                        WHEN p.title ILIKE ('%' || $1 || '%') THEN 1000
+                                        ELSE 100
+                                    END) as priority_score
+                                FROM "Product" p
+                                WHERE 
+                                    p."processedAt" IS NOT NULL
+                                    AND (
+                                        LOWER(p.title) = $1 OR
+                                        p.title ILIKE ($1 || '%') OR
+                                        $1 = ANY(COALESCE(p."searchTokens", ARRAY[]::TEXT[])) OR
+                                        COALESCE(p."normalizedName", '') ILIKE ('%' || $1 || '%') OR
+                                        p.title ILIKE ('%' || $1 || '%')
+                                    )
+                                ORDER BY priority_score DESC, p.price ASC
+                                LIMIT $2
                                 """,
                                 token, search_limit // 3
                             )
-                            rows.extend(enhanced_rows)
+                            all_rows.extend(enhanced_rows)
+                rows = all_rows
             else:
-                # Use the optimized search function for all longer queries
+                # Longer query: use full-text search on preprocessed data
                 rows = await conn.fetch(
                     """
-                    SELECT id, relevance_score
-                    FROM fast_product_search($1::text, NULL, NULL, NULL, NULL, $2::integer)
-                    ORDER BY relevance_score DESC
+                    SELECT 
+                        p.id,
+                        (CASE 
+                            WHEN LOWER(p.title) = $1 THEN 5000
+                            WHEN p.title ILIKE ($1 || '%') THEN 4500
+                            WHEN $1 = ANY(COALESCE(p."searchTokens", ARRAY[]::TEXT[])) THEN 4000
+                            WHEN p.title ~* ('\\m' || $1 || '\\M') THEN 3500
+                            WHEN COALESCE(p."normalizedName", '') ~* ('\\m' || $1 || '\\M') THEN 3000
+                            WHEN p.title ILIKE ('%' || $1 || '%') THEN 2000
+                            WHEN COALESCE(p."normalizedName", '') ILIKE ('%' || $1 || '%') THEN 1500
+                            WHEN b.name ILIKE ('%' || $1 || '%') THEN 1000
+                            ELSE 100
+                        END) as priority_score
+                    FROM "Product" p
+                    LEFT JOIN "Brand" b ON p."brandId" = b.id
+                    WHERE 
+                        p."processedAt" IS NOT NULL
+                        AND (
+                            LOWER(p.title) = $1 OR
+                            p.title ILIKE ($1 || '%') OR
+                            $1 = ANY(COALESCE(p."searchTokens", ARRAY[]::TEXT[])) OR
+                            p.title ~* ('\\m' || $1 || '\\M') OR
+                            COALESCE(p."normalizedName", '') ~* ('\\m' || $1 || '\\M') OR
+                            p.title ILIKE ('%' || $1 || '%') OR
+                            COALESCE(p."normalizedName", '') ILIKE ('%' || $1 || '%') OR
+                            b.name ILIKE ('%' || $1 || '%')
+                        )
+                    ORDER BY priority_score DESC, p.price ASC
+                    LIMIT $2
                     """,
-                    query, search_limit
+                    query_lower, search_limit
                 )
 
             # Remove duplicates while preserving order
@@ -598,15 +670,20 @@ class PharmaSearchEngine:
         
         # Generate group name
         if len(group_products) == 1:
-            # Single product group
+            # Single product group - use actual title instead of normalized name
             product = group_products[0]
-            identity = preprocessor.preprocess_product(product.get('title', ''), product.get('brand_name', ''))
-            group_name = identity.normalized_name or product.get('title', 'Unknown Product')
+            group_name = product.get('title', 'Unknown Product')
         else:
-            # Multi-product group - find most representative name
-            titles = [p.get('title', '') for p in group_products]
-            identities = [preprocessor.preprocess_product(title, p.get('brand_name', '')) for title, p in zip(titles, group_products)]
-            group_name = self._generate_preprocessed_group_name(identities)
+            # Multi-product group - use most common actual title
+            titles = [p.get('title', '') for p in group_products if p.get('title', '')]
+            if titles:
+                # Find most common title
+                title_counts = defaultdict(int)
+                for title in titles:
+                    title_counts[title] += 1
+                group_name = max(title_counts.items(), key=lambda x: x[1])[0]
+            else:
+                group_name = "Unknown Product"
         
         # Extract dosage info
         dosage_value = None

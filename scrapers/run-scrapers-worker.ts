@@ -464,4 +464,12 @@ async function main() {
   });
 }
 
-main().catch(console.error);
+main()
+  .then(() => {
+    console.log('\n✅ All scrapers completed successfully');
+    process.exit(0);
+  })
+  .catch((error) => {
+    console.error('❌ Error running scrapers:', error);
+    process.exit(1);
+  });
