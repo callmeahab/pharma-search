@@ -39,7 +39,6 @@ export const PriceComparison: React.FC<PriceComparisonProps> = ({
       title: (p as any).title || p.store,
     }));
 
-  // console.log('priceData:', priceData);
   // Sort prices from lowest to highest
   const sortedPrices = [...priceData].sort((a, b) => a.price - b.price);
   const lowestPrice = sortedPrices[0]?.price || 0;
@@ -59,8 +58,6 @@ export const PriceComparison: React.FC<PriceComparisonProps> = ({
     // Use the actual product link if available, otherwise fallback to generic website
     window.open(targetUrl, "_blank");
   };
-
-    console.log('displayPrices', displayPrices);
 
   const PriceList = () => (
     <div className="space-y-2">

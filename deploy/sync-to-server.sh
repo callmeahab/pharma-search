@@ -98,6 +98,7 @@ coverage/
 .nyc_output/
 .pytest_cache/
 .coverage
+go-backend/pharma-server
 EOF
 }
 

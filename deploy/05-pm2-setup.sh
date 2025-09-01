@@ -40,24 +40,25 @@ module.exports = {
       restart_delay: 4000
     },
     {
-      name: 'pharma-fastapi',
-      cwd: '$APP_DIR/backend',
-      script: '$APP_DIR/backend/venv/bin/uvicorn',
-      args: 'src.api:app --host 0.0.0.0 --port 8000 --workers 1',
+      name: 'pharma-go-backend',
+      cwd: '$APP_DIR/go-backend',
+      script: '$APP_DIR/go-backend/pharma-server',
       instances: 1,
       exec_mode: 'fork',
       interpreter: 'none',
       env: {
-        PYTHONPATH: '$APP_DIR/backend',
-        DATABASE_URL: 'postgresql://root:pharma_secure_password_2025@localhost:5432/pharma_search'
+        DATABASE_URL: 'postgresql://root:pharma_secure_password_2025@localhost:5432/pharma_search',
+        MEILI_URL: process.env.MEILI_HTTP_ADDR || 'http://127.0.0.1:7700',
+        MEILI_API_KEY: process.env.MEILI_MASTER_KEY || ''
       },
+      env_file: '$APP_DIR/.env',
       error_file: '$LOG_DIR/backend/error.log',
       out_file: '$LOG_DIR/backend/out.log',
       log_file: '$LOG_DIR/backend/combined.log',
       time: true,
       autorestart: true,
       watch: false,
-      max_memory_restart: '512M',
+      max_memory_restart: '256M',
       restart_delay: 4000
     }
   ]
@@ -97,6 +98,10 @@ pm2 status
 echo ""
 echo "🐘 PostgreSQL Status:"
 systemctl is-active postgresql || echo "❌ PostgreSQL is not running"
+
+echo ""
+echo "🔍 Meilisearch Status:"
+systemctl is-active meilisearch || echo "❌ Meilisearch is not running"
 
 echo ""
 echo "🌐 Nginx Status:"  

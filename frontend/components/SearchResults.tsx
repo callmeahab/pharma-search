@@ -119,7 +119,7 @@ const SearchResults: React.FC<SearchResultsProps> = ({
                   <div className="flex gap-4 items-center mt-2 text-sm text-gray-600 dark:text-gray-400">
                     <div className="flex gap-1 items-center">
                       <Store className="w-4 h-4" />
-                      <span>{group.vendor_count} apoteka</span>
+                      <span>{group.product_count} proizvoda</span>
                     </div>
                     <div className="flex gap-1 items-center">
                       <TrendingDown className="w-4 h-4" />
@@ -137,7 +137,7 @@ const SearchResults: React.FC<SearchResultsProps> = ({
                     {group.vendor_count > 1 && (
                       <Badge variant="secondary" className="text-xs">
                         <TrendingUp className="mr-1 w-3 h-3" />
-                        Više ponuđača
+                        {group.vendor_count != 1 ? "apoteka" : "apoteke"}
                       </Badge>
                     )}
                   </div>

@@ -1,6 +1,6 @@
-// In production, use relative URLs so nginx can proxy to backend
-// In development, use localhost:8000 directly
-const API_URL = process.env.NEXT_PUBLIC_API_URL || (process.env.NODE_ENV === 'production' ? '' : 'http://localhost:8000');
+import { grpcClient } from "./grpc-client";
+
+// Client library that proxies all calls to gRPC backend
 
 export interface SearchOptions {
   limit?: number;
@@ -76,53 +76,14 @@ export async function autocomplete(
   query: string,
   limit: number = 8
 ): Promise<AutocompleteResult> {
-  const params = new URLSearchParams({
-    q: query,
-    limit: limit.toString(),
-  });
-
-  const response = await fetch(`${API_URL}/api/autocomplete?${params}`);
-
-  if (!response.ok) {
-    throw new Error(`Autocomplete failed: ${response.status} ${response.statusText}`);
-  }
-
-  return response.json();
+  return grpcClient.autocomplete(query, limit);
 }
 
 export async function searchProducts(
   query: string,
   options?: SearchOptions
 ): Promise<SearchResult> {
-  const params = new URLSearchParams({
-    q: query,
-    limit: (options?.limit || 100).toString(), // Increased default limit
-    offset: (options?.offset || 0).toString(),
-  });
-
-  if (options?.minPrice !== undefined) {
-    params.append("min_price", options.minPrice.toString());
-  }
-  if (options?.maxPrice !== undefined) {
-    params.append("max_price", options.maxPrice.toString());
-  }
-  if (options?.vendorIds && options.vendorIds.length > 0) {
-    options.vendorIds.forEach((id) => params.append("vendor_ids", id));
-  }
-  if (options?.brandIds && options.brandIds.length > 0) {
-    options.brandIds.forEach((id) => params.append("brand_ids", id));
-  }
-  if (options?.searchType) {
-    params.append("search_type", options.searchType);
-  }
-
-  const response = await fetch(`${API_URL}/api/search?${params}`);
-
-  if (!response.ok) {
-    throw new Error(`Search failed: ${response.status} ${response.statusText}`);
-  }
-
-  return response.json();
+  return grpcClient.searchProducts(query, options);
 }
 
 export async function searchProductsStreaming(
@@ -130,53 +91,14 @@ export async function searchProductsStreaming(
   onBatch: (groups: ProductGroup[], isComplete: boolean) => void,
   options?: { limit?: number }
 ): Promise<void> {
-  const params = new URLSearchParams({
-    q: query,
-    limit: (options?.limit || 50).toString(),
-  });
-
-  const response = await fetch(`${API_URL}/api/search-stream?${params}`);
-  
-  if (!response.ok) {
-    throw new Error(`Streaming search failed: ${response.status}`);
-  }
-
-  const reader = response.body?.getReader();
-  const decoder = new TextDecoder();
-
-  if (!reader) {
-    throw new Error("No response body available");
-  }
-
+  // Streaming search not implemented in Go backend yet, fall back to regular search
   try {
-    while (true) {
-      const { done, value } = await reader.read();
-      
-      if (done) break;
-      
-      const chunk = decoder.decode(value);
-      const lines = chunk.split('\n');
-      
-      for (const line of lines) {
-        if (line.startsWith('data: ')) {
-          try {
-            const data = JSON.parse(line.slice(6));
-            
-            if (data.type === 'batch' && data.groups) {
-              onBatch(data.groups, false);
-            } else if (data.type === 'complete') {
-              onBatch([], true);
-            } else if (data.type === 'error') {
-              throw new Error(data.message);
-            }
-          } catch (parseError) {
-            console.warn('Failed to parse streaming data:', parseError);
-          }
-        }
-      }
-    }
-  } finally {
-    reader.releaseLock();
+    const result = await searchProducts(query, {
+      limit: options?.limit || 50,
+    });
+    onBatch(result.groups, true);
+  } catch (error) {
+    throw new Error(`Search failed: ${error}`);
   }
 }
 
@@ -229,15 +151,7 @@ export async function searchAllProducts(
 }
 
 export async function checkHealth(): Promise<{ status: string }> {
-  const response = await fetch(`${API_URL}/health`);
-
-  if (!response.ok) {
-    throw new Error(
-      `Health check failed: ${response.status} ${response.statusText}`
-    );
-  }
-
-  return response.json();
+  return grpcClient.health();
 }
 
 export async function getFeaturedProducts(
@@ -272,8 +186,6 @@ export async function getFeaturedProducts(
   }
 }
 
-
-
 // New API functions for backend routes
 
 export interface GroupingStatistics {
@@ -303,13 +215,7 @@ export interface GroupingAnalysis {
 }
 
 export async function getGroupingAnalysis(): Promise<GroupingAnalysis> {
-  const response = await fetch(`${API_URL}/api/grouping-analysis`);
-
-  if (!response.ok) {
-    throw new Error(`Grouping analysis failed: ${response.status} ${response.statusText}`);
-  }
-
-  return response.json();
+  return grpcClient.getProcessingAnalysis();
 }
 
 export interface PriceComparisonProduct {
@@ -351,58 +257,36 @@ export interface PriceComparisonResult {
   products: PriceComparisonProduct[];
 }
 
-export async function getPriceComparison(groupId: string): Promise<PriceComparisonResult> {
-  const response = await fetch(`${API_URL}/api/price-comparison/${groupId}`);
-
-  if (!response.ok) {
-    throw new Error(`Price comparison failed: ${response.status} ${response.statusText}`);
-  }
-
-  return response.json();
+export async function getPriceComparison(
+  groupId: string
+): Promise<PriceComparisonResult> {
+  return grpcClient.getPriceComparison(groupId);
 }
 
-export async function processProducts(batchSize: number = 100): Promise<{ status: string; message: string }> {
-  const response = await fetch(`${API_URL}/api/process?batch_size=${batchSize}`, {
-    method: 'POST',
-  });
-
-  if (!response.ok) {
-    throw new Error(`Product processing failed: ${response.status} ${response.statusText}`);
-  }
-
-  return response.json();
+export async function processProducts(
+  batchSize: number = 100
+): Promise<{ status: string; message: string }> {
+  return grpcClient.processProducts(batchSize);
 }
 
-export async function reprocessAllProducts(): Promise<{ status: string; message: string }> {
-  const response = await fetch(`${API_URL}/api/reprocess-all`, {
-    method: 'POST',
-  });
-
-  if (!response.ok) {
-    throw new Error(`Reprocessing failed: ${response.status} ${response.statusText}`);
-  }
-
-  return response.json();
+export async function reprocessAllProducts(): Promise<{
+  status: string;
+  message: string;
+}> {
+  return grpcClient.reprocessAllProducts();
 }
 
-export async function rebuildSearchIndex(): Promise<{ status: string; message: string }> {
-  const response = await fetch(`${API_URL}/api/rebuild-index`, {
-    method: 'POST',
-  });
-
-  if (!response.ok) {
-    throw new Error(`Index rebuild failed: ${response.status} ${response.statusText}`);
-  }
-
-  return response.json();
+export async function rebuildSearchIndex(): Promise<{
+  status: string;
+  message: string;
+}> {
+  return grpcClient.rebuildSearchIndex();
 }
 
-export async function submitContact(payload: { name: string; email: string; message: string }): Promise<any> {
-  const response = await fetch(`${API_URL}/api/contact`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-  if (!response.ok) throw new Error('Contact submit failed');
-  return response.json();
+export async function submitContact(payload: {
+  name: string;
+  email: string;
+  message: string;
+}): Promise<any> {
+  return grpcClient.submitContact(payload);
 }

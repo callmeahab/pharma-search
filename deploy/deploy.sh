@@ -39,15 +39,37 @@ else
     exit 1
 fi
 
+# Step 2b: Meilisearch Setup
+echo ""
+echo "🔍 Step 2b: Meilisearch Setup"
+echo "============================"
+if [ -f "$SCRIPT_DIR/02b-meilisearch-setup.sh" ]; then
+    bash "$SCRIPT_DIR/02b-meilisearch-setup.sh"
+else
+    echo "❌ 02b-meilisearch-setup.sh not found"
+    exit 1
+fi
+
+# Step 2c: gRPC-Web Proxy Setup
+echo ""
+echo "🔁 Step 2c: gRPC-Web Proxy Setup"
+echo "==============================="
+if [ -f "$SCRIPT_DIR/02c-grpcweb-proxy-setup.sh" ]; then
+    bash "$SCRIPT_DIR/02c-grpcweb-proxy-setup.sh"
+else
+    echo "❌ 02c-grpcweb-proxy-setup.sh not found"
+    exit 1
+fi
+
 # Step 3: Verify Application Files
 echo ""
 echo "📂 Step 3: Verifying Application Files"
 echo "======================================"
-if [ ! -d "$APP_DIR/frontend" ] || [ ! -d "$APP_DIR/backend" ]; then
+if [ ! -d "$APP_DIR/frontend" ] || [ ! -d "$APP_DIR/go-backend" ]; then
     echo "❌ Application files not found in $APP_DIR"
     echo "Please ensure you have copied your application files to:"
     echo "  - $APP_DIR/frontend/ (Next.js application)"
-    echo "  - $APP_DIR/backend/ (FastAPI application)"
+    echo "  - $APP_DIR/go-backend/ (Go gRPC application)"
     echo "  - $APP_DIR/deploy/ (deployment scripts)"
     exit 1
 fi
@@ -93,6 +115,27 @@ else
     echo "   bash $APP_DIR/deploy/06-ssl-setup.sh"
 fi
 
+# Step 8: Meilisearch Indexing (Optional)
+echo ""
+echo "🔍 Step 8: Meilisearch Indexing"
+echo "==============================="
+echo "This will index your product data for search functionality."
+echo "Note: Ensure your database contains product data before indexing."
+read -p "Do you want to run Meilisearch indexing now? (Y/n): " -n 1 -r
+echo
+if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+    if [ -f "$APP_DIR/deploy/07-meilisearch-index.sh" ]; then
+        bash "$APP_DIR/deploy/07-meilisearch-index.sh"
+    else
+        echo "❌ Indexing script not found"
+        echo "📋 You can run indexing manually later with:"
+        echo "   bash $APP_DIR/deploy/07-meilisearch-index.sh"
+    fi
+else
+    echo "⏭️ Skipping indexing - you can run it later with:"
+    echo "   bash $APP_DIR/deploy/07-meilisearch-index.sh"
+fi
+
 # Final checks
 echo ""
 echo "🔍 Step 9: Final Checks"
@@ -102,6 +145,7 @@ echo "🧪 Checking service status..."
 sleep 5
 
 echo "PostgreSQL: $(systemctl is-active postgresql)"
+echo "Meilisearch: $(systemctl is-active meilisearch)"
 echo "Nginx: $(systemctl is-active nginx)"
 
 echo ""
@@ -128,19 +172,28 @@ echo "🎨 Updating frontend..."
 cd frontend
 export PATH="/root/.bun/bin:$PATH"
 bun install
-bunx prisma generate
+# Prisma not needed - using direct SQL connections
 bun run build
 
 # Update backend  
-echo "🐍 Updating backend..."
-cd ../backend
-source venv/bin/activate
-pip install -r requirements.txt
+echo "🦫 Updating backend (Go)..."
+cd ../go-backend
+go mod download
+go build -o pharma-server main.go
 
 # Database is managed separately
 echo "ℹ️ Database schema managed separately from application"
 
-# Restart services
+# Check if Meilisearch needs re-indexing
+echo "🔍 Checking if Meilisearch re-indexing is needed..."
+read -p "Re-index Meilisearch after update? (Y/n): " -n 1 -r
+echo
+if [[ ! \$REPLY =~ ^[Nn]\$ ]]; then
+    echo "🔄 Re-indexing Meilisearch..."
+    bash "$APP_DIR/deploy/07-meilisearch-index.sh"
+fi
+
+# Restart services (zero-downtime reload)
 echo "🔄 Restarting services..."
 pm2 reload ecosystem.config.js
 
@@ -190,11 +243,14 @@ echo "  • Application Directory: $APP_DIR"
 echo "  • Database: pharma_search"
 echo "  • Database User: root"
 echo "  • Database Password: pharma_secure_password_2025"
+echo "  • Meilisearch: http://127.0.0.1:7700 (internal only)"
+echo "  • Meilisearch Config: /etc/meilisearch.toml"
 echo ""
 echo "🔧 Management Commands:"
 echo "  • Monitor: $APP_DIR/monitor.sh"
 echo "  • Update: $APP_DIR/update.sh"
 echo "  • Backup: $APP_DIR/backup.sh"
+echo "  • Index Products: $APP_DIR/deploy/07-meilisearch-index.sh"
 echo "  • PM2 Status: pm2 status"
 echo "  • View Logs: pm2 logs"
 echo ""

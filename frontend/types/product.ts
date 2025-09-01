@@ -41,6 +41,7 @@ export interface ProductGroup {
     avg: number;
   };
   vendor_count: number;
+  product_count?: number;
 }
 
 export interface SearchResult {
@@ -61,7 +62,7 @@ export function convertBackendProductToProduct(
   return {
     id: backendProduct.id,
     name: humanizeTitle(backendProduct.title),
-    description: `Dostupno u ${group.vendor_count} apoteka`,
+    description: `${group.product_count || 0} proizvoda u ${group.vendor_count} apoteka`,
     category: "", // No category since we removed badges
     image: backendProduct.thumbnail || "/medicine-placeholder.svg",
     prices: [
@@ -91,7 +92,7 @@ export function convertProductGroupToProducts(group: ProductGroup): Product[] {
   const mainProduct: Product = {
     id: group.id,
     name: productTitle,
-    description: `${group.products.length} istih ili sličnih proizvoda`,
+    description: `${group.product_count || 0} proizvoda u ${group.vendor_count} apoteka`,
     category: "",
     image: firstProduct?.thumbnail || "/medicine-placeholder.svg",
     prices: group.products.map((p) => ({

@@ -17,9 +17,10 @@ services:
   #     retries: 5
 
   backend:
-    build: ./backend
+    build: ./go-backend
     ports:
-      - "8000:8000"
+      - "8080:8080"
+      - "50051:50051"  # gRPC port
     environment:
       DATABASE_URL: postgresql://postgres:postgres@host.docker.internal:5432/pharmagician
       SMTP_HOST: ${SMTP_HOST}
@@ -27,19 +28,22 @@ services:
       SMTP_USER: ${SMTP_USER}
       SMTP_PASS: ${SMTP_PASS}
       CONTACT_EMAIL: ${CONTACT_EMAIL}
+      MEILI_URL: http://host.docker.internal:7700
+      MEILI_API_KEY: ${MEILI_API_KEY}
     # depends_on:
     #   db:
     #     condition: service_healthy
     volumes:
-      - ./backend:/app
-    command: uvicorn src.api:app --host 0.0.0.0 --port 8000 --reload
+      - ./go-backend:/app
+    working_dir: /app
+    command: ./pharma-server
 
   # frontend:
   #   build: ./frontend
   #   ports:
   #     - "3000:3000"
   #   environment:
-  #     NEXT_PUBLIC_API_URL: http://localhost:8000
+  #     NEXT_PUBLIC_API_URL: http://localhost:8080
   #   depends_on:
   #     - backend
 # volumes:

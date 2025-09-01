@@ -27,8 +27,8 @@ upstream nextjs_backend {
     keepalive 32;
 }
 
-upstream fastapi_backend {
-    server 127.0.0.1:8000;
+upstream go_backend {
+    server 127.0.0.1:8080;
     keepalive 32;
 }
 
@@ -74,11 +74,11 @@ server {
         try_files \$uri =404;
     }
 
-    # API routes (FastAPI backend)
-    location /api/ {
+    # gRPC-Web routes (proxy to grpcwebproxy)
+    location ~ ^/(service\.PharmaAPI|grpc\.|.*\.PharmaAPI)/ {
         limit_req zone=api burst=20 nodelay;
         
-        proxy_pass http://fastapi_backend;
+        proxy_pass http://127.0.0.1:8080;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection 'upgrade';
@@ -88,17 +88,36 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_cache_bypass $http_upgrade;
         
+        # gRPC-Web specific headers
+        proxy_set_header Content-Type $content_type;
+        proxy_set_header TE trailers;
+        add_header Access-Control-Expose-Headers "grpc-status,grpc-message,content-type";
+        add_header Access-Control-Allow-Headers "content-type,x-grpc-web,x-user-agent";
+        add_header Access-Control-Allow-Methods "POST,OPTIONS";
+        
+        # Handle preflight requests
+        if ($request_method = 'OPTIONS') {
+            add_header Access-Control-Allow-Origin $http_origin;
+            add_header Access-Control-Allow-Methods "POST,OPTIONS";
+            add_header Access-Control-Allow-Headers "content-type,x-grpc-web,x-user-agent";
+            add_header Access-Control-Max-Age 86400;
+            return 204;
+        }
+        
+        # Disable compression and buffering for grpc-web binary frames
+        gzip off;
+        proxy_buffering off;
+        proxy_set_header Accept-Encoding identity;
+        proxy_request_buffering off;
+        
         # Timeouts
         proxy_connect_timeout 60s;
         proxy_send_timeout 60s;
         proxy_read_timeout 60s;
         
-        # Buffer settings
-        proxy_buffering on;
-        proxy_buffer_size 128k;
-        proxy_buffers 4 256k;
-        proxy_busy_buffers_size 256k;
+        # Buffer settings (disabled for gRPC-Web)
     }
+
 
     # Static files and Next.js app
     location / {

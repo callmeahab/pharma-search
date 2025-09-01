@@ -3,9 +3,7 @@
 # Python package dependencies with latest versions as of 2025
 # ============================================================================
 
-# Core Web Framework
-fastapi==0.115.6
-uvicorn[standard]==0.32.1
+# Core - Pydantic still needed for data processing scripts
 pydantic==2.11.7
 pydantic-settings==2.8.0
 

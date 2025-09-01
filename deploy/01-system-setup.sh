@@ -68,6 +68,22 @@ wget --quiet -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc | apt-key a
 apt update
 apt install -y postgresql-15 postgresql-client-15 postgresql-contrib-15
 
+# Install Meilisearch
+echo "🔍 Installing Meilisearch..."
+# Add Meilisearch repository
+curl -L https://install.meilisearch.com | sh
+# Move meilisearch to /usr/local/bin for system-wide access (idempotent)
+install -m 0755 meilisearch /usr/local/bin/meilisearch
+
+# Create meilisearch user and directories (idempotent)
+echo "👤 Setting up Meilisearch user and directories..."
+if ! id -u meilisearch >/dev/null 2>&1; then
+    useradd --system --home /var/lib/meilisearch --create-home --shell /bin/false meilisearch
+fi
+mkdir -p /var/lib/meilisearch/data
+mkdir -p /var/lib/meilisearch/dumps
+chown -R meilisearch:meilisearch /var/lib/meilisearch
+
 # Configure firewall
 echo "🔒 Configuring UFW firewall..."
 ufw allow ssh
@@ -81,7 +97,7 @@ mkdir -p /var/www/pharma-search
 mkdir -p /var/log/pharma-search
 
 echo "✅ System setup completed successfully!"
-echo "📋 Installed packages: Node.js, Bun, Python, PostgreSQL, Nginx, PM2"
+echo "📋 Installed packages: Node.js, Bun, Python, PostgreSQL, Nginx, PM2, Meilisearch"
 echo "📝 Note: Scraper packages (Chrome, Xvfb) not installed - scrapers run locally"
 echo ""
 echo "🔑 Next steps:"

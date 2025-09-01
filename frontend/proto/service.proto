@@ -1,0 +1,89 @@
+syntax = "proto3";
+package service;
+
+option go_package = "github.com/callmeahab/pharma-search/go-backend/proto;service";
+
+import "google/api/annotations.proto";
+import "google/protobuf/struct.proto";
+
+service PharmaAPI {
+  rpc Health(HealthRequest) returns (HealthResponse) {
+    option (google.api.http) = { get: "/api/v1/health" };
+  }
+
+  rpc Autocomplete(AutocompleteRequest) returns (AutocompleteResponse) {
+    option (google.api.http) = { get: "/api/v1/api/autocomplete" };
+  }
+
+  rpc Search(SearchRequest) returns (GenericJsonResponse) {
+    option (google.api.http) = { get: "/api/v1/api/search" };
+  }
+
+  rpc SearchGroups(SearchGroupsRequest) returns (GenericJsonResponse) {
+    option (google.api.http) = { get: "/api/v1/api/search-groups" };
+  }
+
+  rpc GetFacets(FacetsRequest) returns (GenericJsonResponse) {
+    option (google.api.http) = { get: "/api/v1/api/facets" };
+  }
+
+  rpc PriceComparison(PriceComparisonRequest) returns (GenericJsonResponse) {
+    option (google.api.http) = { get: "/api/v1/api/price-comparison" };
+  }
+
+  rpc Contact(ContactRequest) returns (GenericJsonResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/api/contact"
+      body: "*"
+    };
+  }
+
+  rpc ProcessProducts(ProcessRequest) returns (GenericJsonResponse) {
+    option (google.api.http) = { post: "/api/v1/api/process" };
+  }
+
+  rpc ReprocessAll(ReprocessAllRequest) returns (GenericJsonResponse) {
+    option (google.api.http) = { post: "/api/v1/api/reprocess-all" };
+  }
+
+  rpc RebuildIndex(RebuildIndexRequest) returns (GenericJsonResponse) {
+    option (google.api.http) = { post: "/api/v1/api/rebuild-index" };
+  }
+
+  rpc ProcessingAnalysis(ProcessingAnalysisRequest) returns (GenericJsonResponse) {
+    option (google.api.http) = { get: "/api/v1/api/processing-analysis" };
+  }
+
+}
+
+message GenericJsonResponse {
+  google.protobuf.Struct data = 1;
+}
+
+message HealthRequest {}
+message HealthResponse { string status = 1; }
+
+message AutocompleteRequest { string q = 1; int32 limit = 2; }
+message AutocompleteResponse { repeated string suggestions = 1; string query = 2; int32 limit = 3; }
+
+message SearchRequest {
+  string q = 1;
+  int32 limit = 2;
+  int32 offset = 3;
+  double min_price = 4;
+  double max_price = 5;
+  repeated string brand_names = 6;
+  repeated string categories = 7;
+  repeated string forms = 8;
+  bool in_stock_only = 9;
+}
+
+message SearchGroupsRequest { string q = 1; int32 limit = 2; }
+message FacetsRequest {}
+message PriceComparisonRequest { string q = 1; }
+message ContactRequest { string name = 1; string email = 2; string message = 3; }
+message ProcessRequest { int32 batch_size = 1; }
+message ReprocessAllRequest {}
+message RebuildIndexRequest {}
+message ProcessingAnalysisRequest {}
+

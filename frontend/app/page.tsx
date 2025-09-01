@@ -40,7 +40,14 @@ export default function HomePage() {
     setIsLoadingFeatured(true);
     try {
       const featured = await getFeaturedProducts({ limit: 24 });
-      setFeaturedProducts(featured);
+      
+      // Ensure the response has the expected structure
+      if (featured && typeof featured === 'object' && Array.isArray(featured.groups)) {
+        setFeaturedProducts(featured);
+      } else {
+        console.warn("Featured products response has unexpected structure:", featured);
+        setFeaturedProducts({ groups: [], total: 0, offset: 0, limit: 24 });
+      }
     } catch (error) {
       console.error("Failed to load featured products:", error);
       setFeaturedProducts({ groups: [], total: 0, offset: 0, limit: 24 });
@@ -182,7 +189,7 @@ export default function HomePage() {
                     </span>
                   )}
                 </>
-              ) : featuredProducts ? (
+              ) : featuredProducts && featuredProducts.groups ? (
                 `${featuredProducts.groups.flatMap((group) =>
                   convertProductGroupToProducts(group)
                 ).length
@@ -249,7 +256,7 @@ export default function HomePage() {
                   <Spinner size="lg" text="Učitavanje popularnih proizvoda..." />
                 </div>
               ) : (
-                featuredProducts && (
+                featuredProducts && featuredProducts.groups && (
                   <ProductList
                     products={featuredProducts.groups.flatMap((group) =>
                       convertProductGroupToProducts(group)
