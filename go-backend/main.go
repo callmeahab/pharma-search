@@ -176,19 +176,26 @@ func normalizeTitleForGrouping(title string) string {
 	return t
 }
 
-func convertHitsToGroups(hits []map[string]interface{}, query string, db *sql.DB) []map[string]interface{} {
+func convertHitsToFlatProducts(hits []map[string]interface{}, query string, db *sql.DB) []map[string]interface{} {
 	if len(hits) == 0 {
 		return []map[string]interface{}{}
 	}
 
-	type groupInfo struct {
+	// Get additional product metadata from database if available
+	type productInfo struct {
 		GroupID    string
 		GroupName  sql.NullString
 		DosageVal  sql.NullFloat64
 		DosageUnit sql.NullString
 		Quality    sql.NullFloat64
+		DosageText sql.NullString
+		VolumeText sql.NullString
+		Form       sql.NullString
+		Category   sql.NullString
+		Photos     sql.NullString
 	}
-	idToGroup := map[string]groupInfo{}
+	
+	idToProduct := map[string]productInfo{}
 	if db != nil {
 		ids := make([]string, 0, len(hits))
 		for _, h := range hits {
@@ -198,7 +205,12 @@ func convertHitsToGroups(hits []map[string]interface{}, query string, db *sql.DB
 			}
 		}
 		if len(ids) > 0 {
-			rows, err := db.Query(`SELECT p.id, COALESCE(p."productGroupId", ''), g."groupName", g."dosageStrength", g."dosageUnit", g."qualityScore" FROM "Product" p LEFT JOIN "ProductGroup" g ON g.id = p."productGroupId" WHERE p.id = ANY($1)`, pq.Array(ids))
+			rows, err := db.Query(`
+				SELECT p.id, COALESCE(p."productGroupId", ''), g."groupName", g."dosageStrength", g."dosageUnit", g."qualityScore",
+				       p."dosageText", p."volumeText", p.form, p.category, p.photos
+				FROM "Product" p 
+				LEFT JOIN "ProductGroup" g ON g.id = p."productGroupId" 
+				WHERE p.id = ANY($1)`, pq.Array(ids))
 			if err == nil {
 				for rows.Next() {
 					var id, gid string
@@ -206,8 +218,12 @@ func convertHitsToGroups(hits []map[string]interface{}, query string, db *sql.DB
 					var dv sql.NullFloat64
 					var du sql.NullString
 					var qs sql.NullFloat64
-					if err := rows.Scan(&id, &gid, &name, &dv, &du, &qs); err == nil {
-						idToGroup[id] = groupInfo{GroupID: gid, GroupName: name, DosageVal: dv, DosageUnit: du, Quality: qs}
+					var dt, vt, form, category, photos sql.NullString
+					if err := rows.Scan(&id, &gid, &name, &dv, &du, &qs, &dt, &vt, &form, &category, &photos); err == nil {
+						idToProduct[id] = productInfo{
+							GroupID: gid, GroupName: name, DosageVal: dv, DosageUnit: du, 
+							Quality: qs, DosageText: dt, VolumeText: vt, Form: form, Category: category, Photos: photos,
+						}
 					}
 				}
 				rows.Close()
@@ -215,94 +231,240 @@ func convertHitsToGroups(hits []map[string]interface{}, query string, db *sql.DB
 		}
 	}
 
-	byGroup := map[string][]map[string]interface{}{}
+	// Convert hits to flat product list with enhanced data
+	products := make([]map[string]interface{}, 0, len(hits))
 	for _, h := range hits {
 		rawID := getString(h, "id")
 		pid := strings.ReplaceAll(rawID, "product_", "")
-		gid := getString(h, "computedGroupId")
-		if gi, ok := idToGroup[pid]; ok && gi.GroupID != "" {
-			gid = gi.GroupID
-		}
-		if gid == "" {
-			gid = normalizeTitleForGrouping(getString(h, "title"))
-		}
-		byGroup[gid] = append(byGroup[gid], h)
-	}
+		priceCents := getFloat(h, "price")
+		price := priceCents / 100.0
 
-	groups := make([]map[string]interface{}, 0, len(byGroup))
-	for gid, products := range byGroup {
-		sort.Slice(products, func(i, j int) bool { return getFloat(products[i], "price") < getFloat(products[j], "price") })
-		prices := make([]float64, 0, len(products))
-		vendors := make([]string, 0, len(products))
-		formatted := make([]map[string]interface{}, 0, len(products))
-		for _, p := range products {
-			priceCents := getFloat(p, "price")
-			price := priceCents / 100.0
-			prices = append(prices, price)
-			vendors = append(vendors, getString(p, "vendorId"))
-			pid := strings.ReplaceAll(getString(p, "id"), "product_", "")
-			formatted = append(formatted, map[string]interface{}{
-				"id":          pid,
-				"title":       getString(p, "title"),
-				"price":       price,
-				"vendor_id":   getString(p, "vendorId"),
-				"vendor_name": getString(p, "vendorName"),
-				"link":        getString(p, "link"),
-				"thumbnail":   getString(p, "thumbnail"),
-				"brand_name":  getString(p, "brand"),
-			})
-		}
-		minP, maxP := 0.0, 0.0
-		if len(prices) > 0 {
-			minP, maxP = prices[0], prices[len(prices)-1]
+		// Base product data from Meilisearch
+		product := map[string]interface{}{
+			"id":          pid,
+			"title":       getString(h, "title"),
+			"price":       price,
+			"vendor_id":   getString(h, "vendorId"),
+			"vendor_name": getString(h, "vendorName"),
+			"link":        getString(h, "link"),
+			"thumbnail":   getString(h, "thumbnail"),
+			"brand_name":  getString(h, "brand"),
 		}
 
-		// Optional group metadata from DB
-		displayName := gid
-		var dosageVal interface{}
-		var dosageUnit interface{}
-		var quality interface{}
-		if len(products) > 0 {
-			firstPid := strings.ReplaceAll(getString(products[0], "id"), "product_", "")
-			if gi, ok := idToGroup[firstPid]; ok {
-				if gi.GroupName.Valid {
-					displayName = gi.GroupName.String
-				}
-				if gi.DosageVal.Valid {
-					dosageVal = gi.DosageVal.Float64
-				}
-				if gi.DosageUnit.Valid {
-					dosageUnit = gi.DosageUnit.String
-				}
-				if gi.Quality.Valid {
-					quality = gi.Quality.Float64
-				}
+		// Add enhanced data from database if available
+		if info, ok := idToProduct[pid]; ok {
+			if info.DosageText.Valid {
+				product["dosage_text"] = info.DosageText.String
+			}
+			if info.VolumeText.Valid {
+				product["volume_text"] = info.VolumeText.String
+			}
+			if info.Form.Valid {
+				product["form"] = info.Form.String
+			}
+			if info.Category.Valid {
+				product["category"] = info.Category.String
+			}
+			if info.Quality.Valid {
+				product["quality_score"] = info.Quality.Float64
+			}
+			if info.DosageVal.Valid {
+				product["dosage_value"] = info.DosageVal.Float64
+			}
+			if info.DosageUnit.Valid {
+				product["dosage_unit"] = info.DosageUnit.String
+			}
+			if info.Photos.Valid {
+				product["photos"] = info.Photos.String
 			}
 		}
 
-		groups = append(groups, map[string]interface{}{
-			"id":              gid,
-			"normalized_name": displayName,
-			"products":        formatted,
-			"price_range":     map[string]interface{}{"min": minP, "max": maxP},
-			"vendor_count":    len(uniqueStrings(vendors)),
-			"product_count":   len(products),
-			"dosage_value":    dosageVal,
-			"dosage_unit":     dosageUnit,
-			"quality_score":   quality,
-		})
+		products = append(products, product)
 	}
-	sort.Slice(groups, func(i, j int) bool {
-		pi := groups[i]["product_count"].(int)
-		pj := groups[j]["product_count"].(int)
-		if pi != pj {
-			return pi > pj
-		}
-		mi := groups[i]["price_range"].(map[string]interface{})["min"].(float64)
-		mj := groups[j]["price_range"].(map[string]interface{})["min"].(float64)
-		return mi < mj
+
+	// Sort by relevance (Meilisearch already provides relevance order) then by price
+	sort.Slice(products, func(i, j int) bool {
+		// Keep Meilisearch relevance order as primary sort, price as secondary
+		return products[i]["price"].(float64) < products[j]["price"].(float64)
 	})
-	return groups
+
+	return products
+}
+
+// Smart filtering function to detect query intent and apply relevant filters
+func applySmartFiltering(products []map[string]interface{}, query string) []map[string]interface{} {
+	if len(products) == 0 {
+		return products
+	}
+	
+	queryLower := strings.ToLower(strings.TrimSpace(query))
+	
+	// Extract key terms from query for broader matching
+	queryTerms := extractKeyTerms(queryLower)
+	
+	// Score products based on relevance
+	type scoredProduct struct {
+		product map[string]interface{}
+		score   int
+		index   int
+	}
+	
+	var scored []scoredProduct
+	
+	for i, product := range products {
+		title := strings.ToLower(getString(product, "title"))
+		dosageText := strings.ToLower(getString(product, "dosage_text"))
+		form := strings.ToLower(getString(product, "form"))
+		brandName := strings.ToLower(getString(product, "brand_name"))
+		
+		score := 0
+		
+		// Exact title match gets highest score
+		if strings.Contains(title, queryLower) {
+			score += 100
+		}
+		
+		// Match individual terms from query
+		for _, term := range queryTerms {
+			if len(term) < 3 { // Skip very short terms
+				continue
+			}
+			
+			if strings.Contains(title, term) {
+				score += 20
+			}
+			if strings.Contains(brandName, term) {
+				score += 15
+			}
+			if strings.Contains(dosageText, term) {
+				score += 10
+			}
+			if strings.Contains(form, term) {
+				score += 8
+			}
+		}
+		
+		// Detect dosage intent and boost matching products
+		if strings.Contains(queryLower, "mg") || strings.Contains(queryLower, "mcg") || 
+		   strings.Contains(queryLower, "μg") || strings.Contains(queryLower, "iu") ||
+		   strings.Contains(queryLower, "ie") {
+			if strings.Contains(title, "mg") || strings.Contains(title, "mcg") || 
+			   strings.Contains(title, "μg") || strings.Contains(title, "iu") ||
+			   strings.Contains(title, "ie") || strings.Contains(dosageText, "mg") {
+				score += 25
+			}
+		}
+		
+		// Detect package size intent
+		if strings.Contains(queryLower, "kapsula") || strings.Contains(queryLower, "tableta") ||
+		   strings.Contains(queryLower, "kom") || strings.Contains(queryLower, "x") {
+			if strings.Contains(title, "kapsula") || strings.Contains(title, "tableta") ||
+			   strings.Contains(title, "kom") || strings.Contains(title, "x") {
+				score += 20
+			}
+		}
+		
+		// Detect form intent
+		formKeywords := []string{"sirup", "kapsule", "krem", "gel", "mast", "sprej", "kapi", "prah", "tableta"}
+		for _, formKeyword := range formKeywords {
+			if strings.Contains(queryLower, formKeyword) {
+				if strings.Contains(form, formKeyword) || strings.Contains(title, formKeyword) {
+					score += 30
+				}
+			}
+		}
+		
+		scored = append(scored, scoredProduct{product: product, score: score, index: i})
+	}
+	
+	// Sort by score (descending), then by original order
+	sort.Slice(scored, func(i, j int) bool {
+		if scored[i].score != scored[j].score {
+			return scored[i].score > scored[j].score
+		}
+		return scored[i].index < scored[j].index
+	})
+	
+	// Return reordered products
+	result := make([]map[string]interface{}, len(products))
+	for i, sp := range scored {
+		result[i] = sp.product
+	}
+	
+	return result
+}
+
+// Extract key terms from query for broader matching
+func extractKeyTerms(query string) []string {
+	// Remove common stop words and split by spaces
+	stopWords := map[string]bool{
+		"i": true, "a": true, "od": true, "za": true, "u": true, "na": true, "sa": true, "se": true,
+		"je": true, "su": true, "da": true, "to": true, "kao": true, "ili": true, "ako": true,
+	}
+	
+	words := strings.Fields(query)
+	var terms []string
+	
+	for _, word := range words {
+		cleaned := strings.TrimFunc(word, func(r rune) bool {
+			return !((r >= 'a' && r <= 'z') || (r >= '0' && r <= '9'))
+		})
+		
+		if len(cleaned) >= 3 && !stopWords[cleaned] {
+			terms = append(terms, cleaned)
+		}
+	}
+	
+	return terms
+}
+
+// Helper function to check if any numbers from query appear in text
+func containsNumberFromQuery(text, query string) bool {
+	// Extract numbers from query
+	queryNumbers := extractNumbers(query)
+	if len(queryNumbers) == 0 {
+		return false
+	}
+	
+	// Check if any query number appears in text
+	textNumbers := extractNumbers(text)
+	for _, qn := range queryNumbers {
+		for _, tn := range textNumbers {
+			if qn == tn {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// Extract numbers from text
+func extractNumbers(text string) []string {
+	var numbers []string
+	parts := strings.Fields(text)
+	for _, part := range parts {
+		// Remove non-numeric characters and check if it's a number
+		cleaned := strings.TrimFunc(part, func(r rune) bool {
+			return !((r >= '0' && r <= '9') || r == '.')
+		})
+		if len(cleaned) > 0 && isNumeric(cleaned) {
+			numbers = append(numbers, cleaned)
+		}
+	}
+	return numbers
+}
+
+// Check if string is numeric
+func isNumeric(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if !((r >= '0' && r <= '9') || r == '.') {
+			return false
+		}
+	}
+	return true
 }
 
 func toStructPB(v interface{}) (*structpb.Struct, error) {
@@ -377,13 +539,19 @@ func (s *server) Search(ctx context.Context, req *pb.SearchRequest) (*pb.Generic
 	if err != nil {
 		return nil, err
 	}
-	groups := convertHitsToGroups(res.Hits, req.GetQ(), s.db)
+	products := convertHitsToFlatProducts(res.Hits, req.GetQ(), s.db)
+	
+	// Smart filtering based on query intent
+	if req.GetQ() != "" {
+		products = applySmartFiltering(products, req.GetQ())
+	}
+	
 	data := map[string]interface{}{
-		"groups":             groups,
+		"products":           products,
 		"total":              res.NbHits,
 		"offset":             req.GetOffset(),
 		"limit":              req.GetLimit(),
-		"search_type_used":   "meilisearch",
+		"search_type_used":   "meilisearch_flat",
 		"processing_time_ms": res.ProcessingTimeMs,
 		"facets":             res.Facets,
 	}
@@ -415,13 +583,14 @@ func (s *server) SearchGroups(ctx context.Context, req *pb.SearchGroupsRequest) 
 	if err != nil {
 		return nil, err
 	}
-	groups := convertHitsToGroups(res.Hits, req.GetQ(), s.db)
+	// Return flat products instead of groups for consistency
+	products := convertHitsToFlatProducts(res.Hits, req.GetQ(), s.db)
 	data := map[string]interface{}{
-		"groups":           groups,
-		"total":            len(groups),
+		"products":         products,
+		"total":            len(products),
 		"offset":           0,
 		"limit":            req.GetLimit(),
-		"search_type_used": "precomputed_groups",
+		"search_type_used": "flat_products",
 	}
 	st, err := toStructPB(data)
 	if err != nil {
@@ -446,16 +615,22 @@ func (s *server) GetFacets(ctx context.Context, req *pb.FacetsRequest) (*pb.Gene
 
 func (s *server) PriceComparison(ctx context.Context, req *pb.PriceComparisonRequest) (*pb.GenericJsonResponse, error) {
 	client := newMeiliClient()
-	res, err := client.search(req.GetQ(), nil, 10, 0)
+	res, err := client.search(req.GetQ(), nil, 50, 0)
 	if err != nil {
 		return nil, err
 	}
-	groups := convertHitsToGroups(res.Hits, req.GetQ(), s.db)
+	products := convertHitsToFlatProducts(res.Hits, req.GetQ(), s.db)
+	
+	// Sort by price for better comparison
+	sort.Slice(products, func(i, j int) bool {
+		return products[i]["price"].(float64) < products[j]["price"].(float64)
+	})
+	
 	data := map[string]interface{}{
 		"query":              req.GetQ(),
-		"groups":             groups,
-		"total_groups":       len(groups),
-		"message":            "Price comparison using Meilisearch",
+		"products":           products,
+		"total_products":     len(products),
+		"message":            "Price comparison using Meilisearch flat search",
 		"processing_time_ms": res.ProcessingTimeMs,
 	}
 	st, err := toStructPB(data)

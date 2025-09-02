@@ -5,6 +5,7 @@ import { useWishlist } from "@/contexts/WishlistContext";
 import Navbar from "@/components/Navbar";
 import HeroSection from "@/components/HeroSection";
 import ProductList from "@/components/ProductList";
+import FlatSearchResults from "@/components/FlatSearchResults";
 import { searchProducts, getFeaturedProducts, SearchResult } from "@/lib/api";
 import { convertProductGroupToProducts } from "@/types/product";
 import { Spinner } from "@/components/ui/spinner";
@@ -41,11 +42,14 @@ export default function HomePage() {
     try {
       const featured = await getFeaturedProducts({ limit: 24 });
       
-      // Ensure the response has the expected structure
-      if (featured && typeof featured === 'object' && Array.isArray(featured.groups)) {
-        setFeaturedProducts(featured);
+      // Handle both new flat structure and legacy grouped structure
+      if (featured && typeof featured === 'object') {
+        if (featured.products || featured.groups) {
+          setFeaturedProducts(featured);
+        } else {
+          setFeaturedProducts({ groups: [], total: 0, offset: 0, limit: 24 });
+        }
       } else {
-        console.warn("Featured products response has unexpected structure:", featured);
         setFeaturedProducts({ groups: [], total: 0, offset: 0, limit: 24 });
       }
     } catch (error) {
@@ -93,21 +97,42 @@ export default function HomePage() {
     };
   }, [searchTerm]);
 
-  const handleSearch = async (term: string) => {
+  const handleSearch = async (term: string, forceRefresh: boolean = false) => {
     if (!term || !term.trim()) {
       setApiSearchResults(null);
       setUseApiSearch(false);
       setSearchError(null);
+      setSearchTerm("");
+      // Update URL to remove search parameter
+      const url = new URL(window.location.href);
+      url.searchParams.delete('q');
+      window.history.pushState({}, '', url.toString());
       loadFeaturedProducts();
       return;
     }
 
+    const trimmedTerm = term.trim();
+    
+    // Skip if same search and not forced refresh
+    if (trimmedTerm === searchTerm && apiSearchResults && !forceRefresh) {
+      return;
+    }
+    
     setIsSearching(true);
     setSearchError(null);
     setCurrentPage(1);
+    setSearchTerm(trimmedTerm);
+    
+    // Clear existing results immediately for better UX
+    setApiSearchResults(null);
+    
+    // Update URL with search parameter
+    const url = new URL(window.location.href);
+    url.searchParams.set('q', trimmedTerm);
+    window.history.pushState({}, '', url.toString());
 
     try {
-      const results = await searchProducts(term, { limit: itemsPerPage });
+      const results = await searchProducts(trimmedTerm, { limit: itemsPerPage });
       setApiSearchResults(results);
       setUseApiSearch(true);
     } catch (error) {
@@ -133,11 +158,19 @@ export default function HomePage() {
       });
 
       // Merge new results with existing ones
-      setApiSearchResults({
-        ...moreResults,
-        groups: [...apiSearchResults.groups, ...moreResults.groups],
-        offset: 0, // Reset offset since we're merging
-      });
+      if (moreResults.products && apiSearchResults.products) {
+        setApiSearchResults({
+          ...moreResults,
+          products: [...apiSearchResults.products, ...moreResults.products],
+          offset: 0, // Reset offset since we're merging
+        });
+      } else if (moreResults.groups && apiSearchResults.groups) {
+        setApiSearchResults({
+          ...moreResults,
+          groups: [...apiSearchResults.groups, ...moreResults.groups],
+          offset: 0, // Reset offset since we're merging
+        });
+      }
 
       setCurrentPage(nextPage);
     } catch (error) {
@@ -149,13 +182,19 @@ export default function HomePage() {
   };
 
   // Calculate if there are more results to load
-  const hasMoreResults =
-    apiSearchResults && apiSearchResults.total > apiSearchResults.groups.length;
+  const hasMoreResults = apiSearchResults && (
+    apiSearchResults.products 
+      ? apiSearchResults.total > apiSearchResults.products.length
+      : apiSearchResults.groups && apiSearchResults.total > apiSearchResults.groups.length
+  );
 
   const totalProductsShown = apiSearchResults
-    ? apiSearchResults.groups.flatMap((group) =>
-      convertProductGroupToProducts(group)
-    ).length
+    ? (apiSearchResults.products 
+        ? apiSearchResults.products.length
+        : apiSearchResults.groups?.flatMap((group) =>
+            convertProductGroupToProducts(group)
+          ).length || 0
+      )
     : 0;
 
   return (
@@ -189,10 +228,11 @@ export default function HomePage() {
                     </span>
                   )}
                 </>
-              ) : featuredProducts && featuredProducts.groups ? (
-                `${featuredProducts.groups.flatMap((group) =>
-                  convertProductGroupToProducts(group)
-                ).length
+              ) : featuredProducts ? (
+                `${(featuredProducts.products?.length || 
+                   featuredProducts.groups?.flatMap((group) =>
+                     convertProductGroupToProducts(group)
+                   ).length || 0)
                 } proizvoda pronađeno`
               ) : (
                 ""
@@ -213,13 +253,22 @@ export default function HomePage() {
                 <p className="text-lg text-red-600">Greška pri pretraživanju</p>
                 <p className="text-sm text-red-500 mt-2">{searchError}</p>
               </div>
-            ) : apiSearchResults && apiSearchResults.groups.length > 0 ? (
+            ) : apiSearchResults && (apiSearchResults.products?.length || apiSearchResults.groups?.length) ? (
               <>
-                <ProductList
-                  products={apiSearchResults.groups.flatMap((group) =>
-                    convertProductGroupToProducts(group)
-                  )}
-                />
+                {apiSearchResults.products ? (
+                  <FlatSearchResults
+                    products={apiSearchResults.products}
+                    total={apiSearchResults.total}
+                    loading={false}
+                    onSearch={handleSearch}
+                  />
+                ) : apiSearchResults.groups ? (
+                  <ProductList
+                    products={apiSearchResults.groups.flatMap((group) =>
+                      convertProductGroupToProducts(group)
+                    )}
+                  />
+                ) : null}
 
                 {/* Load More Button */}
                 {hasMoreResults && (
@@ -256,12 +305,21 @@ export default function HomePage() {
                   <Spinner size="lg" text="Učitavanje popularnih proizvoda..." />
                 </div>
               ) : (
-                featuredProducts && featuredProducts.groups && (
-                  <ProductList
-                    products={featuredProducts.groups.flatMap((group) =>
-                      convertProductGroupToProducts(group)
-                    )}
-                  />
+                featuredProducts && (
+                  featuredProducts.products ? (
+                    <FlatSearchResults
+                      products={featuredProducts.products}
+                      total={featuredProducts.total}
+                      loading={false}
+                      onSearch={handleSearch}
+                    />
+                  ) : featuredProducts.groups ? (
+                    <ProductList
+                      products={featuredProducts.groups.flatMap((group) =>
+                        convertProductGroupToProducts(group)
+                      )}
+                    />
+                  ) : null
                 )
               )}
             </>

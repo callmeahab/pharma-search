@@ -5,7 +5,6 @@ import { ThemeProvider } from "../contexts/ThemeContext";
 import { WishlistProvider } from "../contexts/WishlistContext";
 import CookieConsent from "../components/CookieConsent";
 import { Analytics } from "../components/Analytics";
-import { Providers } from "../components/Providers";
 import "./globals.css";
 import type { Metadata } from "next";
 
@@ -32,7 +31,6 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning>
       <body className="min-h-screen flex flex-col dark:bg-gray-900 dark:text-gray-100 transition-colors duration-200">
-        <Providers>
           <ThemeProvider>
             <WishlistProvider>
               <TooltipProvider>
@@ -44,7 +42,6 @@ export default function RootLayout({
               </TooltipProvider>
             </WishlistProvider>
           </ThemeProvider>
-        </Providers>
       </body>
     </html>
   );

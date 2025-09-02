@@ -20,7 +20,15 @@ export interface Product {
   vendor_name: string;
   link: string;
   thumbnail?: string;
+  photos?: string;
   brand_name?: string;
+  dosage_text?: string;
+  volume_text?: string;
+  form?: string;
+  category?: string;
+  quality_score?: number;
+  dosage_value?: number;
+  dosage_unit?: string;
   price_analysis?: {
     diff_from_avg: number;
     percentile: number;
@@ -54,11 +62,12 @@ export interface ProductGroup {
 }
 
 export interface SearchResult {
-  groups: ProductGroup[];
+  products?: Product[];  // New flat structure
+  groups?: ProductGroup[];  // Legacy support
   total: number;
   offset: number;
   limit: number;
-  search_type_used?: "auto" | "similarity" | "database";
+  search_type_used?: "auto" | "similarity" | "database" | "meilisearch_flat" | "flat_products";
 }
 
 export interface AutocompleteResult {
@@ -96,7 +105,7 @@ export async function searchProductsStreaming(
     const result = await searchProducts(query, {
       limit: options?.limit || 50,
     });
-    onBatch(result.groups, true);
+    onBatch(result.groups || [], true);
   } catch (error) {
     throw new Error(`Search failed: ${error}`);
   }
@@ -134,7 +143,7 @@ export async function searchAllProducts(
       offset: offset,
     });
 
-    allGroups.push(...batch.groups);
+    allGroups.push(...(batch.groups || []));
     offset += batchSize;
 
     // Safety limit to prevent infinite loops

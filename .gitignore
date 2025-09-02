@@ -47,3 +47,6 @@ logs/
 .dockerignore 
 
 scrapers_logs/
+
+go-backend/pharma-server
+go-backend/go-backend

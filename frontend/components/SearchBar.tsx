@@ -134,7 +134,7 @@ const SearchBar: React.FC<SearchBarProps> = ({
   };
 
   const handleProductSelect = (productId: string) => {
-    // Find the product from search groups
+    // Find the product from search groups (legacy support)
     const product = searchGroups
       .flatMap((group) => group.products)
       .find((p) => p.id === productId);
@@ -145,7 +145,7 @@ const SearchBar: React.FC<SearchBarProps> = ({
         id: product.id,
         name: product.title,
         description: `Dostupno u apoteci ${product.vendor_name}`,
-        category: '',
+        category: product.brand_name || '',
         image: product.thumbnail || '/medicine-placeholder.svg',
         prices: [{
           store: product.vendor_name,
