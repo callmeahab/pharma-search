@@ -93,7 +93,7 @@ const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
             </div>
             <div className="flex items-center text-sm text-gray-500">
               <Store size={16} className="mr-1 text-health-secondary" />
-              <span>{product.vendorCount || product.prices.length} apoteka</span>
+              <span>{product.productCount || product.prices.length} proizvoda</span>
             </div>
           </div>
         </CardContent>

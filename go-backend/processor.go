@@ -11,10 +11,9 @@ import (
 	meilisearch "github.com/meilisearch/meilisearch-go"
 )
 
-// ProductProcessor handles product processing and normalization
+// ProductProcessor handles product processing
 type ProductProcessor struct {
-	db         *sql.DB
-	normalizer *PharmaNormalizer
+	db *sql.DB
 }
 
 // ProductRow represents a product row from database
@@ -36,8 +35,7 @@ type ProcessingStats struct {
 // NewProductProcessor creates a new product processor
 func NewProductProcessor(db *sql.DB) *ProductProcessor {
 	return &ProductProcessor{
-		db:         db,
-		normalizer: NewPharmaNormalizer(),
+		db: db,
 	}
 }
 
@@ -82,12 +80,10 @@ func (p *ProductProcessor) ReprocessAllProducts(ctx context.Context) error {
 
 	// Reset all products to unprocessed
 	_, err := p.db.ExecContext(ctx, `
-		UPDATE "Product" 
-		SET 
+		UPDATE "Product"
+		SET
 			"processedAt" = NULL,
 			"normalizedName" = NULL,
-			"searchTokens" = NULL,
-			"searchVector" = NULL,
 			"extractedBrand" = NULL,
 			"productLine" = NULL,
 			"dosageValue" = NULL,
@@ -106,50 +102,30 @@ func (p *ProductProcessor) ReprocessAllProducts(ctx context.Context) error {
 	return p.ProcessProducts(ctx, 10000)
 }
 
-// processBatchNormalized processes a batch of products with normalization
+// processBatchNormalized processes a batch of products using enhanced grouping
 func (p *ProductProcessor) processBatchNormalized(products []ProductRow) []ProcessedProductData {
 	var processed []ProcessedProductData
+	engine := NewEnhancedGroupingEngine()
 
 	for _, product := range products {
-		// Normalize the product
-		normalized := p.normalizer.Normalize(product.Title)
+		// Extract signature using enhanced grouping
+		signature := engine.ExtractSignature(product.Title)
 
 		// Create processed product data
-		// Clean and limit search tokens
-		cleanTokens := make([]string, 0, len(normalized.SearchTokens))
-		for _, token := range normalized.SearchTokens {
-			if len(token) >= 3 && len(token) <= 50 {
-				// Clean token of problematic characters
-				clean := strings.ReplaceAll(token, `"`, "")
-				clean = strings.ReplaceAll(clean, `'`, "")
-				clean = strings.ReplaceAll(clean, `\`, "")
-				if clean != "" {
-					cleanTokens = append(cleanTokens, clean)
-				}
-			}
-		}
-		
-		// Limit to 20 tokens max
-		if len(cleanTokens) > 20 {
-			cleanTokens = cleanTokens[:20]
-		}
-
 		processedProduct := ProcessedProductData{
 			ID:                  product.ID,
 			Title:               product.Title,
 			Price:               product.Price,
-			NormalizedName:      normalized.NormalizedName,
-			SearchTokens:        strings.Join(cleanTokens, " "),
-			SearchVector:        normalized.NormalizedName,
-			ExtractedBrand:      normalized.Attributes.Brand,
-			ProductLine:         normalized.Attributes.ProductName,
-			DosageValue:         normalized.Attributes.DosageValue,
-			DosageUnit:          normalized.Attributes.DosageUnit,
-			VolumeValue:         normalized.Attributes.VolumeValue,
-			VolumeUnit:          normalized.Attributes.VolumeUnit,
-			Form:                normalized.Attributes.Form,
-			SPFValue:            int(normalized.Attributes.SPFValue), // Convert float to int
-			CoreProductIdentity: normalized.CoreIdentity,
+			NormalizedName:      strings.ToLower(product.Title),
+			ExtractedBrand:      "",                  // Extracted separately
+			ProductLine:         signature.CoreIngredient,
+			DosageValue:         signature.DosageAmount,
+			DosageUnit:          signature.DosageUnit,
+			VolumeValue:         0,  // Not extracted by enhanced grouping
+			VolumeUnit:          "", // Not extracted by enhanced grouping
+			Form:                signature.Form,
+			SPFValue:            0,  // Not extracted by enhanced grouping
+			CoreProductIdentity: engine.GroupKey(signature),
 			ProcessedAt:         time.Now(),
 		}
 
@@ -165,8 +141,6 @@ type ProcessedProductData struct {
 	Title               string
 	Price               float64
 	NormalizedName      string
-	SearchTokens        string
-	SearchVector        string
 	ExtractedBrand      string
 	ProductLine         string
 	DosageValue         float64
@@ -192,21 +166,19 @@ func (p *ProductProcessor) saveProcessedProducts(ctx context.Context, products [
 	defer tx.Rollback()
 
 	stmt, err := tx.PrepareContext(ctx, `
-		UPDATE "Product" 
-		SET 
+		UPDATE "Product"
+		SET
 			"normalizedName" = $2,
-			"searchTokens" = string_to_array($3, ' '),
-			"searchVector" = to_tsvector('english', $4),
-			"extractedBrand" = NULLIF($5, ''),
-			"productLine" = NULLIF($6, ''),
-			"dosageValue" = NULLIF($7, 0),
-			"dosageUnit" = NULLIF($8, ''),
-			"volumeValue" = NULLIF($9, 0),
-			"volumeUnit" = NULLIF($10, ''),
-			"form" = NULLIF($11, ''),
-			"spfValue" = NULLIF($12, 0),
-			"coreProductIdentity" = NULLIF($13, ''),
-			"processedAt" = $14
+			"extractedBrand" = NULLIF($3, ''),
+			"productLine" = NULLIF($4, ''),
+			"dosageValue" = NULLIF($5::numeric, 0),
+			"dosageUnit" = NULLIF($6, ''),
+			"volumeValue" = NULLIF($7::numeric, 0),
+			"volumeUnit" = NULLIF($8, ''),
+			"form" = NULLIF($9, ''),
+			"spfValue" = NULLIF($10::integer, 0),
+			"coreProductIdentity" = NULLIF($11, ''),
+			"processedAt" = $12
 		WHERE id = $1
 	`)
 	if err != nil {
@@ -218,8 +190,6 @@ func (p *ProductProcessor) saveProcessedProducts(ctx context.Context, products [
 		_, err := stmt.ExecContext(ctx,
 			product.ID,
 			product.NormalizedName,
-			product.SearchTokens,
-			product.SearchVector,
 			product.ExtractedBrand,
 			product.ProductLine,
 			product.DosageValue,
@@ -227,13 +197,15 @@ func (p *ProductProcessor) saveProcessedProducts(ctx context.Context, products [
 			product.VolumeValue,
 			product.VolumeUnit,
 			product.Form,
-			product.SPFValue,
+			int(product.SPFValue),
 			product.CoreProductIdentity,
 			product.ProcessedAt,
 		)
 		if err != nil {
-			log.Printf("Error saving product %s: %v", product.ID, err)
-			continue
+			log.Printf("Error saving product %s (title: %s): %v", product.ID, product.Title, err)
+			// Rollback on first error and return
+			tx.Rollback()
+			return fmt.Errorf("failed to save product %s: %w", product.ID, err)
 		}
 	}
 
@@ -282,12 +254,12 @@ func (p *ProductProcessor) AnalyzeProcessingEffectiveness(ctx context.Context) (
 	var stats ProcessingStats
 
 	err := p.db.QueryRowContext(ctx, `
-		SELECT 
+		SELECT
 			COUNT(*) as total_products,
 			COUNT("processedAt") as processed_products,
 			COUNT("normalizedName") as normalized_products,
-			COUNT("searchTokens") as tokenized_products,
-			COUNT("searchVector") as vectorized_products
+			0 as tokenized_products,
+			0 as vectorized_products
 		FROM "Product"
 	`).Scan(
 		&stats.TotalProducts,
@@ -437,16 +409,14 @@ func (p *ProductProcessor) IndexToMeilisearch(ctx context.Context, meiliURL stri
 	for offset < total {
 		// Fetch batch
 		rows, err := p.db.QueryContext(ctx, `
-			SELECT 
+			SELECT
 				p.id, p.title, p.price, p.link, p.thumbnail,
 				p."extractedBrand", p."productLine", p."volumeValue", p."volumeUnit",
 				p."dosageValue", p."dosageUnit", p."form", p."spfValue",
 				p."computedGroupId", p."groupingMethod",
-				v.name as vendor_name, v.id as vendor_id,
-				b.name as brand_name
+				v.name as vendor_name, v.id as vendor_id
 			FROM "Product" p
 			JOIN "Vendor" v ON v.id = p."vendorId"
-			LEFT JOIN "Brand" b ON b.id = p."brandId"
 			ORDER BY p.id
 			LIMIT $1 OFFSET $2
 		`, batchSize, offset)
@@ -459,7 +429,7 @@ func (p *ProductProcessor) IndexToMeilisearch(ctx context.Context, meiliURL stri
 			var (
 				id, title, link, thumbnail, extractedBrand, productLine                         sql.NullString
 				volumeUnit, dosageUnit, form, computedGroupId, groupingMethod                   sql.NullString
-				vendorName, vendorID, brandName                                                 sql.NullString
+				vendorName, vendorID                                                            sql.NullString
 				price, volumeValue, dosageValue                                                 sql.NullFloat64
 				spfValue                                                                        sql.NullInt64
 			)
@@ -469,7 +439,7 @@ func (p *ProductProcessor) IndexToMeilisearch(ctx context.Context, meiliURL stri
 				&extractedBrand, &productLine, &volumeValue, &volumeUnit,
 				&dosageValue, &dosageUnit, &form, &spfValue,
 				&computedGroupId, &groupingMethod,
-				&vendorName, &vendorID, &brandName,
+				&vendorName, &vendorID,
 			)
 			if err != nil {
 				log.Printf("Error scanning row: %v", err)
@@ -495,7 +465,7 @@ func (p *ProductProcessor) IndexToMeilisearch(ctx context.Context, meiliURL stri
 				GroupingMethod:  groupingMethod.String,
 				VendorName:      vendorName.String,
 				VendorID:        vendorID.String,
-				BrandName:       brandName.String,
+				BrandName:       extractedBrand.String, // Use extractedBrand instead of brandName
 			})
 
 			documents = append(documents, doc)
@@ -547,18 +517,15 @@ type MeiliTransformData struct {
 
 // transformToMeiliDocument transforms product data to Meilisearch document
 func (p *ProductProcessor) transformToMeiliDocument(data MeiliTransformData) map[string]interface{} {
-	// Extract simple attributes from title
-	normalized := p.normalizer.Normalize(data.Title)
-	
-	// Use extracted brand or fallback to normalized
+	// Use extracted brand from database
 	brand := data.ExtractedBrand
-	if brand == "" && normalized.Attributes.Brand != "" {
-		brand = normalized.Attributes.Brand
+	if brand == "" {
+		brand = data.BrandName
 	}
 
 	// Determine category
 	category := p.categorizeProduct(data.Title)
-	
+
 	// Create searchable text
 	searchableText := p.createSearchableText(data.Title, brand, category)
 
@@ -582,59 +549,31 @@ func (p *ProductProcessor) transformToMeiliDocument(data MeiliTransformData) map
 
 	// Add form if available
 	form := data.Form
-	if form == "" && normalized.Attributes.Form != "" {
-		form = normalized.Attributes.Form
-	}
 	if form != "" {
 		doc["formFacet"] = form
 	}
 
 	// Add dosage info
-	if data.DosageValue > 0 || normalized.Attributes.DosageValue > 0 {
-		dosageVal := data.DosageValue
-		dosageUnit := data.DosageUnit
-		if dosageVal == 0 {
-			dosageVal = normalized.Attributes.DosageValue
-			dosageUnit = normalized.Attributes.DosageUnit
-		}
-		if dosageVal > 0 {
-			doc["dosageValue"] = dosageVal
-			doc["dosageUnit"] = dosageUnit
-		}
+	if data.DosageValue > 0 {
+		doc["dosageValue"] = data.DosageValue
+		doc["dosageUnit"] = data.DosageUnit
 	}
 
 	// Add volume info
-	if data.VolumeValue > 0 || normalized.Attributes.VolumeValue > 0 {
-		volVal := data.VolumeValue
-		volUnit := data.VolumeUnit
-		if volVal == 0 {
-			volVal = normalized.Attributes.VolumeValue
-			volUnit = normalized.Attributes.VolumeUnit
-		}
-		if volVal > 0 {
-			doc["volumeValue"] = volVal
-			doc["volumeUnit"] = volUnit
-			doc["volumeRange"] = p.getVolumeRange(volVal)
-		}
+	if data.VolumeValue > 0 {
+		doc["volumeValue"] = data.VolumeValue
+		doc["volumeUnit"] = data.VolumeUnit
+		doc["volumeRange"] = p.getVolumeRange(data.VolumeValue)
 	}
 
 	// Add SPF info
-	spfVal := data.SPFValue
-	if spfVal == 0 {
-		spfVal = normalized.Attributes.SPFValue
-	}
-	if spfVal > 0 {
-		doc["spfValue"] = spfVal
-		doc["spfRange"] = p.getSPFRange(spfVal)
+	if data.SPFValue > 0 {
+		doc["spfValue"] = data.SPFValue
+		doc["spfRange"] = p.getSPFRange(data.SPFValue)
 	}
 
 	// Add price range
 	doc["priceRange"] = p.getPriceRange(int(data.Price * 100))
-
-	// Add quantity if available
-	if normalized.Attributes.Quantity > 0 {
-		doc["dosageCount"] = normalized.Attributes.Quantity
-	}
 
 	// Add grouping info if available
 	if data.ComputedGroupID != "" {

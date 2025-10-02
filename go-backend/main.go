@@ -215,22 +215,100 @@ func convertHitsToGroups(hits []map[string]interface{}, query string, db *sql.DB
 		}
 	}
 
+	// Group products using enhanced grouping
+	engine := NewEnhancedGroupingEngine()
 	byGroup := map[string][]map[string]interface{}{}
+
 	for _, h := range hits {
 		rawID := getString(h, "id")
 		pid := strings.ReplaceAll(rawID, "product_", "")
-		gid := getString(h, "computedGroupId")
+		title := getString(h, "title")
+
+		// Use enhanced grouping to generate group key
+		signature := engine.ExtractSignature(title)
+		gid := engine.GroupKey(signature)
+
+		// Fallback: check if product has productGroupId in database
 		if gi, ok := idToGroup[pid]; ok && gi.GroupID != "" {
 			gid = gi.GroupID
 		}
+
+		// Last resort fallback
 		if gid == "" {
-			gid = normalizeTitleForGrouping(getString(h, "title"))
+			gid = normalizeTitleForGrouping(title)
 		}
+
 		byGroup[gid] = append(byGroup[gid], h)
 	}
 
 	groups := make([]map[string]interface{}, 0, len(byGroup))
+	queryLower := strings.ToLower(query)
+	queryWords := strings.Fields(queryLower)
+
 	for gid, products := range byGroup {
+		var groupRelevanceScore *float64 // Store the relevance score for this group
+
+		// Calculate relevance score for this group based on query match
+		if query != "" && len(queryWords) > 0 {
+			groupScore := 0.0
+
+			// Filter query words (>2 chars only)
+			validWords := []string{}
+			for _, word := range queryWords {
+				if len(word) > 2 {
+					validWords = append(validWords, word)
+				}
+			}
+
+			// If no valid words after filtering, skip scoring
+			if len(validWords) == 0 {
+				continue
+			}
+
+			for _, p := range products {
+				title := strings.ToLower(getString(p, "title"))
+				productScore := 0.0
+
+				// Check for exact phrase match (highest priority)
+				if strings.Contains(title, queryLower) {
+					productScore += 100.0
+				}
+
+				// Check for all valid query words present
+				allWordsPresent := true
+				for _, word := range validWords {
+					if !strings.Contains(title, word) {
+						allWordsPresent = false
+						break
+					}
+				}
+				if allWordsPresent {
+					productScore += 50.0
+				}
+
+				// Count individual word matches (lower priority)
+				for _, word := range validWords {
+					if strings.Contains(title, word) {
+						productScore += 10.0
+					}
+				}
+
+				groupScore += productScore
+			}
+
+			// Average score per product in group
+			avgScore := groupScore / float64(len(products))
+
+			// Skip groups with low relevance
+			// Groups need at least 30 points avg (e.g., 3 word matches or 1 partial match)
+			if avgScore < 30.0 {
+				continue
+			}
+
+			// Store score in a variable (not in products array since it will be sorted)
+			groupRelevanceScore = &avgScore
+		}
+
 		sort.Slice(products, func(i, j int) bool { return getFloat(products[i], "price") < getFloat(products[j], "price") })
 		prices := make([]float64, 0, len(products))
 		vendors := make([]string, 0, len(products))
@@ -280,7 +358,7 @@ func convertHitsToGroups(hits []map[string]interface{}, query string, db *sql.DB
 			}
 		}
 
-		groups = append(groups, map[string]interface{}{
+		groupData := map[string]interface{}{
 			"id":              gid,
 			"normalized_name": displayName,
 			"products":        formatted,
@@ -290,14 +368,40 @@ func convertHitsToGroups(hits []map[string]interface{}, query string, db *sql.DB
 			"dosage_value":    dosageVal,
 			"dosage_unit":     dosageUnit,
 			"quality_score":   quality,
-		})
+		}
+
+		// Add relevance score if calculated
+		if groupRelevanceScore != nil {
+			groupData["relevance_score"] = *groupRelevanceScore
+		}
+
+		// When query is present, only include groups with relevance scores
+		if query != "" && len(queryWords) > 0 {
+			if _, hasScore := groupData["relevance_score"]; !hasScore {
+				continue // Skip groups without relevance scores when searching
+			}
+		}
+
+		groups = append(groups, groupData)
 	}
 	sort.Slice(groups, func(i, j int) bool {
+		// Sort by relevance score first (if available)
+		if query != "" {
+			scoreI, hasI := groups[i]["relevance_score"].(float64)
+			scoreJ, hasJ := groups[j]["relevance_score"].(float64)
+			if hasI && hasJ && scoreI != scoreJ {
+				return scoreI > scoreJ // Higher score first
+			}
+		}
+
+		// Then by product count
 		pi := groups[i]["product_count"].(int)
 		pj := groups[j]["product_count"].(int)
 		if pi != pj {
 			return pi > pj
 		}
+
+		// Finally by price
 		mi := groups[i]["price_range"].(map[string]interface{})["min"].(float64)
 		mj := groups[j]["price_range"].(map[string]interface{})["min"].(float64)
 		return mi < mj
@@ -827,6 +931,12 @@ func main() {
 		runStatsFromMain()
 	case "analyze":
 		runAnalyzeFromMain()
+	case "process":
+		runProcessProductsFromMain()
+	case "index":
+		runIndexToMeilisearchFromMain()
+	case "test-search":
+		runTestSearchFromMain()
 	default:
 		runOriginalGRPCServer()
 	}
@@ -874,6 +984,120 @@ func runAnalyzeFromMain() {
 	if err != nil {
 		log.Fatalf("❌ Analysis failed: %v", err)
 	}
+}
+
+func runProcessProductsFromMain() {
+	db, err := connectDB()
+	if err != nil {
+		log.Fatalf("Failed to connect to database: %v", err)
+	}
+	defer db.Close()
+
+	processor := NewProductProcessor(db)
+	ctx := context.Background()
+
+	log.Println("🔄 Processing Products with Enhanced Grouping")
+	log.Println("=" + strings.Repeat("=", 49))
+
+	err = processor.ProcessProducts(ctx, 1000)
+	if err != nil {
+		log.Fatalf("❌ Processing failed: %v", err)
+	}
+
+	log.Println("✅ Processing completed successfully!")
+}
+
+func runIndexToMeilisearchFromMain() {
+	db, err := connectDB()
+	if err != nil {
+		log.Fatalf("Failed to connect to database: %v", err)
+	}
+	defer db.Close()
+
+	processor := NewProductProcessor(db)
+	ctx := context.Background()
+
+	meiliURL := os.Getenv("MEILI_URL")
+	if meiliURL == "" {
+		meiliURL = "http://127.0.0.1:7700"
+	}
+
+	log.Println("📊 Indexing Products to Meilisearch")
+	log.Println("=" + strings.Repeat("=", 49))
+	log.Printf("Meilisearch URL: %s", meiliURL)
+
+	err = processor.IndexToMeilisearch(ctx, meiliURL, 1000)
+	if err != nil {
+		log.Fatalf("❌ Indexing failed: %v", err)
+	}
+
+	log.Println("✅ Indexing completed successfully!")
+}
+
+func runTestSearchFromMain() {
+	db, err := connectDB()
+	if err != nil {
+		log.Fatalf("Failed to connect to database: %v", err)
+	}
+	defer db.Close()
+
+	query := "v-vein"
+	if len(os.Args) > 2 {
+		query = os.Args[2]
+	}
+
+	// Search with Meilisearch
+	client := newMeiliClient()
+	// Fetch more hits to ensure we get enough products for grouping
+	res, err := client.search(query, nil, 200, 0)
+	if err != nil {
+		log.Fatalf("Search failed: %v", err)
+	}
+
+	fmt.Printf("Meilisearch returned %d hits for query: %s\n", len(res.Hits), query)
+	if len(res.Hits) > 0 {
+		fmt.Println("\nFirst 5 product titles from Meilisearch:")
+		engine := NewEnhancedGroupingEngine()
+		for i := 0; i < 5 && i < len(res.Hits); i++ {
+			title := getString(res.Hits[i], "title")
+			sig := engine.ExtractSignature(title)
+			gid := engine.GroupKey(sig)
+			fmt.Printf("  %d. %s\n     → Group: %s (ingredient: %s)\n", i+1, title, gid, sig.CoreIngredient)
+		}
+	}
+
+	// Convert hits to groups (this is where relevance scoring happens)
+	groups := convertHitsToGroups(res.Hits, query, db)
+
+	// Display results
+	fmt.Printf("\n🔍 Search Results for \"%s\":\n\n", query)
+	fmt.Printf("Total groups found: %d\n\n", len(groups))
+	fmt.Println("Rank | Product Name                                      | Relevance | Products")
+	fmt.Println("-----|---------------------------------------------------|-----------|----------")
+
+	maxDisplay := 10
+	if len(groups) < maxDisplay {
+		maxDisplay = len(groups)
+	}
+
+	for i := 0; i < maxDisplay; i++ {
+		g := groups[i]
+		name := g["normalized_name"]
+		score := g["relevance_score"]
+		products := g["product_count"]
+
+		scoreStr := "N/A"
+		if score != nil {
+			scoreStr = fmt.Sprintf("%.1f", score)
+		}
+
+		fmt.Printf("%-4d | %-49s | %9s | %v\n", i+1, name, scoreStr, products)
+	}
+
+	if len(groups) > maxDisplay {
+		fmt.Printf("\n... and %d more groups\n", len(groups)-maxDisplay)
+	}
+	fmt.Println()
 }
 
 func runOriginalGRPCServer() {

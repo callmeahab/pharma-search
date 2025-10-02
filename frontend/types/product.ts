@@ -16,6 +16,7 @@ export interface Product {
   image: string;
   prices: Price[];
   vendorCount?: number;
+  productCount?: number;
 }
 
 // Backend API interfaces
@@ -75,6 +76,7 @@ export function convertBackendProductToProduct(
       },
     ],
     vendorCount: group.vendor_count,
+    productCount: group.product_count,
   };
 }
 
@@ -103,6 +105,7 @@ export function convertProductGroupToProducts(group: ProductGroup): Product[] {
       title: p.title, // Include individual product title
     })),
     vendorCount: group.vendor_count,
+    productCount: group.product_count,
   };
 
   return [mainProduct];
