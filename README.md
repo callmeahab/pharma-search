@@ -23,8 +23,14 @@ A full-stack application for searching and comparing pharmaceutical product pric
 - Python 3.12+
 - Node.js 22+
 
-### Quick Start
-
+### Quick Start backend ./start-grpc.sh
+### Quick Start frontend bun dev
+### Quick Start db setup:
+1. dropdb pharmagician
+2. createdb pharmagician
+3. psql pharmagician < schema.sql
+4. psql pharmagician < seed.sql
+###
 1. Clone the repository
 2. Create `.env` files in both backend and frontend directories
 3. Run with Docker Compose:
@@ -43,6 +49,7 @@ docker-compose exec backend python scripts/process_products.py
    - Frontend: http://localhost:3000
    - API: http://localhost:8000/docs
    -
+
 
 ### Manual Setup
 
