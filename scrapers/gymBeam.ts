@@ -1,6 +1,6 @@
 import puppeteer from 'puppeteer-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
-import { insertData, Product , initializeDatabase, closeDatabase } from './helpers/database';
+import { insertData, Product, initializeDatabase, closeDatabase } from './helpers/database';
 import { Page } from 'puppeteer';
 import { ScraperUtils } from './helpers/ScraperUtils';
 
@@ -30,7 +30,7 @@ async function scrapePage(
       baseUrl.split('/').pop()?.split('-').slice(0, -1).join('-') || '';
 
     // Wait for product links to appear
-    await page.waitForSelector('[data-testid="link"][id^="product_item_"]', {
+    await page.waitForSelector('a[id^="product_item_"]', {
       visible: true,
       timeout: 20000,
     });
@@ -49,17 +49,20 @@ async function scrapePage(
     }
 
     const extracted = await page.evaluate((categoryArg) => {
-      const productElements = document.querySelectorAll('[data-testid="link"][id^="product_item_"]');
+      const productElements = document.querySelectorAll('a[id^="product_item_"]');
       return Array.from(productElements).map((element) => {
-        // Out of stock check
-        const outOfStock = element.querySelector('.currently-not-available') !== null;
+        // Out of stock check - look for out of stock indicators
+        const outOfStock = element.querySelector('.currently-not-available') !== null ||
+          element.querySelector('[data-test="pdp-add-to-cart-recommended-products"][aria-disabled="true"]') !== null;
+
         // Name
         const name = element
-          .querySelector('[data-test="recommended-products-title"] .line-clamp-2')
+          .querySelector('.product-name .line-clamp-2')
           ?.textContent?.trim();
-        // RSD Price
+
+        // RSD Price - look for the price in the new structure
         const spanTexts = Array.from(element.querySelectorAll('span')).map(s => s.textContent);
-        // Extract RSD price from spanTexts
+        // Extract RSD price from spanTexts - look for the pattern with ≈() RSD
         const rsdPriceText = spanTexts.find(t => t && /≈\([\d.,]+ RSD\)/.test(t));
         let rsdPrice = 0;
         if (rsdPriceText) {
@@ -68,7 +71,7 @@ async function scrapePage(
             const priceText = match[1];
             let normalized = priceText;
 
-// Remove currency symbols and trim
+            // Remove currency symbols and trim
             normalized = normalized.replace(/[^\d.,]/g, '').trim();
 
             if (normalized.includes(',') && normalized.includes('.')) {
@@ -86,12 +89,13 @@ async function scrapePage(
             }
 
             rsdPrice = parseInt(normalized, 10);
-
           }
         }
+
         // Link and image
         const link = element.getAttribute('href');
         const imageUrl = element.querySelector('img')?.getAttribute('src');
+
         return {
           outOfStock,
           name,
@@ -120,7 +124,7 @@ async function scrapePage(
 
 // Main scraping function with pagination
 async function scrapeMultipleBaseUrls(): Promise<Product[]> {
-const browser = await puppeteer.launch({
+  const browser = await puppeteer.launch({
     headless: ScraperUtils.IS_HEADLESS,
     defaultViewport: null,
     args: ScraperUtils.getBrowserArgs(),
@@ -159,7 +163,7 @@ const browser = await puppeteer.launch({
       }
 
       // Wait for product links to appear
-      await page.waitForSelector('[data-testid="link"][id^="product_item_"]', {
+      await page.waitForSelector('a[id^="product_item_"]', {
         visible: true,
         timeout: 20000,
       });
@@ -174,17 +178,20 @@ const browser = await puppeteer.launch({
       while (true) {
         // Get current products
         const products = await page.evaluate((categoryArg) => {
-          const productElements = document.querySelectorAll('[data-testid="link"][id^="product_item_"]');
+          const productElements = document.querySelectorAll('a[id^="product_item_"]');
           return Array.from(productElements).map((element) => {
-            // Out of stock check
-            const outOfStock = element.querySelector('.currently-not-available') !== null;
+            // Out of stock check - look for out of stock indicators
+            const outOfStock = element.querySelector('.currently-not-available') !== null ||
+              element.querySelector('[data-test="pdp-add-to-cart-recommended-products"][aria-disabled="true"]') !== null;
+
             // Name
             const name = element
-              .querySelector('[data-test="recommended-products-title"] .line-clamp-2')
+              .querySelector('.product-name .line-clamp-2')
               ?.textContent?.trim();
-            // RSD Price
+
+            // RSD Price - look for the price in the new structure
             const spanTexts = Array.from(element.querySelectorAll('span')).map(s => s.textContent);
-            // Extract RSD price from spanTexts
+            // Extract RSD price from spanTexts - look for the pattern with ≈() RSD
             const rsdPriceText = spanTexts.find(t => t && /≈\([\d.,]+ RSD\)/.test(t));
             let rsdPrice = 0;
             if (rsdPriceText) {
@@ -193,7 +200,7 @@ const browser = await puppeteer.launch({
                 const priceText = match[1];
                 let normalized = priceText;
 
-// Remove currency symbols and trim
+                // Remove currency symbols and trim
                 normalized = normalized.replace(/[^\d.,]/g, '').trim();
 
                 if (normalized.includes(',') && normalized.includes('.')) {
@@ -213,9 +220,11 @@ const browser = await puppeteer.launch({
                 rsdPrice = parseInt(normalized, 10);
               }
             }
+
             // Link and image
             const link = element.getAttribute('href');
             const imageUrl = element.querySelector('img')?.getAttribute('src');
+
             return {
               outOfStock,
               name,
@@ -257,7 +266,7 @@ const browser = await puppeteer.launch({
           await page.waitForFunction(
             (previousCount) => {
               const currentCount = document.querySelectorAll(
-                '[data-testid="link"][id^="product_item_"]',
+                'a[id^="product_item_"]',
               ).length;
               return currentCount > previousCount;
             },
@@ -284,15 +293,15 @@ async function main() {
   try {
     // Initialize database connection
     await initializeDatabase();
-    
-    const allProducts = await scrapeMultipleBaseUrls();
-    
 
-  if (allProducts.length > 0) {
-    await insertData(allProducts, 'Gym Beam');
-  } else {
-    console.log('No products found.');
-  }
+    const allProducts = await scrapeMultipleBaseUrls();
+
+
+    if (allProducts.length > 0) {
+      await insertData(allProducts, 'Gym Beam');
+    } else {
+      console.log('No products found.');
+    }
   } catch (error) {
     console.error('Scraper failed:', error);
     process.exit(1);

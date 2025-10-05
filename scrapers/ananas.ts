@@ -1,16 +1,15 @@
 import puppeteer from 'puppeteer-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
-import { insertData, Product , initializeDatabase, closeDatabase } from './helpers/database';
+import { insertData, Product, initializeDatabase, closeDatabase } from './helpers/database';
 import { Page } from 'puppeteer';
 import { ScraperUtils } from './helpers/ScraperUtils';
 
 // Configure stealth plugin
 puppeteer.use(StealthPlugin());
 
-const scrapedTitles = new Set<string>();
 const baseUrl = 'https://www.ananas.rs';
 const baseUrls = [
-  'https://ananas.rs/kategorije/lepota-i-nega/kozmeticki-aparati',
+  'https://ananas.rs/kategorije/lepota-i-nega/oprema-za-salone/kozmeticki-aparati',
   'https://ananas.rs/kategorije/lepota-i-nega/parfemi/zenski-parfemi',
   'https://ananas.rs/kategorije/lepota-i-nega/parfemi/muski-parfemi',
   'https://ananas.rs/kategorije/lepota-i-nega/parfemi/unisex-parfemi',
@@ -63,11 +62,12 @@ const baseUrls = [
   'https://ananas.rs/kategorije/lepota-i-nega/sminka/cetkice-za-sminkanje-i-dodaci/drzaci-za-cetkice-za-sminku',
   'https://ananas.rs/kategorije/lepota-i-nega/sminka/cetkice-za-sminkanje-i-dodaci/cetkice-za-sminkanje',
   'https://ananas.rs/kategorije/lepota-i-nega/sminka/cetkice-za-sminkanje-i-dodaci/sredstva-za-ciscenje-cetkica',
-  'https://ananas.rs/kategorije/lepota-i-nega/sminka/skidanje-sminke/blaznice-i-tupferi',
-  'https://ananas.rs/kategorije/lepota-i-nega/sminka/skidanje-sminke/vlazne-maramice-za-lice',
-  'https://ananas.rs/kategorije/lepota-i-nega/sminka/skidanje-sminke/maramice-i-vate',
-  'https://ananas.rs/kategorije/lepota-i-nega/sminka/skidanje-sminke/micelarna-voda',
-  'https://ananas.rs/kategorije/lepota-i-nega/sminka/skidanje-sminke/losion-za-lice',
+  'https://ananas.rs/kategorije/lepota-i-nega/nega-lica/maramice-i-vate/blaznice-i-tupferi',
+  'https://ananas.rs/kategorije/lepota-i-nega/nega-lica/maramice-i-vate/vlazne-maramice-za-lice',
+  'https://ananas.rs/kategorije/lepota-i-nega/nega-lica/maramice-i-vate/stapici-za-usi',
+  'https://ananas.rs/kategorije/lepota-i-nega/nega-lica/ciscenje-lica/micelarna-voda',
+  'https://ananas.rs/kategorije/lepota-i-nega/nega-lica/ciscenje-lica/losion-za-lice',
+  'https://ananas.rs/kategorije/lepota-i-nega/nega-lica/ciscenje-lica/proizvodi-za-umivanje',
   'https://ananas.rs/kategorije/lepota-i-nega/sminka/neseseri-i-kozmeticki-koferi/kozmeticki-koferi',
   'https://ananas.rs/kategorije/lepota-i-nega/sminka/neseseri-i-kozmeticki-koferi/neseseri',
   'https://ananas.rs/kategorije/lepota-i-nega/nega-kose/samponi-za-kosu',
@@ -84,7 +84,9 @@ const baseUrls = [
   'https://ananas.rs/kategorije/lepota-i-nega/brijanje-i-depilacija/depilacija/krema-za-depilaciju',
   'https://ananas.rs/kategorije/lepota-i-nega/brijanje-i-depilacija/depilacija/nega-posle-depilacije',
   'https://ananas.rs/kategorije/lepota-i-nega/brijanje-i-depilacija/depilacija/trake-za-depilaciju',
-  'https://ananas.rs/kategorije/lepota-i-nega/brijanje-i-depilacija/depilacija/aparati-za-depilaciju-i-oprema',
+  'https://ananas.rs/kategorije/aparati-za-negu-i-lepotu/aparati-za-brijanje-i-oprema/aparati-za-depilaciju-i-oprema',
+  'https://ananas.rs/kategorije/aparati-za-negu-i-lepotu/aparati-za-brijanje-i-oprema/elektricni-brijaci',
+  'https://ananas.rs/kategorije/aparati-za-negu-i-lepotu/aparati-za-brijanje-i-oprema/trimeri',
   'https://ananas.rs/kategorije/lepota-i-nega/brijanje-i-depilacija/nega-brade',
   'https://ananas.rs/kategorije/lepota-i-nega/brijanje-i-depilacija/pribor-za-brijanje/kreme-za-brijanje',
   'https://ananas.rs/kategorije/lepota-i-nega/brijanje-i-depilacija/pribor-za-brijanje/gelovi-za-brijanje',
@@ -101,7 +103,12 @@ const baseUrls = [
   'https://ananas.rs/kategorije/lepota-i-nega/oralna-higijena/cetkice-za-zube-i-dodaci/decije-cetkice-za-zube',
   'https://ananas.rs/kategorije/lepota-i-nega/oralna-higijena/cetkice-za-zube-i-dodaci/interdentalne-cetkice',
   'https://ananas.rs/kategorije/lepota-i-nega/oralna-higijena/cetkice-za-zube-i-dodaci/cetkice-za-zube',
-  'https://ananas.rs/kategorije/lepota-i-nega/oralna-higijena/cetkice-za-zube-i-dodaci/elektricne-cetkice-za-zube',
+  'https://ananas.rs/kategorije/aparati-za-negu-i-lepotu/aparti-za-negu-lica-i-tela/elektricne-cetkice-za-zube',
+  'https://ananas.rs/kategorije/aparati-za-negu-i-lepotu/aparti-za-negu-lica-i-tela/masazeri-za-lice',
+  'https://ananas.rs/kategorije/aparati-za-negu-i-lepotu/aparti-za-negu-lica-i-tela/masazeri-za-telo',
+  'https://ananas.rs/kategorije/aparati-za-negu-i-lepotu/aparti-za-negu-lica-i-tela/irigator-za-zube',
+  'https://ananas.rs/kategorije/aparati-za-negu-i-lepotu/aparti-za-negu-lica-i-tela/vage-za-merenje',
+  'https://ananas.rs/kategorije/aparati-za-negu-i-lepotu/aparti-za-negu-lica-i-tela/dodatna-oprema-za-oralnu-higijenu',
   'https://ananas.rs/kategorije/lepota-i-nega/oralna-higijena/tecnost-za-ispiranje-usta',
   'https://ananas.rs/kategorije/lepota-i-nega/oralna-higijena/osvezivac-daha',
   'https://ananas.rs/kategorije/lepota-i-nega/oralna-higijena/konac-za-zube',
@@ -179,7 +186,8 @@ const baseUrls = [
   'https://ananas.rs/kategorije/ishrana-i-zdravlje/medicinski-aparati/toplomeri',
   'https://ananas.rs/kategorije/ishrana-i-zdravlje/medicinski-aparati/stetoskopi',
   'https://ananas.rs/kategorije/ishrana-i-zdravlje/cbd-kozmetika',
-  'https://ananas.rs/kategorije/ishrana-i-zdravlje/zdrava-hrana',
+  'https://ananas.rs/kategorije/hrana-i-pice/caj',
+  'https://ananas.rs/kategorije/hrana-i-pice/zdrava-hrana',
 ];
 
 async function scrollPage(page: Page) {
@@ -240,10 +248,12 @@ function decodeNextJsImageUrl(src: string) {
 async function scrapePage(
   page: Page,
   url: string,
-): Promise<{ products: Product[]; skipped: number }> {
+  pageScrapedTitles: Set<string>
+): Promise<{ products: Product[]; skipped: number; totalElements: number }> {
   const allProducts: Product[] = [];
   const category = url.split('/')[5].split('?')[0];
   let pageSkipped = 0;
+  let result: any;
 
   try {
     await page.goto(url, {
@@ -251,7 +261,7 @@ async function scrapePage(
       timeout: 60000,
     });
 
-    await page.waitForSelector('.ais-Hits-list', {
+    await page.waitForSelector('.ais-Hits-item', {
       timeout: 15000,
       visible: true,
     });
@@ -260,9 +270,9 @@ async function scrapePage(
     await scrollPage(page);
     await ensureImagesLoaded(page);
 
-    const result = await page.evaluate((baseUrl: string) => {
+    result = await page.evaluate((baseUrl: string) => {
       const allElements = Array.from(
-        document.querySelectorAll('.ais-Hits-list > li'),
+        document.querySelectorAll('.ais-Hits-item'),
       );
       const skippedElements = allElements.filter((element) =>
         element.querySelector('.sc-492kdg-11'),
@@ -274,7 +284,8 @@ async function scrapePage(
 
       const products = keptElements.map((element) => {
         const title = element.querySelector('h3')?.textContent?.trim() || '';
-        const priceElement = element.querySelector('[class*="sc-1arj7wv-9"]');
+        const spans = element.querySelectorAll('span');
+        const priceElement = spans[1]; // second <span> (index starts at 0)
         const price = priceElement?.textContent?.trim() || '';
         const link = element.querySelector('a')?.getAttribute('href') || '';
 
@@ -286,15 +297,20 @@ async function scrapePage(
           imgElement?.getAttribute('src'),
           imgElement?.getAttribute('data-src'),
           imgElement?.getAttribute('data-lazy'),
-          imgElement?.getAttribute('srcset')?.split(' ')[0],
+          // For srcset pick the LAST (largest) candidate instead of first
+          (() => {
+            const ss = imgElement?.getAttribute('srcset');
+            if (!ss) return undefined;
+            const parts = ss.split(',').map(p => p.trim().split(' ')[0]).filter(Boolean);
+            return parts[parts.length - 1];
+          })(),
         ];
 
-        // Use the first valid non-placeholder image source
         for (const src of possibleSources) {
-          if (src && !src.includes('data:image/gif;base64')) {
-            imgSrc = src;
-            break;
-          }
+            if (src && !src.includes('data:image/gif;base64') && !src.includes('data:image/svg+xml')) {
+              imgSrc = src;
+              break;
+            }
         }
 
         return {
@@ -308,13 +324,26 @@ async function scrapePage(
       return {
         products: products.filter((p) => p.img), // Only keep products with valid images
         skipped: skippedElements.length,
+        totalFound: allElements.length,
       };
     }, baseUrl);
 
+    // Decode Next.js proxy image URLs to original before logging and further processing
+    if (result?.products?.length) {
+      result.products = result.products.map((p: any) => ({
+        ...p,
+        img: decodeNextJsImageUrl(p.img)
+      }));
+    }
+
+    // Logging now limited to duplicates only (no full product listing)
+
     pageSkipped = result.skipped;
 
+    let duplicatesSkipped = 0;
+    const duplicatesLogged: any[] = [];
     for (const product of result.products) {
-      if (!scrapedTitles.has(product.title)) {
+      if (!pageScrapedTitles.has(product.title)) {
         const decodedImg = decodeNextJsImageUrl(product.img);
 
         allProducts.push({
@@ -325,49 +354,62 @@ async function scrapePage(
           thumbnail: decodedImg,
           photos: decodedImg,
         });
-        scrapedTitles.add(product.title);
+        pageScrapedTitles.add(product.title);
       }
     }
 
+    if (duplicatesLogged.length > 0) {
+      console.log(`🔁 Duplicates on page (count=${duplicatesLogged.length}):`);
+      duplicatesLogged.forEach((d, i) => {
+        console.log(`   ↪ [${i + 1}] ${d.title} | Price: ${d.price} | Link: ${d.link}`);
+      });
+    }
+
     console.log(
-      `🟢 ${url} - Found ${result.products.length} products, Skipped ${pageSkipped} out-of-stock items`,
+      `🟢 ${url} - Found ${result.totalFound} total elements, ${result.products.length} valid products (${allProducts.length} new, ${duplicatesSkipped} duplicates), Skipped ${pageSkipped} out-of-stock items`,
     );
   } catch (error) {
     console.error(`🔴 ${url} - Error: ${(error as Error).message}`);
   }
 
-  return { products: allProducts, skipped: pageSkipped };
+  return { products: allProducts, skipped: pageSkipped, totalElements: result?.totalFound || 0 };
 }
 
 async function scrapeMultipleBaseUrls(): Promise<{
   products: Product[];
   totalSkipped: number;
 }> {
-const browser = await puppeteer.launch({
+  const browser = await puppeteer.launch({
     headless: ScraperUtils.IS_HEADLESS,
     defaultViewport: null,
     args: ScraperUtils.getBrowserArgs(),
   });
 
   const page = await browser.newPage();
-    await ScraperUtils.configurePage(page);
+  await ScraperUtils.configurePage(page);
   let allScrapedProducts: Product[] = [];
   let totalSkipped = 0;
 
   try {
     for (const baseUrl of baseUrls) {
+      // Create a new Set for each category to track duplicates within that category only
+      const categoryScrapedTitles = new Set<string>();
       let pageIndex = 1;
       while (true) {
         const pageUrl = `${baseUrl}?page=${pageIndex}`;
         console.log(`🌐 Scraping: ${pageUrl}`);
 
-        const { products, skipped } = await scrapePage(page, pageUrl);
+        const { products, skipped, totalElements } = await scrapePage(page, pageUrl, categoryScrapedTitles);
         totalSkipped += skipped;
 
-        if (products.length === 0) {
-          console.log(`⏹️ Reached end of pagination at page ${pageIndex}`);
+        // Check if we found any elements at all on the page
+        // If no elements found, we've reached the end of the category
+        if (totalElements === 0) {
+          console.log(`⏹️ Reached end of pagination at page ${pageIndex} - no elements found`);
           break;
         }
+
+        console.log(`📄 Page ${pageIndex}: ${totalElements} elements found, ${products.length} new products processed`);
 
         allScrapedProducts = [...allScrapedProducts, ...products];
         pageIndex++;
@@ -390,17 +432,16 @@ async function main() {
   try {
     // Initialize database connection
     await initializeDatabase();
-    
-    const { products, totalSkipped } = await scrapeMultipleBaseUrls();
-    
 
-  if (products.length > 0) {
-    await insertData(products, 'Ananas');
-    console.log(`✅ Successfully stored ${products.length} products`);
-    console.log(`⏭️ Total out-of-stock items skipped: ${totalSkipped}`);
-  } else {
-    console.log('❌ No products found across all categories');
-  }
+    const { products } = await scrapeMultipleBaseUrls();
+
+    if (products.length > 0) {
+      await insertData(products, 'Ananas');
+      console.log(`✅ Successfully stored ${products.length} products`);
+      console.log(`⏭️ Total out-of-stock items skipped: ${totalSkipped}`);
+    } else {
+      console.log('❌ No products found across all categories');
+    }
   } catch (error) {
     console.error('Scraper failed:', error);
     process.exit(1);

@@ -1,6 +1,6 @@
 import puppeteer from 'puppeteer-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
-import { insertData, Product , initializeDatabase, closeDatabase } from './helpers/database';
+import { insertData, Product, initializeDatabase, closeDatabase } from './helpers/database';
 import { Page } from 'puppeteer';
 import { ScraperUtils } from './helpers/ScraperUtils';
 
@@ -25,7 +25,7 @@ async function scrapePage(
   try {
     await Promise.all([
       page.goto(url, { waitUntil: 'domcontentloaded' }),
-      page.waitForNavigation({ waitUntil: 'networkidle2' }).catch(() => {}),
+      page.waitForNavigation({ waitUntil: 'networkidle2' }).catch(() => { }),
     ]);
 
     // Check for empty message first
@@ -49,11 +49,10 @@ async function scrapePage(
           const title =
             element.querySelector('.product-item-link')?.textContent?.trim() ||
             '';
-          const outOfStock = element.querySelector(
-            '.grid-image.grid-image--out-of-stock',
-          );
 
-          if (outOfStock) {
+          // Check for available stock instead of out-of-stock indicator
+          const stockAvailable = element.querySelector('.stock.available');
+          if (!stockAvailable) {
             return null;
           }
 
@@ -64,10 +63,26 @@ async function scrapePage(
           const link =
             element.querySelector('.product-item-link')?.getAttribute('href') ||
             '';
-          const img =
-            element
-              .querySelector('.product-image-photo')
-              ?.getAttribute('src') || '';
+
+          // Extract image with priority for webp format
+          let img = '';
+          const picture = element.querySelector('picture.product-image-photo');
+          if (picture) {
+            // Try to get webp source first
+            const webpSource = picture.querySelector('source[type="image/webp"]');
+            if (webpSource) {
+              img = webpSource.getAttribute('srcset') || '';
+            }
+
+            // Fallback to regular img tag if no webp source
+            if (!img) {
+              const imgTag = picture.querySelector('img.product-image-photo');
+              img = imgTag?.getAttribute('src') || '';
+            }
+          } else {
+            // Fallback for older structure
+            img = element.querySelector('.product-image-photo')?.getAttribute('src') || '';
+          }
 
           return { title, price, link, img };
         })
@@ -96,7 +111,7 @@ async function scrapePage(
 }
 
 async function scrapeMultipleBaseUrls(): Promise<Product[]> {
-const browser = await puppeteer.launch({
+  const browser = await puppeteer.launch({
     headless: ScraperUtils.IS_HEADLESS,
     defaultViewport: null,
     args: ScraperUtils.getBrowserArgs(),
@@ -156,16 +171,16 @@ async function main() {
   try {
     // Initialize database connection
     await initializeDatabase();
-    
-    const allProducts = await scrapeMultipleBaseUrls();
-    
 
-  if (allProducts.length > 0) {
-    await insertData(allProducts, 'Dr Max');
-    console.log(`Successfully stored ${allProducts.length} products`);
-  } else {
-    console.log('No products found.');
-  }
+    const allProducts = await scrapeMultipleBaseUrls();
+
+
+    if (allProducts.length > 0) {
+      await insertData(allProducts, 'Dr Max');
+      console.log(`Successfully stored ${allProducts.length} products`);
+    } else {
+      console.log('No products found.');
+    }
   } catch (error) {
     console.error('Scraper failed:', error);
     process.exit(1);
