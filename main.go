@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
-	"github.com/lib/pq"
+	_ "github.com/lib/pq" // PostgreSQL driver
 	"github.com/rs/cors"
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/h2c"
@@ -66,7 +66,7 @@ func (c *meiliClient) search(query string, filters map[string]interface{}, limit
 	req := &meilisearch.SearchRequest{
 		Limit:  int64(limit),
 		Offset: int64(offset),
-		Facets: []string{"brandFacet", "categoryFacet", "formFacet", "priceRange", "volumeRange"},
+		Facets: []string{"vendorName", "brand", "normalizedName", "dosageUnit", "quantityRange"},
 	}
 	if filters != nil {
 		var parts []string
@@ -87,22 +87,19 @@ func (c *meiliClient) search(query string, filters map[string]interface{}, limit
 			return "(" + strings.Join(row, " OR ") + ")"
 		}
 		if brands, ok := filters["brand_names"].([]string); ok && len(brands) > 0 {
-			if s := buildOr("brandFacet", brands); s != "" {
+			if s := buildOr("brand", brands); s != "" {
 				parts = append(parts, s)
 			}
 		}
 		if cats, ok := filters["categories"].([]string); ok && len(cats) > 0 {
-			if s := buildOr("categoryFacet", cats); s != "" {
+			if s := buildOr("normalizedName", cats); s != "" {
 				parts = append(parts, s)
 			}
 		}
 		if forms, ok := filters["forms"].([]string); ok && len(forms) > 0 {
-			if s := buildOr("formFacet", forms); s != "" {
+			if s := buildOr("dosageUnit", forms); s != "" {
 				parts = append(parts, s)
 			}
-		}
-		if inStock, ok := filters["in_stock_only"].(bool); ok && inStock {
-			parts = append(parts, "inStock = true")
 		}
 		if len(parts) > 0 {
 			req.Filter = strings.Join(parts, " AND ")
@@ -183,144 +180,66 @@ func convertHitsToGroups(hits []map[string]interface{}, query string, db *sql.DB
 		return []map[string]interface{}{}
 	}
 
-	type groupInfo struct {
-		GroupID    string
-		GroupName  sql.NullString
-		DosageVal  sql.NullFloat64
-		DosageUnit sql.NullString
-		Quality    sql.NullFloat64
+	// Track groups with their first appearance index (Meilisearch rank = relevance)
+	type groupData struct {
+		firstRank int                      // Position of first product in Meilisearch results
+		products  []map[string]interface{} // Products in this group (Meilisearch order)
 	}
-	idToGroup := map[string]groupInfo{}
-	if db != nil {
-		ids := make([]string, 0, len(hits))
-		for _, h := range hits {
-			pid := strings.ReplaceAll(getString(h, "id"), "product_", "")
-			if pid != "" {
-				ids = append(ids, pid)
-			}
-		}
-		if len(ids) > 0 {
-			rows, err := db.Query(`SELECT p.id, COALESCE(p."productGroupId", ''), g."groupName", g."dosageStrength", g."dosageUnit", g."qualityScore" FROM "Product" p LEFT JOIN "ProductGroup" g ON g.id = p."productGroupId" WHERE p.id = ANY($1)`, pq.Array(ids))
-			if err == nil {
-				for rows.Next() {
-					var id, gid string
-					var name sql.NullString
-					var dv sql.NullFloat64
-					var du sql.NullString
-					var qs sql.NullFloat64
-					if err := rows.Scan(&id, &gid, &name, &dv, &du, &qs); err == nil {
-						idToGroup[id] = groupInfo{GroupID: gid, GroupName: name, DosageVal: dv, DosageUnit: du, Quality: qs}
-					}
-				}
-				rows.Close()
-			}
-		}
-	}
+	groupMap := make(map[string]*groupData)
+	groupOrder := make([]string, 0) // Preserve order of first appearance
 
-	// Group products using enhanced grouping
-	engine := NewEnhancedGroupingEngine()
-	byGroup := map[string][]map[string]interface{}{}
+	// Group products by groupKey from Meilisearch document
+	// Products are already sorted by Meilisearch relevance
+	for rank, h := range hits {
+		// Use pre-computed groupKey from Meilisearch document
+		gid := getString(h, "groupKey")
 
-	for _, h := range hits {
-		rawID := getString(h, "id")
-		pid := strings.ReplaceAll(rawID, "product_", "")
-		title := getString(h, "title")
-
-		// Use enhanced grouping to generate group key
-		signature := engine.ExtractSignature(title)
-		gid := engine.GroupKey(signature)
-
-		// Fallback: check if product has productGroupId in database
-		if gi, ok := idToGroup[pid]; ok && gi.GroupID != "" {
-			gid = gi.GroupID
-		}
-
-		// Last resort fallback
+		// Fallback to normalizedName if groupKey not set
 		if gid == "" {
+			gid = getString(h, "normalizedName")
+		}
+
+		// Last resort: use title-based grouping
+		if gid == "" {
+			title := getString(h, "title")
 			gid = normalizeTitleForGrouping(title)
 		}
 
-		byGroup[gid] = append(byGroup[gid], h)
+		if existing, ok := groupMap[gid]; ok {
+			existing.products = append(existing.products, h)
+		} else {
+			groupMap[gid] = &groupData{
+				firstRank: rank,
+				products:  []map[string]interface{}{h},
+			}
+			groupOrder = append(groupOrder, gid)
+		}
 	}
 
-	groups := make([]map[string]interface{}, 0, len(byGroup))
-	queryLower := strings.ToLower(query)
-	queryWords := strings.Fields(queryLower)
+	// Build result groups, sorted by first appearance (Meilisearch relevance)
+	groups := make([]map[string]interface{}, 0, len(groupMap))
 
-	for gid, products := range byGroup {
-		var groupRelevanceScore *float64 // Store the relevance score for this group
+	for _, gid := range groupOrder {
+		gd := groupMap[gid]
+		products := gd.products
 
-		// Calculate relevance score for this group based on query match
-		if query != "" && len(queryWords) > 0 {
-			groupScore := 0.0
+		// Sort products within group by price (lowest first)
+		sort.Slice(products, func(i, j int) bool {
+			return getFloat(products[i], "price") < getFloat(products[j], "price")
+		})
 
-			// Filter query words (>2 chars only)
-			validWords := []string{}
-			for _, word := range queryWords {
-				if len(word) > 2 {
-					validWords = append(validWords, word)
-				}
-			}
-
-			// If no valid words after filtering, skip scoring
-			if len(validWords) == 0 {
-				continue
-			}
-
-			for _, p := range products {
-				title := strings.ToLower(getString(p, "title"))
-				productScore := 0.0
-
-				// Check for exact phrase match (highest priority)
-				if strings.Contains(title, queryLower) {
-					productScore += 100.0
-				}
-
-				// Check for all valid query words present
-				allWordsPresent := true
-				for _, word := range validWords {
-					if !strings.Contains(title, word) {
-						allWordsPresent = false
-						break
-					}
-				}
-				if allWordsPresent {
-					productScore += 50.0
-				}
-
-				// Count individual word matches (lower priority)
-				for _, word := range validWords {
-					if strings.Contains(title, word) {
-						productScore += 10.0
-					}
-				}
-
-				groupScore += productScore
-			}
-
-			// Average score per product in group
-			avgScore := groupScore / float64(len(products))
-
-			// Skip groups with low relevance
-			// Groups need at least 30 points avg (e.g., 3 word matches or 1 partial match)
-			if avgScore < 30.0 {
-				continue
-			}
-
-			// Store score in a variable (not in products array since it will be sorted)
-			groupRelevanceScore = &avgScore
-		}
-
-		sort.Slice(products, func(i, j int) bool { return getFloat(products[i], "price") < getFloat(products[j], "price") })
+		// Build formatted product list
 		prices := make([]float64, 0, len(products))
 		vendors := make([]string, 0, len(products))
 		formatted := make([]map[string]interface{}, 0, len(products))
+
 		for _, p := range products {
 			priceCents := getFloat(p, "price")
 			price := priceCents / 100.0
 			prices = append(prices, price)
 			vendors = append(vendors, getString(p, "vendorId"))
 			pid := strings.ReplaceAll(getString(p, "id"), "product_", "")
+
 			formatted = append(formatted, map[string]interface{}{
 				"id":          pid,
 				"title":       getString(p, "title"),
@@ -332,35 +251,24 @@ func convertHitsToGroups(hits []map[string]interface{}, query string, db *sql.DB
 				"brand_name":  getString(p, "brand"),
 			})
 		}
+
 		minP, maxP := 0.0, 0.0
 		if len(prices) > 0 {
 			minP, maxP = prices[0], prices[len(prices)-1]
 		}
 
-		// Optional group metadata from DB
+		// Use first product's title for display name (most relevant in group)
 		displayName := gid
-		var dosageVal interface{}
-		var dosageUnit interface{}
-		var quality interface{}
 		if len(products) > 0 {
-			firstPid := strings.ReplaceAll(getString(products[0], "id"), "product_", "")
-			if gi, ok := idToGroup[firstPid]; ok {
-				if gi.GroupName.Valid {
-					displayName = gi.GroupName.String
-				}
-				if gi.DosageVal.Valid {
-					dosageVal = gi.DosageVal.Float64
-				}
-				if gi.DosageUnit.Valid {
-					dosageUnit = gi.DosageUnit.String
-				}
-				if gi.Quality.Valid {
-					quality = gi.Quality.Float64
-				}
-			}
+			displayName = getString(products[0], "title")
 		}
 
-		groupData := map[string]interface{}{
+		// Get dosage info from first product
+		dosageVal := getFloat(products[0], "dosageValue")
+		dosageUnit := getString(products[0], "dosageUnit")
+		quantityRange := getString(products[0], "quantityRange")
+
+		group := map[string]interface{}{
 			"id":              gid,
 			"normalized_name": displayName,
 			"products":        formatted,
@@ -369,45 +277,17 @@ func convertHitsToGroups(hits []map[string]interface{}, query string, db *sql.DB
 			"product_count":   len(products),
 			"dosage_value":    dosageVal,
 			"dosage_unit":     dosageUnit,
-			"quality_score":   quality,
+			"quantity_range":  quantityRange,
+			"relevance_rank":  gd.firstRank, // Meilisearch rank of best product
 		}
 
-		// Add relevance score if calculated
-		if groupRelevanceScore != nil {
-			groupData["relevance_score"] = *groupRelevanceScore
-		}
-
-		// When query is present, only include groups with relevance scores
-		if query != "" && len(queryWords) > 0 {
-			if _, hasScore := groupData["relevance_score"]; !hasScore {
-				continue // Skip groups without relevance scores when searching
-			}
-		}
-
-		groups = append(groups, groupData)
+		groups = append(groups, group)
 	}
-	sort.Slice(groups, func(i, j int) bool {
-		// Sort by relevance score first (if available)
-		if query != "" {
-			scoreI, hasI := groups[i]["relevance_score"].(float64)
-			scoreJ, hasJ := groups[j]["relevance_score"].(float64)
-			if hasI && hasJ && scoreI != scoreJ {
-				return scoreI > scoreJ // Higher score first
-			}
-		}
 
-		// Then by product count
-		pi := groups[i]["product_count"].(int)
-		pj := groups[j]["product_count"].(int)
-		if pi != pj {
-			return pi > pj
-		}
+	// Groups are already in Meilisearch relevance order (by first appearance)
+	// No additional sorting needed - trust Meilisearch's ranking
+	_ = query // Query used by Meilisearch, not needed here
 
-		// Finally by price
-		mi := groups[i]["price_range"].(map[string]interface{})["min"].(float64)
-		mj := groups[j]["price_range"].(map[string]interface{})["min"].(float64)
-		return mi < mj
-	})
 	return groups
 }
 
@@ -479,16 +359,43 @@ func (s *server) Search(ctx context.Context, req *connect.Request[pb.SearchReque
 	if req.Msg.GetInStockOnly() {
 		filters["in_stock_only"] = true
 	}
-	res, err := client.search(req.Msg.GetQ(), filters, int(req.Msg.GetLimit()), int(req.Msg.GetOffset()))
+
+	// Fetch more products from Meilisearch to get enough groups
+	// Limit/offset applies to groups, not products
+	groupLimit := int(req.Msg.GetLimit())
+	if groupLimit == 0 {
+		groupLimit = 20
+	}
+	groupOffset := int(req.Msg.GetOffset())
+
+	// Fetch up to 1000 products to ensure we have enough groups
+	productFetchLimit := 1000
+	res, err := client.search(req.Msg.GetQ(), filters, productFetchLimit, 0)
 	if err != nil {
 		return nil, err
 	}
-	groups := convertHitsToGroups(res.Hits, req.Msg.GetQ(), s.db)
+
+	// Group all fetched products
+	allGroups := convertHitsToGroups(res.Hits, req.Msg.GetQ(), s.db)
+	totalGroups := len(allGroups)
+
+	// Apply group-level pagination
+	startIdx := groupOffset
+	endIdx := groupOffset + groupLimit
+	if startIdx > totalGroups {
+		startIdx = totalGroups
+	}
+	if endIdx > totalGroups {
+		endIdx = totalGroups
+	}
+
+	paginatedGroups := allGroups[startIdx:endIdx]
+
 	data := map[string]interface{}{
-		"groups":             groups,
-		"total":              res.NbHits,
-		"offset":             req.Msg.GetOffset(),
-		"limit":              req.Msg.GetLimit(),
+		"groups":             paginatedGroups,
+		"total":              totalGroups,
+		"offset":             groupOffset,
+		"limit":              groupLimit,
 		"search_type_used":   "meilisearch",
 		"processing_time_ms": res.ProcessingTimeMs,
 		"facets":             res.Facets,
@@ -517,16 +424,31 @@ func (s *server) Search(ctx context.Context, req *connect.Request[pb.SearchReque
 
 func (s *server) SearchGroups(ctx context.Context, req *connect.Request[pb.SearchGroupsRequest]) (*connect.Response[pb.GenericJsonResponse], error) {
 	client := newMeiliClient()
-	res, err := client.search(req.Msg.GetQ(), nil, int(req.Msg.GetLimit()), 0)
+
+	groupLimit := int(req.Msg.GetLimit())
+	if groupLimit == 0 {
+		groupLimit = 20
+	}
+
+	// Fetch up to 1000 products to get enough groups
+	res, err := client.search(req.Msg.GetQ(), nil, 1000, 0)
 	if err != nil {
 		return nil, err
 	}
-	groups := convertHitsToGroups(res.Hits, req.Msg.GetQ(), s.db)
+
+	allGroups := convertHitsToGroups(res.Hits, req.Msg.GetQ(), s.db)
+
+	// Limit by number of groups
+	paginatedGroups := allGroups
+	if len(allGroups) > groupLimit {
+		paginatedGroups = allGroups[:groupLimit]
+	}
+
 	data := map[string]interface{}{
-		"groups":           groups,
-		"total":            len(groups),
+		"groups":           paginatedGroups,
+		"total":            len(allGroups),
 		"offset":           0,
-		"limit":            req.Msg.GetLimit(),
+		"limit":            groupLimit,
 		"search_type_used": "precomputed_groups",
 	}
 	st, err := toStructPB(data)
@@ -552,15 +474,23 @@ func (s *server) GetFacets(ctx context.Context, req *connect.Request[pb.FacetsRe
 
 func (s *server) PriceComparison(ctx context.Context, req *connect.Request[pb.PriceComparisonRequest]) (*connect.Response[pb.GenericJsonResponse], error) {
 	client := newMeiliClient()
-	res, err := client.search(req.Msg.GetQ(), nil, 10, 0)
+	// Fetch more products to get enough groups for comparison
+	res, err := client.search(req.Msg.GetQ(), nil, 500, 0)
 	if err != nil {
 		return nil, err
 	}
-	groups := convertHitsToGroups(res.Hits, req.Msg.GetQ(), s.db)
+	allGroups := convertHitsToGroups(res.Hits, req.Msg.GetQ(), s.db)
+
+	// Return top 10 groups for price comparison
+	groups := allGroups
+	if len(allGroups) > 10 {
+		groups = allGroups[:10]
+	}
+
 	data := map[string]interface{}{
 		"query":              req.Msg.GetQ(),
 		"groups":             groups,
-		"total_groups":       len(groups),
+		"total_groups":       len(allGroups),
 		"message":            "Price comparison using Meilisearch",
 		"processing_time_ms": res.ProcessingTimeMs,
 	}
@@ -811,7 +741,11 @@ func (s *server) RebuildIndex(ctx context.Context, req *connect.Request[pb.Rebui
 		return nil, fmt.Errorf("database not connected")
 	}
 
-	client := meilisearch.New(os.Getenv("MEILI_URL"), meilisearch.WithAPIKey(os.Getenv("MEILI_API_KEY")))
+	meiliURL := os.Getenv("MEILI_URL")
+	if meiliURL == "" {
+		meiliURL = "http://localhost:7700"
+	}
+	client := meilisearch.New(meiliURL, meilisearch.WithAPIKey(os.Getenv("MEILI_API_KEY")))
 	index := client.Index("products")
 	_, _ = client.CreateIndex(&meilisearch.IndexConfig{Uid: "products", PrimaryKey: "id"})
 
@@ -820,10 +754,9 @@ func (s *server) RebuildIndex(ctx context.Context, req *connect.Request[pb.Rebui
 	indexed := 0
 	for {
 		rows, err := s.db.Query(
-			`SELECT p.id, p.title, p.price, p."vendorId", v.name as vendor_name, p.link, p.thumbnail, b.name as brand_name
+			`SELECT p.id, p.title, p.price, p."vendorId", v.name as vendor_name, p.link, COALESCE(p.thumbnail, '') as thumbnail
 			  FROM "Product" p
 			  JOIN "Vendor" v ON v.id = p."vendorId"
-			  LEFT JOIN "Brand" b ON b.id = p."brandId"
 			  WHERE p."processedAt" IS NOT NULL
 			  ORDER BY p.id
 			  LIMIT $1 OFFSET $2`, batch, offset,
@@ -834,9 +767,8 @@ func (s *server) RebuildIndex(ctx context.Context, req *connect.Request[pb.Rebui
 		docs := make([]map[string]interface{}, 0, batch)
 		for rows.Next() {
 			var id, title, vendorId, vendorName, link, thumbnail string
-			var brandName sql.NullString
 			var price sql.NullFloat64
-			if err := rows.Scan(&id, &title, &price, &vendorId, &vendorName, &link, &thumbnail, &brandName); err != nil {
+			if err := rows.Scan(&id, &title, &price, &vendorId, &vendorName, &link, &thumbnail); err != nil {
 				rows.Close()
 				return nil, err
 			}
@@ -852,12 +784,6 @@ func (s *server) RebuildIndex(ctx context.Context, req *connect.Request[pb.Rebui
 				"vendorName": vendorName,
 				"link":       link,
 				"thumbnail":  thumbnail,
-				"brand": func() string {
-					if brandName.Valid {
-						return brandName.String
-					}
-					return ""
-				}(),
 			})
 		}
 		rows.Close()
@@ -872,6 +798,170 @@ func (s *server) RebuildIndex(ctx context.Context, req *connect.Request[pb.Rebui
 	}
 
 	data := map[string]interface{}{"status": "completed", "indexed_count": indexed}
+	st, err := toStructPB(data)
+	if err != nil {
+		return nil, err
+	}
+	return connect.NewResponse(&pb.GenericJsonResponse{Data: st}), nil
+}
+
+// RebuildIndexWithStandardization rebuilds Meilisearch index using standardized names from ProductStandardization table
+func (s *server) RebuildIndexWithStandardization(ctx context.Context, req *connect.Request[pb.RebuildIndexRequest]) (*connect.Response[pb.GenericJsonResponse], error) {
+	if s.db == nil {
+		return nil, fmt.Errorf("database not connected")
+	}
+
+	log.Println("Starting Meilisearch rebuild with standardization...")
+
+	meiliURL := os.Getenv("MEILI_URL")
+	if meiliURL == "" {
+		meiliURL = "http://localhost:7700"
+	}
+	client := meilisearch.New(meiliURL, meilisearch.WithAPIKey(os.Getenv("MEILI_API_KEY")))
+
+	// Delete existing index and recreate
+	_, _ = client.DeleteIndex("products")
+	_, err := client.CreateIndex(&meilisearch.IndexConfig{Uid: "products", PrimaryKey: "id"})
+	if err != nil {
+		log.Printf("Warning: Could not create index: %v", err)
+	}
+
+	index := client.Index("products")
+
+	// Configure index settings (best effort, errors ignored)
+	settings := meilisearch.Settings{
+		SearchableAttributes: []string{"title", "standardizedTitle", "normalizedName", "brand", "vendorName"},
+		FilterableAttributes: []string{"vendorId", "vendorName", "brand", "price", "normalizedName", "dosageUnit", "quantityRange"},
+		SortableAttributes:   []string{"price", "title"},
+	}
+	_, _ = index.UpdateSettings(&settings)
+
+	batch := 1000
+	offset := 0
+	indexed := 0
+	standardized := 0
+	engine := NewEnhancedGroupingEngine()
+
+	for {
+		// Join Product with ProductStandardization to get standardized names
+		rows, err := s.db.Query(`
+			SELECT
+				p.id,
+				p.title,
+				p.price,
+				p."vendorId",
+				v.name as vendor_name,
+				p.link,
+				COALESCE(p.thumbnail, '') as thumbnail,
+				ps.title as standardized_title,
+				ps."normalizedName",
+				ps."dosageValue",
+				ps."dosageUnit",
+				ps."quantityValue",
+				ps."brandName" as std_brand
+			FROM "Product" p
+			JOIN "Vendor" v ON v.id = p."vendorId"
+			LEFT JOIN "ProductStandardization" ps ON LOWER(ps."originalTitle") = LOWER(p.title)
+			WHERE p."processedAt" IS NOT NULL
+			ORDER BY p.id
+			LIMIT $1 OFFSET $2`, batch, offset,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("query error: %w", err)
+		}
+
+		docs := make([]map[string]interface{}, 0, batch)
+		for rows.Next() {
+			var id, title, vendorId, vendorName, link, thumbnail string
+			var stdTitle, normalizedName, dosageUnit, stdBrand sql.NullString
+			var price, dosageValue sql.NullFloat64
+			var quantityValue sql.NullInt64
+
+			if err := rows.Scan(&id, &title, &price, &vendorId, &vendorName, &link, &thumbnail,
+				&stdTitle, &normalizedName, &dosageValue, &dosageUnit, &quantityValue, &stdBrand); err != nil {
+				rows.Close()
+				return nil, fmt.Errorf("scan error: %w", err)
+			}
+
+			cents := 0
+			if price.Valid {
+				cents = int(price.Float64 * 100.0)
+			}
+
+			// Use standardized title if available, otherwise use original
+			displayTitle := title
+			if stdTitle.Valid && stdTitle.String != "" {
+				displayTitle = stdTitle.String
+				standardized++
+			}
+
+			// Get brand name from standardization
+			brand := ""
+			if stdBrand.Valid && stdBrand.String != "" {
+				brand = stdBrand.String
+			}
+
+			// Extract signature for grouping
+			signature := engine.ExtractSignature(title)
+			groupKey := engine.GroupKey(signature)
+
+			// Use standardized normalized name if available
+			normName := groupKey
+			if normalizedName.Valid && normalizedName.String != "" {
+				normName = normalizedName.String
+			}
+
+			// Get quantity range
+			quantityRange := ""
+			if quantityValue.Valid && quantityValue.Int64 > 0 {
+				quantityRange = engine.getQuantityRange(int(quantityValue.Int64))
+			} else if signature.Quantity > 0 {
+				quantityRange = engine.getQuantityRange(signature.Quantity)
+			}
+
+			doc := map[string]interface{}{
+				"id":                "product_" + id,
+				"title":             displayTitle,
+				"originalTitle":     title,
+				"standardizedTitle": stdTitle.String,
+				"price":             cents,
+				"vendorId":          vendorId,
+				"vendorName":        vendorName,
+				"link":              link,
+				"thumbnail":         thumbnail,
+				"brand":             brand,
+				"normalizedName":    normName,
+				"groupKey":          groupKey,
+				"dosageValue":       dosageValue.Float64,
+				"dosageUnit":        dosageUnit.String,
+				"quantityRange":     quantityRange,
+			}
+
+			docs = append(docs, doc)
+		}
+		rows.Close()
+
+		if len(docs) == 0 {
+			break
+		}
+
+		if _, err := index.AddDocuments(docs, nil); err != nil {
+			return nil, fmt.Errorf("index error: %w", err)
+		}
+
+		indexed += len(docs)
+		offset += batch
+		log.Printf("Indexed %d products (%d with standardization)...", indexed, standardized)
+	}
+
+	log.Printf("Rebuild complete: %d products indexed, %d with standardized names", indexed, standardized)
+
+	data := map[string]interface{}{
+		"status":            "completed",
+		"indexed_count":     indexed,
+		"standardized_count": standardized,
+		"message":           fmt.Sprintf("Indexed %d products, %d with standardized names from XLSX", indexed, standardized),
+	}
 	st, err := toStructPB(data)
 	if err != nil {
 		return nil, err
@@ -919,11 +1009,52 @@ func (s *server) ProcessingAnalysis(ctx context.Context, req *connect.Request[pb
 
 func main() {
 	// Handle CLI commands or start ConnectRPC server
-	if len(os.Args) >= 2 && os.Args[1] == "test-search" {
-		runTestSearchFromMain()
-		return
+	if len(os.Args) >= 2 {
+		switch os.Args[1] {
+		case "test-search":
+			runTestSearchFromMain()
+			return
+		case "rebuild-index":
+			runRebuildIndexWithStandardization()
+			return
+		case "help":
+			fmt.Println("Usage: pharma-search [command]")
+			fmt.Println("")
+			fmt.Println("Commands:")
+			fmt.Println("  (no args)      Start the ConnectRPC server")
+			fmt.Println("  test-search    Test search with query: pharma-search test-search \"query\"")
+			fmt.Println("  rebuild-index  Rebuild Meilisearch index with standardized names from XLSX")
+			fmt.Println("  help           Show this help message")
+			return
+		}
 	}
 	runConnectServer()
+}
+
+// runRebuildIndexWithStandardization runs the index rebuild from CLI
+func runRebuildIndexWithStandardization() {
+	db, err := connectDB()
+	if err != nil {
+		log.Fatalf("Failed to connect to database: %v", err)
+	}
+	defer db.Close()
+
+	s := &server{db: db}
+	ctx := context.Background()
+
+	resp, err := s.RebuildIndexWithStandardization(ctx, nil)
+	if err != nil {
+		log.Fatalf("Rebuild failed: %v", err)
+	}
+
+	// Print result
+	if resp.Msg.Data != nil {
+		jsonData := resp.Msg.Data.AsMap()
+		fmt.Printf("\n✅ Index rebuild complete!\n")
+		fmt.Printf("   Total indexed: %v\n", jsonData["indexed_count"])
+		fmt.Printf("   With standardization: %v\n", jsonData["standardized_count"])
+		fmt.Printf("   Status: %v\n", jsonData["status"])
+	}
 }
 
 func runTestSearchFromMain() {
@@ -940,8 +1071,8 @@ func runTestSearchFromMain() {
 
 	// Search with Meilisearch
 	client := newMeiliClient()
-	// Fetch more hits to ensure we get enough products for grouping
-	res, err := client.search(query, nil, 200, 0)
+	// Fetch 1000 products to get enough groups
+	res, err := client.search(query, nil, 1000, 0)
 	if err != nil {
 		log.Fatalf("Search failed: %v", err)
 	}
@@ -964,8 +1095,8 @@ func runTestSearchFromMain() {
 	// Display results
 	fmt.Printf("\n🔍 Search Results for \"%s\":\n\n", query)
 	fmt.Printf("Total groups found: %d\n\n", len(groups))
-	fmt.Println("Rank | Product Name                                      | Relevance | Products")
-	fmt.Println("-----|---------------------------------------------------|-----------|----------")
+	fmt.Println("Rank | Product Name                                      | Best Hit | Products")
+	fmt.Println("-----|---------------------------------------------------|----------|----------")
 
 	maxDisplay := 10
 	if len(groups) < maxDisplay {
@@ -974,16 +1105,19 @@ func runTestSearchFromMain() {
 
 	for i := 0; i < maxDisplay; i++ {
 		g := groups[i]
-		name := g["normalized_name"]
-		score := g["relevance_score"]
+		name := g["normalized_name"].(string)
+		if len(name) > 49 {
+			name = name[:46] + "..."
+		}
+		rank := g["relevance_rank"]
 		products := g["product_count"]
 
-		scoreStr := "N/A"
-		if score != nil {
-			scoreStr = fmt.Sprintf("%.1f", score)
+		rankStr := "N/A"
+		if rank != nil {
+			rankStr = fmt.Sprintf("#%d", rank.(int)+1) // 1-indexed for display
 		}
 
-		fmt.Printf("%-4d | %-49s | %9s | %v\n", i+1, name, scoreStr, products)
+		fmt.Printf("%-4d | %-49s | %8s | %v\n", i+1, name, rankStr, products)
 	}
 
 	if len(groups) > maxDisplay {

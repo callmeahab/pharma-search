@@ -17,14 +17,20 @@ const Navbar = () => {
   const [urlSearchTerm, setUrlSearchTerm] = useState("");
   const isMobile = useIsMobile();
 
-  // Get search term from URL safely
+  // Get search term from URL safely and listen for popstate (browser back/forward)
   useEffect(() => {
-    try {
-      const params = new URLSearchParams(window.location.search);
-      setUrlSearchTerm(params.get("search") || "");
-    } catch {
-      setUrlSearchTerm("");
-    }
+    const updateFromUrl = () => {
+      try {
+        const params = new URLSearchParams(window.location.search);
+        setUrlSearchTerm(params.get("q") || "");
+      } catch {
+        setUrlSearchTerm("");
+      }
+    };
+
+    updateFromUrl();
+    window.addEventListener("popstate", updateFromUrl);
+    return () => window.removeEventListener("popstate", updateFromUrl);
   }, []);
 
   // Check if user is logged in on component mount
@@ -46,8 +52,6 @@ const Navbar = () => {
 
 
   const handleSearch = (term: string) => {
-    console.log("Search triggered with term:", term);
-
     if (term && term.trim()) {
       trackSearch(term, 0); // Results count will be determined on the main page
 

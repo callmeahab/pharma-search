@@ -160,6 +160,8 @@ type ProductSignature struct {
 }
 
 // GroupKey generates a unique group key for price comparison
+// Note: Quantity is intentionally excluded from groupKey to merge similar products
+// Frontend can filter/sort by quantity from the quantityRange field
 func (e *EnhancedGroupingEngine) GroupKey(signature ProductSignature) string {
 	parts := []string{signature.CoreIngredient}
 
@@ -174,11 +176,34 @@ func (e *EnhancedGroupingEngine) GroupKey(signature ProductSignature) string {
 	}
 
 	// Only include form for products where it matters (liquid vs solid)
-	if signature.Form != "" && e.formMatters(signature.CoreIngredient) {
+	if signature.Form != "" && e.formMatters(signature.CoreIngredient, signature.Form) {
 		parts = append(parts, e.normalizeForm(signature.Form))
 	}
 
+	// Quantity NOT included in groupKey - handled via quantityRange field for filtering
+	// This allows products with same ingredient/dosage/form to be grouped together
+	// even if some titles mention quantity and others don't
+
 	return strings.Join(parts, "_")
+}
+
+// getQuantityRange groups similar quantities together
+func (e *EnhancedGroupingEngine) getQuantityRange(quantity int) string {
+	// Group quantities into standard ranges
+	switch {
+	case quantity <= 15:
+		return "q10-15"
+	case quantity <= 35:
+		return "q30"
+	case quantity <= 70:
+		return "q60"
+	case quantity <= 110:
+		return "q100"
+	case quantity <= 150:
+		return "q120"
+	default:
+		return fmt.Sprintf("q%d", (quantity/50)*50) // Round to nearest 50
+	}
 }
 
 // ExtractSignature extracts a product signature from the title
@@ -281,15 +306,25 @@ func (e *EnhancedGroupingEngine) extractForm(title string) string {
 // extractQuantity extracts the number of units
 func (e *EnhancedGroupingEngine) extractQuantity(title string) int {
 	patterns := []*regexp.Regexp{
-		regexp.MustCompile(`(\d+)\s*(?:kom|pcs?|pieces?|tableta|kapsula|caps?)`),
+		// Common patterns: "30 komada", "100 tableta", "60 kapsula"
+		regexp.MustCompile(`(\d+)\s*(?:komada?|kom\b|pcs?|pieces?|tableta|kapsula|caps?|tbl)\b`),
+		// Patterns like "x30", "x 60"
 		regexp.MustCompile(`\bx\s*(\d+)\b`),
+		// Patterns like "30x", "60x"
 		regexp.MustCompile(`(\d+)x\b`),
+		// Serbian format: "A30", "A60", "A100" (common in pharmacy names)
+		regexp.MustCompile(`\ba(\d+)\b`),
+		// At end of title: "... 30", "... 60", "... 100" (standalone numbers likely quantity)
+		regexp.MustCompile(`\s(\d{2,3})$`),
 	}
 
 	for _, pattern := range patterns {
 		if matches := pattern.FindStringSubmatch(title); len(matches) > 1 {
 			if qty, err := strconv.Atoi(matches[1]); err == nil {
-				return qty
+				// Validate reasonable quantity range (2-500)
+				if qty >= 2 && qty <= 500 {
+					return qty
+				}
 			}
 		}
 	}
@@ -298,9 +333,18 @@ func (e *EnhancedGroupingEngine) extractQuantity(title string) int {
 }
 
 // formMatters determines if form is important for grouping this product type
-func (e *EnhancedGroupingEngine) formMatters(ingredient string) bool {
-	// For most supplements, tablet vs capsule doesn't matter for price comparison
-	// But for topicals, liquids, etc. it does matter
+func (e *EnhancedGroupingEngine) formMatters(ingredient string, form string) bool {
+	// Liquid forms (drops, spray, syrup) should always be separate groups
+	// They have different dosing, usage, and pricing
+	liquidForms := []string{"liquid", "drops", "spray", "syrup"}
+	for _, lf := range liquidForms {
+		if form == lf {
+			return true // Form matters for liquids
+		}
+	}
+
+	// For oral-solid supplements (tablets, capsules), form usually doesn't matter
+	// Tablet vs capsule is interchangeable for price comparison
 	oralSupplements := []string{
 		"vitamin", "mineral", "omega", "protein", "calcium",
 		"magnesium", "zinc", "iron", "selenium",
@@ -308,11 +352,11 @@ func (e *EnhancedGroupingEngine) formMatters(ingredient string) bool {
 
 	for _, supp := range oralSupplements {
 		if strings.Contains(ingredient, supp) {
-			return false // Form doesn't matter
+			return false // Tablet vs capsule doesn't matter
 		}
 	}
 
-	return true // Form matters
+	return true // For other products, form matters
 }
 
 // normalizeForm groups similar forms together

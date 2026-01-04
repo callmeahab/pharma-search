@@ -76,8 +76,6 @@ export default function ResetPasswordPage() {
 
   // Handle email submission
   function onEmailSubmit(values: z.infer<typeof emailSchema>) {
-    console.log("Email for reset:", values.email);
-
     // In a real app, this would call an API to send a reset code
     // For demo purposes, we'll simulate a successful email sending
 
@@ -92,9 +90,6 @@ export default function ResetPasswordPage() {
 
   // Handle verification and password reset
   function onResetSubmit(values: z.infer<typeof resetSchema>) {
-    console.log("Reset data:", values);
-    console.log("Email:", email);
-
     // In a real app, this would call an API to verify the code and update password
     // For demo purposes, we'll simulate a successful password reset
 
