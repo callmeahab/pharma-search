@@ -7,7 +7,6 @@ import {
   BackendProduct,
 } from "@/types/product";
 
-// Client library that proxies all calls to gRPC backend
 
 export interface SearchOptions {
   limit?: number;
@@ -15,11 +14,12 @@ export interface SearchOptions {
   minPrice?: number;
   maxPrice?: number;
   vendorIds?: string[];
-  brandIds?: string[];
+  brandNames?: string[];
+  categories?: string[];
+  forms?: string[];
   searchType?: "auto" | "similarity" | "database";
 }
 
-// Re-export types from types/product.ts for backwards compatibility
 export type { ProductGroup, SearchResult, BackendProduct as Product };
 
 export interface AutocompleteResult {
@@ -44,8 +44,6 @@ export async function searchProducts(
   query: string,
   options?: SearchOptions
 ): Promise<SearchResult> {
-  // Backend returns flat products with group_key
-  // Frontend groups them for display
   const flatResult = await grpcClient.searchProducts(query, options) as FlatSearchResult;
   return convertFlatToGrouped(flatResult);
 }
@@ -55,7 +53,6 @@ export async function searchProductsStreaming(
   onBatch: (groups: ProductGroup[], isComplete: boolean) => void,
   options?: { limit?: number }
 ): Promise<void> {
-  // Streaming search not implemented in Go backend yet, fall back to regular search
   try {
     const result = await searchProducts(query, {
       limit: options?.limit || 50,
@@ -70,14 +67,12 @@ export async function searchAllProducts(
   query: string,
   options?: Omit<SearchOptions, "limit" | "offset">
 ): Promise<SearchResult> {
-  // First, get a small batch to check total count
   const initialResult = await searchProducts(query, {
     ...options,
     limit: 1,
     offset: 0,
   });
 
-  // If total is reasonable, fetch all at once
   if (initialResult.total <= 100) {
     return searchProducts(query, {
       ...options,
@@ -86,7 +81,6 @@ export async function searchAllProducts(
     });
   }
 
-  // For larger result sets, fetch in batches
   const allGroups: ProductGroup[] = [];
   const batchSize = 100;
   let offset = 0;
@@ -101,7 +95,6 @@ export async function searchAllProducts(
     allGroups.push(...batch.groups);
     offset += batchSize;
 
-    // Safety limit to prevent infinite loops
     if (offset > 1000) break;
   }
 
@@ -121,36 +114,28 @@ export async function checkHealth(): Promise<{ status: string }> {
 export async function getFeaturedProducts(
   options?: SearchOptions
 ): Promise<SearchResult> {
-  // Get popular products by searching for common terms
-  const popularTerms = [
-    "vitamin",
-    "omega",
-    "magnesium",
-    "protein",
-    "probiotik",
-    "kreatin",
-    "kolagen",
-  ];
-  const randomTerm =
-    popularTerms[Math.floor(Math.random() * popularTerms.length)];
-
   try {
-    return await searchProducts(randomTerm, {
-      limit: options?.limit || 12,
-      ...options,
-    });
+    const limit = options?.limit || 24;
+    const result = await grpcClient.getFeatured(limit);
+
+    // The backend returns pre-grouped products sorted by vendor count
+    return {
+      groups: result.groups || [],
+      total: result.total || 0,
+      offset: 0,
+      limit: limit,
+    };
   } catch (error) {
-    // Fallback to empty result if search fails
+    console.error("Failed to fetch featured products:", error);
     return {
       groups: [],
       total: 0,
       offset: 0,
-      limit: options?.limit || 12,
+      limit: options?.limit || 24,
     };
   }
 }
 
-// New API functions for backend routes
 
 export interface GroupingStatistics {
   total_products: number;

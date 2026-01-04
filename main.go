@@ -9,13 +9,14 @@ import (
 	"net/http"
 	"net/smtp"
 	"os"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"connectrpc.com/connect"
-	_ "github.com/lib/pq" // PostgreSQL driver
+	_ "github.com/lib/pq"
 	"github.com/rs/cors"
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/h2c"
@@ -27,7 +28,9 @@ import (
 )
 
 type server struct {
-	db *sql.DB
+	db              *sql.DB
+	featuredCache   []FeaturedGroup
+	featuredCacheAt time.Time
 }
 
 func connectDB() (*sql.DB, error) {
@@ -165,37 +168,175 @@ func uniqueStrings(values []string) []string {
 	return out
 }
 
-func normalizeTitleForGrouping(title string) string {
+// Regex patterns for extracting dosage - must have number followed by unit
+var dosagePattern = regexp.MustCompile(`\b(\d+(?:[.,]\d+)?)\s*(mg|mcg|μg|µg|iu|i\.u\.|i\.j\.|ij|ml|l|g)\b`)
+
+// Regex pattern for extracting quantity (count of tablets/capsules)
+// Matches: "30 tableta", "30 mikrotableta", "a30", "x30", "tableta a30"
+var quantityPattern = regexp.MustCompile(`\b[ax]?(\d+)\s*(mikrotablet|mikrokapsul|tab|tabl|tableta|tablete|kaps|kapsula|kapsule|caps|capsule|softgel|gel|komada|kom)\w*\b`)
+var quantitySuffixPattern = regexp.MustCompile(`\b[ax](\d+)\b`)
+
+// extractGroupKey extracts a grouping key from a product title
+// Format: "ingredient dosage quantity" e.g., "vitamin d3 2000 iu 30", "omega 3 1000 mg 60"
+func extractGroupKey(title string) string {
 	t := strings.ToLower(title)
-	noise := []string{"®", "™", "©", ",", ".", "(", ")", "[", "]", "/", "\\"}
+
+	// Clean up common noise - including hyphens and dashes
+	noise := []string{"®", "™", "©", ",", "(", ")", "[", "]", "/", "\\", "_", "-", "–", "—"}
 	for _, n := range noise {
 		t = strings.ReplaceAll(t, n, " ")
 	}
 	t = strings.Join(strings.Fields(t), " ")
+
+	// Extract dosage first (e.g., "2000 iu", "1000 mg")
+	dosage := ""
+	dosageMatch := ""
+	if match := dosagePattern.FindStringSubmatch(t); len(match) >= 3 {
+		amount := match[1]
+		unit := strings.ToLower(match[2])
+		dosageMatch = match[0] // Full match to remove from title
+		// Normalize units
+		switch unit {
+		case "i.u.", "i.j.", "ij":
+			unit = "iu"
+		case "μg", "µg":
+			unit = "mcg"
+		}
+		dosage = amount + " " + unit
+	}
+
+	// Extract quantity (e.g., "30 tableta", "a60", "60 caps")
+	quantity := ""
+	quantityMatch := ""
+	if match := quantityPattern.FindStringSubmatch(t); len(match) >= 2 {
+		quantity = match[1] // Just the number
+		quantityMatch = match[0]
+	} else if match := quantitySuffixPattern.FindStringSubmatch(t); len(match) >= 2 {
+		// Fallback for "a30", "x60" suffix format
+		quantity = match[1]
+		quantityMatch = match[0]
+	}
+
+	// Remove dosage and quantity from title for cleaner ingredient extraction
+	ingredientPart := t
+	if dosageMatch != "" {
+		ingredientPart = strings.Replace(ingredientPart, dosageMatch, " ", 1)
+	}
+	if quantityMatch != "" {
+		ingredientPart = strings.Replace(ingredientPart, quantityMatch, " ", 1)
+	}
+	ingredientPart = strings.Join(strings.Fields(ingredientPart), " ")
+
+	// Words to skip when extracting ingredient
+	skipWords := map[string]bool{
+		"a": true, "za": true, "i": true, "sa": true, "od": true, "u": true,
+		"the": true, "of": true, "with": true, "and": true, "for": true,
+		"kapsule": true, "kapsula": true, "tablete": true, "tableta": true,
+		"mikrotablete": true, "mikrotableta": true, "mikrokapsule": true,
+		"softgel": true, "soft": true, "gel": true, "caps": true, "tab": true, "tbl": true,
+		"iu": true, "mg": true, "ml": true, "mcg": true, "g": true,
+		"sprej": true, "oral": true, "kapi": true, "sirup": true,
+	}
+
+	// Brand names to skip (they come before ingredient)
+	brandWords := map[string]bool{
+		"esi": true, "now": true, "vitabiotics": true, "terranova": true,
+		"bivits": true, "activa": true, "masterteh": true, "multi": true,
+		"essence": true, "food": true, "ultra": true, "plus": true,
+		"detrical": true, "videtril": true, "nutrition": true,
+	}
+
+	words := strings.Fields(ingredientPart)
+	coreWords := make([]string, 0, 4)
+	alphaNumPattern := regexp.MustCompile(`^\d+[a-z]+$|^[a-z]+\d+$`)
+
+	for _, w := range words {
+		// Skip filler and form words
+		if skipWords[w] {
+			continue
+		}
+		// Skip brand words but continue looking
+		if brandWords[w] {
+			continue
+		}
+
+		// Check if previous coreWord is "vitamin" or "omega"
+		isAfterVitaminOrOmega := len(coreWords) > 0 &&
+			(coreWords[len(coreWords)-1] == "vitamin" || coreWords[len(coreWords)-1] == "omega")
+
+		// Skip pure numbers unless after vitamin/omega (to keep "omega 3", "vitamin b12")
+		if _, err := strconv.Atoi(w); err == nil {
+			if isAfterVitaminOrOmega {
+				// Keep it - omega 3, omega 6
+			} else {
+				continue
+			}
+		}
+
+		// Skip numbers with letters like "a30", "30tbl" unless it's like "d3", "b12"
+		if alphaNumPattern.MatchString(w) {
+			if isAfterVitaminOrOmega && len(w) <= 3 {
+				// Keep it - vitamin d3, vitamin b12
+			} else {
+				continue
+			}
+		}
+
+		// Skip single letters unless after vitamin/omega (e.g., vitamin d, vitamin b)
+		if len(w) < 2 {
+			if isAfterVitaminOrOmega {
+				// Keep it - vitamin d, vitamin b
+			} else {
+				continue
+			}
+		}
+
+		coreWords = append(coreWords, w)
+		if len(coreWords) >= 3 {
+			break
+		}
+	}
+
+	ingredient := strings.Join(coreWords, " ")
+
+	// Combine ingredient + dosage + quantity for group key
+	parts := []string{}
+	if ingredient != "" {
+		parts = append(parts, ingredient)
+	}
+	if dosage != "" {
+		parts = append(parts, dosage)
+	}
+	if quantity != "" {
+		parts = append(parts, "x"+quantity)
+	}
+
+	if len(parts) > 0 {
+		return strings.Join(parts, " ")
+	}
+
+	// Last fallback: first 30 chars of normalized title
+	if len(t) > 30 {
+		return t[:30]
+	}
 	return t
 }
 
-// groupingEngine is the shared instance for computing groupKeys at query time
-var groupingEngine = NewEnhancedGroupingEngine()
-
-// computeGroupKey computes groupKey for a product at query time
-// This replaces pre-computed groupKey in the index
-func computeGroupKey(title string) string {
-	signature := groupingEngine.ExtractSignature(title)
-	return groupingEngine.GroupKey(signature)
+func computeGroupKey(normalizedName, title string) string {
+	return extractGroupKey(title)
 }
 
-// enrichProductsWithGroupKey adds computed groupKey to each product
-// Products remain flat - frontend handles grouping
 func enrichProductsWithGroupKey(hits []map[string]interface{}) []map[string]interface{} {
 	products := make([]map[string]interface{}, 0, len(hits))
 
 	for rank, h := range hits {
 		title := getString(h, "title")
-		groupKey := computeGroupKey(title)
+		normalizedName := getString(h, "normalizedName")
+		groupKey := computeGroupKey(normalizedName, title)
 
-		// Extract signature for dosage info
-		signature := groupingEngine.ExtractSignature(title)
+		// Get dosage info from index (pre-computed from ProductStandardization)
+		dosageValue := getFloat(h, "dosageValue")
+		dosageUnit := getString(h, "dosageUnit")
 
 		priceCents := getFloat(h, "price")
 		price := priceCents / 100.0
@@ -211,10 +352,8 @@ func enrichProductsWithGroupKey(hits []map[string]interface{}) []map[string]inte
 			"thumbnail":    getString(h, "thumbnail"),
 			"brand_name":   getString(h, "brand"),
 			"group_key":    groupKey,
-			"dosage_value": signature.DosageAmount,
-			"dosage_unit":  signature.DosageUnit,
-			"form":         signature.Form,
-			"quantity":     signature.Quantity,
+			"dosage_value": dosageValue,
+			"dosage_unit":  dosageUnit,
 			"rank":         rank, // Meilisearch relevance rank
 		}
 
@@ -224,16 +363,13 @@ func enrichProductsWithGroupKey(hits []map[string]interface{}) []map[string]inte
 	return products
 }
 
-// convertHitsToGroups groups products by groupKey (backend grouping for backwards compatibility)
 func convertHitsToGroups(hits []map[string]interface{}, query string, db *sql.DB) []map[string]interface{} {
 	if len(hits) == 0 {
 		return []map[string]interface{}{}
 	}
 
-	// First enrich products with groupKey
 	products := enrichProductsWithGroupKey(hits)
 
-	// Track groups with their first appearance index (Meilisearch rank = relevance)
 	type groupData struct {
 		firstRank int
 		products  []map[string]interface{}
@@ -241,7 +377,6 @@ func convertHitsToGroups(hits []map[string]interface{}, query string, db *sql.DB
 	groupMap := make(map[string]*groupData)
 	groupOrder := make([]string, 0)
 
-	// Group products by computed groupKey
 	for _, p := range products {
 		gid := getString(p, "group_key")
 		rank := int(getFloat(p, "rank"))
@@ -257,19 +392,16 @@ func convertHitsToGroups(hits []map[string]interface{}, query string, db *sql.DB
 		}
 	}
 
-	// Build result groups
 	groups := make([]map[string]interface{}, 0, len(groupMap))
 
 	for _, gid := range groupOrder {
 		gd := groupMap[gid]
 		prods := gd.products
 
-		// Sort products within group by price (lowest first)
 		sort.Slice(prods, func(i, j int) bool {
 			return getFloat(prods[i], "price") < getFloat(prods[j], "price")
 		})
 
-		// Collect prices and vendors
 		prices := make([]float64, 0, len(prods))
 		vendors := make([]string, 0, len(prods))
 		for _, p := range prods {
@@ -307,7 +439,6 @@ func convertHitsToGroups(hits []map[string]interface{}, query string, db *sql.DB
 }
 
 func toStructPB(v interface{}) (*structpb.Struct, error) {
-	// Convert map[string]interface{} to Struct. If not a map, marshal then unmarshal.
 	switch m := v.(type) {
 	case map[string]interface{}:
 		return structpb.NewStruct(m)
@@ -375,14 +506,10 @@ func (s *server) Search(ctx context.Context, req *connect.Request[pb.SearchReque
 		filters["in_stock_only"] = true
 	}
 
-	// Fetch products from Meilisearch
-	// Frontend handles grouping, so we return flat products with group_key
-	// Higher limit = more products = more complete groups
 	limit := int(req.Msg.GetLimit())
 	if limit == 0 {
-		limit = 1000 // Default to 1000 products for frontend grouping
+		limit = 1000
 	}
-	// Cap at 1000 to avoid overwhelming the frontend
 	if limit > 1000 {
 		limit = 1000
 	}
@@ -393,7 +520,6 @@ func (s *server) Search(ctx context.Context, req *connect.Request[pb.SearchReque
 		return nil, err
 	}
 
-	// Enrich products with computed groupKey - frontend will group by this
 	products := enrichProductsWithGroupKey(res.Hits)
 
 	data := map[string]interface{}{
@@ -406,7 +532,6 @@ func (s *server) Search(ctx context.Context, req *connect.Request[pb.SearchReque
 		"facets":             res.Facets,
 	}
 
-	// Ensure data is JSON-serializable by marshaling and unmarshaling
 	jsonBytes, err := json.Marshal(data)
 	if err != nil {
 		log.Printf("JSON marshal error: %v", err)
@@ -435,7 +560,6 @@ func (s *server) SearchGroups(ctx context.Context, req *connect.Request[pb.Searc
 		groupLimit = 20
 	}
 
-	// Fetch up to 1000 products to get enough groups
 	res, err := client.search(req.Msg.GetQ(), nil, 1000, 0)
 	if err != nil {
 		return nil, err
@@ -443,7 +567,6 @@ func (s *server) SearchGroups(ctx context.Context, req *connect.Request[pb.Searc
 
 	allGroups := convertHitsToGroups(res.Hits, req.Msg.GetQ(), s.db)
 
-	// Limit by number of groups
 	paginatedGroups := allGroups
 	if len(allGroups) > groupLimit {
 		paginatedGroups = allGroups[:groupLimit]
@@ -477,16 +600,78 @@ func (s *server) GetFacets(ctx context.Context, req *connect.Request[pb.FacetsRe
 	return connect.NewResponse(&pb.GenericJsonResponse{Data: st}), nil
 }
 
+func (s *server) GetFeatured(ctx context.Context, req *connect.Request[pb.FeaturedRequest]) (*connect.Response[pb.GenericJsonResponse], error) {
+	limit := int(req.Msg.GetLimit())
+	if limit <= 0 {
+		limit = 24
+	}
+
+	// Use cached featured products if available
+	var groups []FeaturedGroup
+	if len(s.featuredCache) > 0 {
+		if limit >= len(s.featuredCache) {
+			groups = s.featuredCache
+		} else {
+			groups = s.featuredCache[:limit]
+		}
+	} else {
+		// Fallback: fetch from database if cache is empty
+		var err error
+		groups, err = s.GetFeaturedProducts(ctx, limit)
+		if err != nil {
+			log.Printf("Error getting featured products: %v", err)
+			data := map[string]interface{}{
+				"groups": []interface{}{},
+				"total":  0,
+				"offset": 0,
+				"limit":  limit,
+			}
+			st, _ := toStructPB(data)
+			return connect.NewResponse(&pb.GenericJsonResponse{Data: st}), nil
+		}
+	}
+
+	// Build response struct
+	type responseData struct {
+		Groups []FeaturedGroup `json:"groups"`
+		Total  int             `json:"total"`
+		Offset int             `json:"offset"`
+		Limit  int             `json:"limit"`
+	}
+
+	resp := responseData{
+		Groups: groups,
+		Total:  len(groups),
+		Offset: 0,
+		Limit:  limit,
+	}
+
+	// Convert via JSON to get proper map[string]interface{}
+	jsonBytes, err := json.Marshal(resp)
+	if err != nil {
+		return nil, err
+	}
+
+	var data map[string]interface{}
+	if err := json.Unmarshal(jsonBytes, &data); err != nil {
+		return nil, err
+	}
+
+	st, err := toStructPB(data)
+	if err != nil {
+		return nil, err
+	}
+	return connect.NewResponse(&pb.GenericJsonResponse{Data: st}), nil
+}
+
 func (s *server) PriceComparison(ctx context.Context, req *connect.Request[pb.PriceComparisonRequest]) (*connect.Response[pb.GenericJsonResponse], error) {
 	client := newMeiliClient()
-	// Fetch more products to get enough groups for comparison
 	res, err := client.search(req.Msg.GetQ(), nil, 500, 0)
 	if err != nil {
 		return nil, err
 	}
 	allGroups := convertHitsToGroups(res.Hits, req.Msg.GetQ(), s.db)
 
-	// Return top 10 groups for price comparison
 	groups := allGroups
 	if len(allGroups) > 10 {
 		groups = allGroups[:10]
@@ -535,7 +720,6 @@ func (s *server) Contact(ctx context.Context, req *connect.Request[pb.ContactReq
 		return connect.NewResponse(&pb.GenericJsonResponse{Data: st}), nil
 	}
 
-	// Compose email
 	from := "Pharmagician <no-reply@pharmagician.rs>"
 	to := []string{contactEmail}
 	subject := fmt.Sprintf("Kontakt forma: %s", req.Msg.GetName())
@@ -544,7 +728,6 @@ func (s *server) Contact(ctx context.Context, req *connect.Request[pb.ContactReq
 	msg := fmt.Sprintf("From: %s\r\nTo: %s\r\nReply-To: %s\r\nSubject: %s\r\n\r\n%s",
 		from, contactEmail, req.Msg.GetEmail(), subject, body)
 
-	// Send email
 	auth := smtp.PlainAuth("", smtpUser, smtpPass, smtpHost)
 	addr := fmt.Sprintf("%s:%s", smtpHost, smtpPort)
 
@@ -576,7 +759,6 @@ func (s *server) ProcessProducts(ctx context.Context, req *connect.Request[pb.Pr
 		batchSize = 100
 	}
 
-	// Select a batch of unprocessed products and lock them to avoid races
 	rows, err := s.db.Query(
 		`SELECT p.id, p.title, p.price, p."vendorId", v.name as vendor_name, p.link, p.thumbnail, b.name as brand_name
 		  FROM "Product" p
@@ -591,7 +773,6 @@ func (s *server) ProcessProducts(ctx context.Context, req *connect.Request[pb.Pr
 	}
 	defer rows.Close()
 
-	// Build meilisearch documents
 	docs := make([]map[string]interface{}, 0, batchSize)
 	ids := make([]string, 0, batchSize)
 	for rows.Next() {
@@ -627,7 +808,6 @@ func (s *server) ProcessProducts(ctx context.Context, req *connect.Request[pb.Pr
 		return nil, err
 	}
 
-	// Index into Meilisearch
 	client := meilisearch.New(os.Getenv("MEILI_URL"), meilisearch.WithAPIKey(os.Getenv("MEILI_API_KEY")))
 	index := client.Index("products")
 	_, _ = client.CreateIndex(&meilisearch.IndexConfig{Uid: "products", PrimaryKey: "id"})
@@ -637,9 +817,7 @@ func (s *server) ProcessProducts(ctx context.Context, req *connect.Request[pb.Pr
 		}
 	}
 
-	// Mark processed
 	if len(ids) > 0 {
-		// Build parameterized IN clause
 		params := make([]interface{}, 0, len(ids)+1)
 		placeholders := make([]string, 0, len(ids))
 		for i, pid := range ids {
@@ -666,17 +844,14 @@ func (s *server) ReprocessAll(ctx context.Context, req *connect.Request[pb.Repro
 		return nil, fmt.Errorf("database not connected")
 	}
 
-	// Reset processedAt
 	if _, err := s.db.Exec(`UPDATE "Product" SET "processedAt" = NULL`); err != nil {
 		return nil, err
 	}
 
-	// Recreate Meilisearch index
 	client := meilisearch.New(os.Getenv("MEILI_URL"), meilisearch.WithAPIKey(os.Getenv("MEILI_API_KEY")))
 	_, _ = client.DeleteIndex("products")
 	_, _ = client.CreateIndex(&meilisearch.IndexConfig{Uid: "products", PrimaryKey: "id"})
 
-	// Rebuild index in batches
 	batch := 1000
 	offset := 0
 	indexed := 0
@@ -810,7 +985,6 @@ func (s *server) RebuildIndex(ctx context.Context, req *connect.Request[pb.Rebui
 	return connect.NewResponse(&pb.GenericJsonResponse{Data: st}), nil
 }
 
-// RebuildIndexWithStandardization rebuilds Meilisearch index using standardized names from ProductStandardization table
 func (s *server) RebuildIndexWithStandardization(ctx context.Context, req *connect.Request[pb.RebuildIndexRequest]) (*connect.Response[pb.GenericJsonResponse], error) {
 	if s.db == nil {
 		return nil, fmt.Errorf("database not connected")
@@ -824,7 +998,6 @@ func (s *server) RebuildIndexWithStandardization(ctx context.Context, req *conne
 	}
 	client := meilisearch.New(meiliURL, meilisearch.WithAPIKey(os.Getenv("MEILI_API_KEY")))
 
-	// Delete existing index and recreate
 	_, _ = client.DeleteIndex("products")
 	_, err := client.CreateIndex(&meilisearch.IndexConfig{Uid: "products", PrimaryKey: "id"})
 	if err != nil {
@@ -833,8 +1006,6 @@ func (s *server) RebuildIndexWithStandardization(ctx context.Context, req *conne
 
 	index := client.Index("products")
 
-	// Configure index settings (best effort, errors ignored)
-	// Note: groupKey not stored in index - computed at query time
 	settings := meilisearch.Settings{
 		SearchableAttributes: []string{"title", "standardizedTitle", "normalizedName", "brand", "vendorName"},
 		FilterableAttributes: []string{"vendorId", "vendorName", "brand", "price", "normalizedName", "dosageUnit"},
@@ -848,7 +1019,6 @@ func (s *server) RebuildIndexWithStandardization(ctx context.Context, req *conne
 	standardized := 0
 
 	for {
-		// Join Product with ProductStandardization to get standardized names
 		rows, err := s.db.Query(`
 			SELECT
 				p.id,
@@ -893,27 +1063,21 @@ func (s *server) RebuildIndexWithStandardization(ctx context.Context, req *conne
 				cents = int(price.Float64 * 100.0)
 			}
 
-			// Use standardized title if available, otherwise use original
 			displayTitle := title
 			if stdTitle.Valid && stdTitle.String != "" {
 				displayTitle = stdTitle.String
 				standardized++
 			}
 
-			// Get brand name from standardization
 			brand := ""
 			if stdBrand.Valid && stdBrand.String != "" {
 				brand = stdBrand.String
 			}
 
-			// Use standardized normalized name if available
 			normName := ""
 			if normalizedName.Valid && normalizedName.String != "" {
 				normName = normalizedName.String
 			}
-
-			// Note: groupKey is computed at query time, not stored in index
-			// This allows grouping logic changes without rebuilding the index
 
 			doc := map[string]interface{}{
 				"id":                "product_" + id,
@@ -1074,12 +1238,11 @@ func runTestSearchFromMain() {
 	fmt.Printf("Meilisearch returned %d hits for query: %s\n", len(res.Hits), query)
 	if len(res.Hits) > 0 {
 		fmt.Println("\nFirst 5 product titles from Meilisearch:")
-		engine := NewEnhancedGroupingEngine()
 		for i := 0; i < 5 && i < len(res.Hits); i++ {
 			title := getString(res.Hits[i], "title")
-			sig := engine.ExtractSignature(title)
-			gid := engine.GroupKey(sig)
-			fmt.Printf("  %d. %s\n     → Group: %s (ingredient: %s)\n", i+1, title, gid, sig.CoreIngredient)
+			normalizedName := getString(res.Hits[i], "normalizedName")
+			groupKey := computeGroupKey(normalizedName, title)
+			fmt.Printf("  %d. %s\n     → Group: %s (normalized: %s)\n", i+1, title, groupKey, normalizedName)
 		}
 	}
 
@@ -1120,6 +1283,27 @@ func runTestSearchFromMain() {
 	fmt.Println()
 }
 
+func (s *server) prefetchFeaturedProducts() {
+	if s.db == nil {
+		log.Println("Skipping featured products prefetch: database not connected")
+		return
+	}
+
+	log.Println("Prefetching featured products...")
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	groups, err := s.GetFeaturedProducts(ctx, 50) // Cache up to 50 groups
+	if err != nil {
+		log.Printf("Warning: Failed to prefetch featured products: %v", err)
+		return
+	}
+
+	s.featuredCache = groups
+	s.featuredCacheAt = time.Now()
+	log.Printf("Cached %d featured product groups", len(groups))
+}
+
 func runConnectServer() {
 	// Connect to database
 	db, err := connectDB()
@@ -1133,6 +1317,10 @@ func runConnectServer() {
 
 	// Create the Connect handler
 	srv := &server{db: db}
+
+	// Prefetch featured products on startup
+	srv.prefetchFeaturedProducts()
+
 	path, handler := pbconnect.NewPharmaAPIHandler(srv)
 
 	// Create HTTP mux

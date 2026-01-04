@@ -8,13 +8,11 @@ import type {
 } from "./gen/service_pb";
 import { SearchOptions } from "./api";
 
-// Create Connect transport (only on client side)
 let transport: ReturnType<typeof createConnectTransport> | null = null;
 let client: ReturnType<typeof createClient<typeof PharmaAPI>> | null = null;
 
 function getClient() {
   if (typeof window === "undefined") {
-    // Server-side rendering, return null
     return null;
   }
 
@@ -36,7 +34,6 @@ function getClient() {
   return client;
 }
 
-// Helper to convert GenericJsonResponse to plain object
 function convertGenericResponse(response: GenericJsonResponse): any {
   if (response.data) {
     return response.data.toJson();
@@ -63,7 +60,6 @@ export class GrpcApiClient {
       limit: limit,
     });
 
-    // Transform the response to match expected format
     const suggestions = response.suggestions.map((suggestion) => ({
       id: suggestion.id || "",
       title: suggestion.title || "",
@@ -93,9 +89,9 @@ export class GrpcApiClient {
       offset: options?.offset || 0,
       minPrice: options?.minPrice || 0,
       maxPrice: options?.maxPrice || 0,
-      brandNames: options?.brandIds || [],
-      categories: [],
-      forms: [],
+      brandNames: options?.brandNames || [],
+      categories: options?.categories || [],
+      forms: options?.forms || [],
       inStockOnly: false,
     });
 
@@ -121,6 +117,15 @@ export class GrpcApiClient {
       throw new Error("Connect client not available on server side");
 
     const response = await connectClient.getFacets({});
+    return convertGenericResponse(response);
+  }
+
+  async getFeatured(limit: number = 24) {
+    const connectClient = getClient();
+    if (!connectClient)
+      throw new Error("Connect client not available on server side");
+
+    const response = await connectClient.getFeatured({ limit });
     return convertGenericResponse(response);
   }
 

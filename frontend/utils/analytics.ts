@@ -38,7 +38,6 @@ export const setCookieConsent = (hasConsent: boolean) => {
     consent_status: 'accepted'
   });
 
-  console.log(`[Analytics] Analytics cookies are enabled (required)`);
 };
 
 // Initialize Google Analytics with your tracking ID
@@ -82,7 +81,6 @@ export const trackPageView = (path: string) => {
     timestamp: timestamp
   });
 
-  console.log(`[Analytics] Page view tracked: ${path} at ${timestamp}`);
 };
 
 // Track search queries
@@ -107,7 +105,6 @@ export const trackSearch = (searchTerm: string, resultCount: number) => {
     event_action: 'Product Search'
   });
 
-  console.log(`[Analytics] Search tracked: "${searchTerm}" with ${resultCount} results at ${timestamp}`);
 };
 
 // Track product clicks
@@ -133,7 +130,6 @@ export const trackProductClick = (productId: string, productName: string, catego
     event_action: 'Product Click'
   });
 
-  console.log(`[Analytics] Product click tracked: ${productName} (ID: ${productId}) at ${timestamp}`);
 };
 
 // Track store link clicks
@@ -160,5 +156,4 @@ export const trackStoreClick = (storeName: string, targetUrl: string, productNam
     event_action: 'Store Link Click'
   });
 
-  console.log(`[Analytics] Store click tracked: ${storeName}${productName ? ` for product ${productName}` : ''} at ${timestamp}`);
 };

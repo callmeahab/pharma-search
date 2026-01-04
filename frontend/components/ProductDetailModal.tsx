@@ -37,7 +37,6 @@ const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
 
   if (!product) return null;
 
-  // Find the lowest and highest prices
   const lowestPrice = Math.min(...product.prices.map((p) => p.price));
   const highestPrice = Math.max(...product.prices.map((p) => p.price));
   const priceDifference = highestPrice - lowestPrice;
@@ -52,7 +51,7 @@ const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-w-6xl max-h-[95vh] overflow-y-auto bg-white dark:bg-gray-900 shadow-2xl drop-shadow-xl rounded-2xl border border-gray-300 dark:border-gray-700 ring-1 ring-black/10">
+      <DialogContent className="max-w-6xl w-[95vw] sm:w-auto max-h-[90vh] sm:max-h-[95vh] overflow-y-auto bg-white dark:bg-gray-900 shadow-2xl drop-shadow-xl rounded-xl sm:rounded-2xl border border-gray-300 dark:border-gray-700 ring-1 ring-black/10 p-4 sm:p-6">
         <div className="absolute right-4 top-4 flex items-center space-x-2">
           <button
             onClick={handleWishClick}
@@ -76,7 +75,7 @@ const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
 
         <DialogHeader>
           <div className="flex flex-col space-y-2">
-            <DialogTitle className="text-2xl font-bold pr-6">
+            <DialogTitle className="text-lg sm:text-2xl font-bold pr-20 sm:pr-24 break-words">
               {product.name}
             </DialogTitle>
             <div>
@@ -102,23 +101,23 @@ const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
                 />
               </div>
 
-              <div className="bg-health-light dark:bg-gray-700 rounded-xl p-4 border border-gray-200 dark:border-gray-700 shadow-sm">
-                <div className="flex justify-between items-center">
-                  <div>
-                    <p className="text-sm text-gray-500 dark:text-gray-300">
+              <div className="bg-health-light dark:bg-gray-700 rounded-xl p-3 sm:p-4 border border-gray-200 dark:border-gray-700 shadow-sm">
+                <div className="flex justify-between items-center gap-2">
+                  <div className="min-w-0">
+                    <p className="text-xs sm:text-sm text-gray-500 dark:text-gray-300">
                       Raspon cena
                     </p>
-                    <div className="text-xl font-bold text-health-primary dark:text-green-400">
+                    <div className="text-base sm:text-xl font-bold text-health-primary dark:text-green-400">
                       {formatPrice(lowestPrice)} - {formatPrice(highestPrice)}
                     </div>
                   </div>
                   {savingsPercentage > 0 && (
-                    <div className="flex flex-col items-center bg-white dark:bg-gray-800 px-4 py-2 rounded-lg shadow-sm">
-                      <div className="text-sm text-gray-500 dark:text-gray-300 flex items-center">
+                    <div className="flex flex-col items-center bg-white dark:bg-gray-800 px-3 sm:px-4 py-2 rounded-lg shadow-sm flex-shrink-0">
+                      <div className="text-xs sm:text-sm text-gray-500 dark:text-gray-300 flex items-center">
                         <Percent size={14} className="mr-1 text-red-500" />
-                        Uštedi do
+                        Uštedi
                       </div>
-                      <div className="text-xl font-bold text-red-500">
+                      <div className="text-lg sm:text-xl font-bold text-red-500">
                         {savingsPercentage}%
                       </div>
                     </div>
@@ -135,10 +134,10 @@ const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
               </div>
             </div>
 
-            <div className="flex flex-col h-full">
+            <div className="flex flex-col">
               <DialogTabs
                 defaultValue="comparison"
-                className="w-full h-full flex flex-col"
+                className="w-full flex flex-col"
               >
                 <DialogTabList className="grid w-full grid-cols-2">
                   <DialogTabTrigger value="comparison">
@@ -148,8 +147,8 @@ const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
                     Istorija cena
                   </DialogTabTrigger>
                 </DialogTabList>
-                <DialogTabContent value="comparison" className="h-[650px]">
-                  <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded-xl shadow-md border border-gray-200 dark:border-gray-700 h-full overflow-y-auto">
+                <DialogTabContent value="comparison">
+                  <div className="bg-gray-50 dark:bg-gray-800 p-3 sm:p-4 rounded-xl shadow-md border border-gray-200 dark:border-gray-700">
                     <PriceComparison
                       prices={product.prices}
                       isInCard={false}
@@ -157,8 +156,8 @@ const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
                     />
                   </div>
                 </DialogTabContent>
-                <DialogTabContent value="history" className="h-[650px]">
-                  <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded-xl shadow-md border border-gray-200 dark:border-gray-700 h-full overflow-y-auto">
+                <DialogTabContent value="history">
+                  <div className="bg-gray-50 dark:bg-gray-800 p-3 sm:p-4 rounded-xl shadow-md border border-gray-200 dark:border-gray-700">
                     <PriceHistoryChart
                       prices={product.prices}
                       isInCard={false}

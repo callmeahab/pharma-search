@@ -32,11 +32,10 @@ const SearchBar: React.FC<SearchBarProps> = ({
   const inputRef = useRef<HTMLInputElement>(null);
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Update search term when initialTerm changes
   useEffect(() => {
     if (initialTerm !== searchTerm) {
       setSearchTerm(initialTerm);
-      setHasUnsearchedChanges(false); // Reset unsearched changes when URL changes
+      setHasUnsearchedChanges(false);
       if (initialTerm.trim() !== "") {
         fetchAutocompleteSuggestions(initialTerm);
       }
@@ -44,7 +43,6 @@ const SearchBar: React.FC<SearchBarProps> = ({
   }, [initialTerm]);
 
   useEffect(() => {
-    // Handle clicks outside the dropdown to close it
     const handleClickOutside = (event: MouseEvent) => {
       if (
         dropdownRef.current &&
@@ -60,7 +58,6 @@ const SearchBar: React.FC<SearchBarProps> = ({
     };
   }, []);
 
-  // Cleanup timeout on unmount
   useEffect(() => {
     return () => {
       if (searchTimeoutRef.current) {
@@ -69,7 +66,6 @@ const SearchBar: React.FC<SearchBarProps> = ({
     };
   }, []);
 
-  // Fetch autocomplete suggestions from API
   const fetchAutocompleteSuggestions = async (value: string) => {
     if (value.trim() === "") {
       setAutocompleteSuggestions([]);
@@ -78,27 +74,23 @@ const SearchBar: React.FC<SearchBarProps> = ({
       return;
     }
 
-    // Clear previous timeout
     if (searchTimeoutRef.current) {
       clearTimeout(searchTimeoutRef.current);
     }
 
-    // Set loading state
     setIsLoadingGroups(true);
-
-    // Use fast autocomplete for dropdown suggestions
     searchTimeoutRef.current = setTimeout(async () => {
       try {
         const results = await autocomplete(value, 8);
         setAutocompleteSuggestions(results.suggestions);
-        setSearchGroups([]); // Clear groups for dropdown
+        setSearchGroups([]);
       } catch (error) {
         console.error("Error fetching autocomplete:", error);
         setAutocompleteSuggestions([]);
       } finally {
         setIsLoadingGroups(false);
       }
-    }, value.length <= 2 ? 400 : 150); // Faster for autocomplete
+    }, value.length <= 2 ? 400 : 150);
   };
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {

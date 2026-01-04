@@ -1,7 +1,6 @@
-import React, { useState } from "react";
+import React from "react";
 import { Price } from "@/types/product";
 import { cn, formatPrice } from "@/lib/utils";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { ExternalLink } from "lucide-react";
 import { trackStoreClick } from "@/utils/analytics";
 import { PriceComparisonProduct } from "@/lib/api";
@@ -19,7 +18,6 @@ export const PriceComparison: React.FC<PriceComparisonProps> = ({
   isInCard = false,
   productName,
 }) => {
-  const [displayLimit, setDisplayLimit] = useState(isInCard ? 5 : 20);
   // Handle both legacy prices and new products format
   const priceData = products
     ? products.map(product => ({
@@ -43,12 +41,6 @@ export const PriceComparison: React.FC<PriceComparisonProps> = ({
   const sortedPrices = [...priceData].sort((a, b) => a.price - b.price);
   const lowestPrice = sortedPrices[0]?.price || 0;
 
-  // For large number of pharmacies, we'll display them in a grid or scrollable area
-  const hasMorePrices = sortedPrices.length > displayLimit;
-  const displayPrices = hasMorePrices
-    ? sortedPrices.slice(0, displayLimit)
-    : sortedPrices;
-
   const handleStoreClick = (price: any) => {
     // Track store link click
     // Milose Markovicu, prosledi link od proizvoda sa BackendProduct u Product, zbog analitike
@@ -61,7 +53,7 @@ export const PriceComparison: React.FC<PriceComparisonProps> = ({
 
   const PriceList = () => (
     <div className="space-y-2">
-      {displayPrices.map((price, index) => (
+      {sortedPrices.map((price, index) => (
         <button
           key={`${price.store}-${index}`}
           onClick={() => handleStoreClick(price)}
@@ -128,29 +120,7 @@ export const PriceComparison: React.FC<PriceComparisonProps> = ({
       <h4 className="text-lg font-medium mb-3 dark:text-gray-200">
         Poređenje cena
       </h4>
-
-      {sortedPrices.length > 10 ? (
-        <ScrollArea
-          className={cn("w-full rounded-md", !isInCard && "h-[500px]")}
-        >
-          <PriceList />
-        </ScrollArea>
-      ) : (
-        <div>
-          <PriceList />
-        </div>
-      )}
-
-      {hasMorePrices && (
-        <div className="text-center mt-4">
-          <button
-            onClick={() => setDisplayLimit(displayLimit + 10)}
-            className="px-4 py-2 bg-health-primary text-white rounded-md hover:bg-health-secondary transition-colors text-sm"
-          >
-            Učitaj još ({priceData.length - displayLimit} preostalo)
-          </button>
-        </div>
-      )}
+      <PriceList />
     </div>
   );
 };

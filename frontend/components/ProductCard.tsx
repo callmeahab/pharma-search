@@ -18,7 +18,6 @@ const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
   const [imageError, setImageError] = useState(false);
   const { isInWishlist, toggleWishlist } = useWishlist();
 
-  // Find the lowest price
   const lowestPrice = Math.min(...product.prices.map((p) => p.price));
   const highestPrice = Math.max(...product.prices.map((p) => p.price));
   const priceDifference = highestPrice - lowestPrice;
@@ -30,15 +29,11 @@ const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
     e.stopPropagation();
     setShowPriceComparison(true);
     setShowModal(true);
-
-    // Track price comparison click
     trackProductClick(product.id, product.name, product.category);
   };
 
   const handleCardClick = () => {
     setShowModal(true);
-
-    // Track product card click
     trackProductClick(product.id, product.name, product.category);
   };
 

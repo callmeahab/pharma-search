@@ -11,6 +11,7 @@ service PharmaAPI {
   rpc Search(SearchRequest) returns (GenericJsonResponse) { }
   rpc SearchGroups(SearchGroupsRequest) returns (GenericJsonResponse) { }
   rpc GetFacets(FacetsRequest) returns (GenericJsonResponse) { }
+  rpc GetFeatured(FeaturedRequest) returns (GenericJsonResponse) { }
   rpc PriceComparison(PriceComparisonRequest) returns (GenericJsonResponse) { }
   rpc Contact(ContactRequest) returns (GenericJsonResponse) { }
   rpc ProcessProducts(ProcessRequest) returns (GenericJsonResponse) { }
@@ -50,3 +51,4 @@ message ProcessRequest { int32 batch_size = 1; }
 message ReprocessAllRequest {}
 message RebuildIndexRequest {}
 message ProcessingAnalysisRequest {}
+message FeaturedRequest { int32 limit = 1; }
