@@ -1,4 +1,11 @@
 import { grpcClient } from "./grpc-client";
+import {
+  convertFlatToGrouped,
+  FlatSearchResult,
+  ProductGroup,
+  SearchResult,
+  BackendProduct,
+} from "@/types/product";
 
 // Client library that proxies all calls to gRPC backend
 
@@ -12,54 +19,8 @@ export interface SearchOptions {
   searchType?: "auto" | "similarity" | "database";
 }
 
-export interface Product {
-  id: string;
-  title: string;
-  price: number;
-  vendor_id: string;
-  vendor_name: string;
-  link: string;
-  thumbnail?: string;
-  brand_name?: string;
-  price_analysis?: {
-    diff_from_avg: number;
-    percentile: number;
-    is_best_deal: boolean;
-    is_worst_deal: boolean;
-  };
-}
-
-export interface ProductGroup {
-  id: string;
-  normalized_name: string;
-  dosage_value?: number;
-  dosage_unit?: string;
-  products: Product[];
-  price_range: {
-    min: number;
-    max: number;
-    avg: number;
-    range?: number;
-    stddev?: number;
-  };
-  vendor_count: number;
-  product_count?: number;
-  price_analysis?: {
-    savings_potential: number;
-    price_variation: number;
-    below_avg_count: number;
-    above_avg_count: number;
-    has_multiple_vendors: boolean;
-  };
-}
-
-export interface SearchResult {
-  groups: ProductGroup[];
-  total: number;
-  offset: number;
-  limit: number;
-  search_type_used?: "auto" | "similarity" | "database";
-}
+// Re-export types from types/product.ts for backwards compatibility
+export type { ProductGroup, SearchResult, BackendProduct as Product };
 
 export interface AutocompleteResult {
   suggestions: {
@@ -83,7 +44,10 @@ export async function searchProducts(
   query: string,
   options?: SearchOptions
 ): Promise<SearchResult> {
-  return grpcClient.searchProducts(query, options);
+  // Backend returns flat products with group_key
+  // Frontend groups them for display
+  const flatResult = await grpcClient.searchProducts(query, options) as FlatSearchResult;
+  return convertFlatToGrouped(flatResult);
 }
 
 export async function searchProductsStreaming(

@@ -66,7 +66,7 @@ func (c *meiliClient) search(query string, filters map[string]interface{}, limit
 	req := &meilisearch.SearchRequest{
 		Limit:  int64(limit),
 		Offset: int64(offset),
-		Facets: []string{"vendorName", "brand", "normalizedName", "dosageUnit", "quantityRange"},
+		Facets: []string{"vendorName", "brand", "normalizedName", "dosageUnit"},
 	}
 	if filters != nil {
 		var parts []string
@@ -175,81 +175,106 @@ func normalizeTitleForGrouping(title string) string {
 	return t
 }
 
+// groupingEngine is the shared instance for computing groupKeys at query time
+var groupingEngine = NewEnhancedGroupingEngine()
+
+// computeGroupKey computes groupKey for a product at query time
+// This replaces pre-computed groupKey in the index
+func computeGroupKey(title string) string {
+	signature := groupingEngine.ExtractSignature(title)
+	return groupingEngine.GroupKey(signature)
+}
+
+// enrichProductsWithGroupKey adds computed groupKey to each product
+// Products remain flat - frontend handles grouping
+func enrichProductsWithGroupKey(hits []map[string]interface{}) []map[string]interface{} {
+	products := make([]map[string]interface{}, 0, len(hits))
+
+	for rank, h := range hits {
+		title := getString(h, "title")
+		groupKey := computeGroupKey(title)
+
+		// Extract signature for dosage info
+		signature := groupingEngine.ExtractSignature(title)
+
+		priceCents := getFloat(h, "price")
+		price := priceCents / 100.0
+		pid := strings.ReplaceAll(getString(h, "id"), "product_", "")
+
+		product := map[string]interface{}{
+			"id":           pid,
+			"title":        title,
+			"price":        price,
+			"vendor_id":    getString(h, "vendorId"),
+			"vendor_name":  getString(h, "vendorName"),
+			"link":         getString(h, "link"),
+			"thumbnail":    getString(h, "thumbnail"),
+			"brand_name":   getString(h, "brand"),
+			"group_key":    groupKey,
+			"dosage_value": signature.DosageAmount,
+			"dosage_unit":  signature.DosageUnit,
+			"form":         signature.Form,
+			"quantity":     signature.Quantity,
+			"rank":         rank, // Meilisearch relevance rank
+		}
+
+		products = append(products, product)
+	}
+
+	return products
+}
+
+// convertHitsToGroups groups products by groupKey (backend grouping for backwards compatibility)
 func convertHitsToGroups(hits []map[string]interface{}, query string, db *sql.DB) []map[string]interface{} {
 	if len(hits) == 0 {
 		return []map[string]interface{}{}
 	}
 
+	// First enrich products with groupKey
+	products := enrichProductsWithGroupKey(hits)
+
 	// Track groups with their first appearance index (Meilisearch rank = relevance)
 	type groupData struct {
-		firstRank int                      // Position of first product in Meilisearch results
-		products  []map[string]interface{} // Products in this group (Meilisearch order)
+		firstRank int
+		products  []map[string]interface{}
 	}
 	groupMap := make(map[string]*groupData)
-	groupOrder := make([]string, 0) // Preserve order of first appearance
+	groupOrder := make([]string, 0)
 
-	// Group products by groupKey from Meilisearch document
-	// Products are already sorted by Meilisearch relevance
-	for rank, h := range hits {
-		// Use pre-computed groupKey from Meilisearch document
-		gid := getString(h, "groupKey")
-
-		// Fallback to normalizedName if groupKey not set
-		if gid == "" {
-			gid = getString(h, "normalizedName")
-		}
-
-		// Last resort: use title-based grouping
-		if gid == "" {
-			title := getString(h, "title")
-			gid = normalizeTitleForGrouping(title)
-		}
+	// Group products by computed groupKey
+	for _, p := range products {
+		gid := getString(p, "group_key")
+		rank := int(getFloat(p, "rank"))
 
 		if existing, ok := groupMap[gid]; ok {
-			existing.products = append(existing.products, h)
+			existing.products = append(existing.products, p)
 		} else {
 			groupMap[gid] = &groupData{
 				firstRank: rank,
-				products:  []map[string]interface{}{h},
+				products:  []map[string]interface{}{p},
 			}
 			groupOrder = append(groupOrder, gid)
 		}
 	}
 
-	// Build result groups, sorted by first appearance (Meilisearch relevance)
+	// Build result groups
 	groups := make([]map[string]interface{}, 0, len(groupMap))
 
 	for _, gid := range groupOrder {
 		gd := groupMap[gid]
-		products := gd.products
+		prods := gd.products
 
 		// Sort products within group by price (lowest first)
-		sort.Slice(products, func(i, j int) bool {
-			return getFloat(products[i], "price") < getFloat(products[j], "price")
+		sort.Slice(prods, func(i, j int) bool {
+			return getFloat(prods[i], "price") < getFloat(prods[j], "price")
 		})
 
-		// Build formatted product list
-		prices := make([]float64, 0, len(products))
-		vendors := make([]string, 0, len(products))
-		formatted := make([]map[string]interface{}, 0, len(products))
-
-		for _, p := range products {
-			priceCents := getFloat(p, "price")
-			price := priceCents / 100.0
-			prices = append(prices, price)
-			vendors = append(vendors, getString(p, "vendorId"))
-			pid := strings.ReplaceAll(getString(p, "id"), "product_", "")
-
-			formatted = append(formatted, map[string]interface{}{
-				"id":          pid,
-				"title":       getString(p, "title"),
-				"price":       price,
-				"vendor_id":   getString(p, "vendorId"),
-				"vendor_name": getString(p, "vendorName"),
-				"link":        getString(p, "link"),
-				"thumbnail":   getString(p, "thumbnail"),
-				"brand_name":  getString(p, "brand"),
-			})
+		// Collect prices and vendors
+		prices := make([]float64, 0, len(prods))
+		vendors := make([]string, 0, len(prods))
+		for _, p := range prods {
+			prices = append(prices, getFloat(p, "price"))
+			vendors = append(vendors, getString(p, "vendor_id"))
 		}
 
 		minP, maxP := 0.0, 0.0
@@ -257,37 +282,27 @@ func convertHitsToGroups(hits []map[string]interface{}, query string, db *sql.DB
 			minP, maxP = prices[0], prices[len(prices)-1]
 		}
 
-		// Use first product's title for display name (most relevant in group)
 		displayName := gid
-		if len(products) > 0 {
-			displayName = getString(products[0], "title")
+		if len(prods) > 0 {
+			displayName = getString(prods[0], "title")
 		}
-
-		// Get dosage info from first product
-		dosageVal := getFloat(products[0], "dosageValue")
-		dosageUnit := getString(products[0], "dosageUnit")
-		quantityRange := getString(products[0], "quantityRange")
 
 		group := map[string]interface{}{
 			"id":              gid,
 			"normalized_name": displayName,
-			"products":        formatted,
+			"products":        prods,
 			"price_range":     map[string]interface{}{"min": minP, "max": maxP},
 			"vendor_count":    len(uniqueStrings(vendors)),
-			"product_count":   len(products),
-			"dosage_value":    dosageVal,
-			"dosage_unit":     dosageUnit,
-			"quantity_range":  quantityRange,
-			"relevance_rank":  gd.firstRank, // Meilisearch rank of best product
+			"product_count":   len(prods),
+			"dosage_value":    getFloat(prods[0], "dosage_value"),
+			"dosage_unit":     getString(prods[0], "dosage_unit"),
+			"relevance_rank":  gd.firstRank,
 		}
 
 		groups = append(groups, group)
 	}
 
-	// Groups are already in Meilisearch relevance order (by first appearance)
-	// No additional sorting needed - trust Meilisearch's ranking
-	_ = query // Query used by Meilisearch, not needed here
-
+	_ = query
 	return groups
 }
 
@@ -360,42 +375,32 @@ func (s *server) Search(ctx context.Context, req *connect.Request[pb.SearchReque
 		filters["in_stock_only"] = true
 	}
 
-	// Fetch more products from Meilisearch to get enough groups
-	// Limit/offset applies to groups, not products
-	groupLimit := int(req.Msg.GetLimit())
-	if groupLimit == 0 {
-		groupLimit = 20
+	// Fetch products from Meilisearch
+	// Frontend handles grouping, so we return flat products with group_key
+	// Higher limit = more products = more complete groups
+	limit := int(req.Msg.GetLimit())
+	if limit == 0 {
+		limit = 1000 // Default to 1000 products for frontend grouping
 	}
-	groupOffset := int(req.Msg.GetOffset())
+	// Cap at 1000 to avoid overwhelming the frontend
+	if limit > 1000 {
+		limit = 1000
+	}
+	offset := int(req.Msg.GetOffset())
 
-	// Fetch up to 1000 products to ensure we have enough groups
-	productFetchLimit := 1000
-	res, err := client.search(req.Msg.GetQ(), filters, productFetchLimit, 0)
+	res, err := client.search(req.Msg.GetQ(), filters, limit, offset)
 	if err != nil {
 		return nil, err
 	}
 
-	// Group all fetched products
-	allGroups := convertHitsToGroups(res.Hits, req.Msg.GetQ(), s.db)
-	totalGroups := len(allGroups)
-
-	// Apply group-level pagination
-	startIdx := groupOffset
-	endIdx := groupOffset + groupLimit
-	if startIdx > totalGroups {
-		startIdx = totalGroups
-	}
-	if endIdx > totalGroups {
-		endIdx = totalGroups
-	}
-
-	paginatedGroups := allGroups[startIdx:endIdx]
+	// Enrich products with computed groupKey - frontend will group by this
+	products := enrichProductsWithGroupKey(res.Hits)
 
 	data := map[string]interface{}{
-		"groups":             paginatedGroups,
-		"total":              totalGroups,
-		"offset":             groupOffset,
-		"limit":              groupLimit,
+		"products":           products,
+		"total":              res.NbHits,
+		"offset":             offset,
+		"limit":              limit,
 		"search_type_used":   "meilisearch",
 		"processing_time_ms": res.ProcessingTimeMs,
 		"facets":             res.Facets,
@@ -829,9 +834,10 @@ func (s *server) RebuildIndexWithStandardization(ctx context.Context, req *conne
 	index := client.Index("products")
 
 	// Configure index settings (best effort, errors ignored)
+	// Note: groupKey not stored in index - computed at query time
 	settings := meilisearch.Settings{
 		SearchableAttributes: []string{"title", "standardizedTitle", "normalizedName", "brand", "vendorName"},
-		FilterableAttributes: []string{"vendorId", "vendorName", "brand", "price", "normalizedName", "dosageUnit", "quantityRange"},
+		FilterableAttributes: []string{"vendorId", "vendorName", "brand", "price", "normalizedName", "dosageUnit"},
 		SortableAttributes:   []string{"price", "title"},
 	}
 	_, _ = index.UpdateSettings(&settings)
@@ -840,7 +846,6 @@ func (s *server) RebuildIndexWithStandardization(ctx context.Context, req *conne
 	offset := 0
 	indexed := 0
 	standardized := 0
-	engine := NewEnhancedGroupingEngine()
 
 	for {
 		// Join Product with ProductStandardization to get standardized names
@@ -901,23 +906,14 @@ func (s *server) RebuildIndexWithStandardization(ctx context.Context, req *conne
 				brand = stdBrand.String
 			}
 
-			// Extract signature for grouping
-			signature := engine.ExtractSignature(title)
-			groupKey := engine.GroupKey(signature)
-
 			// Use standardized normalized name if available
-			normName := groupKey
+			normName := ""
 			if normalizedName.Valid && normalizedName.String != "" {
 				normName = normalizedName.String
 			}
 
-			// Get quantity range
-			quantityRange := ""
-			if quantityValue.Valid && quantityValue.Int64 > 0 {
-				quantityRange = engine.getQuantityRange(int(quantityValue.Int64))
-			} else if signature.Quantity > 0 {
-				quantityRange = engine.getQuantityRange(signature.Quantity)
-			}
+			// Note: groupKey is computed at query time, not stored in index
+			// This allows grouping logic changes without rebuilding the index
 
 			doc := map[string]interface{}{
 				"id":                "product_" + id,
@@ -931,10 +927,8 @@ func (s *server) RebuildIndexWithStandardization(ctx context.Context, req *conne
 				"thumbnail":         thumbnail,
 				"brand":             brand,
 				"normalizedName":    normName,
-				"groupKey":          groupKey,
 				"dosageValue":       dosageValue.Float64,
 				"dosageUnit":        dosageUnit.String,
-				"quantityRange":     quantityRange,
 			}
 
 			docs = append(docs, doc)

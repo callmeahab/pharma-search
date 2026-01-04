@@ -8,7 +8,6 @@ import ProductList from "@/components/ProductList";
 import { searchProducts, getFeaturedProducts, SearchResult } from "@/lib/api";
 import { convertProductGroupToProducts } from "@/types/product";
 import { Spinner } from "@/components/ui/spinner";
-import { SpinnerInline } from "@/components/ui/spinner";
 import Footer from "@/components/Footer";
 
 export const dynamic = 'force-dynamic';
@@ -30,10 +29,8 @@ export default function HomePage() {
   const [searchError, setSearchError] = useState<string | null>(null);
   const [useApiSearch, setUseApiSearch] = useState(false);
 
-  // Pagination state
-  const [currentPage, setCurrentPage] = useState(1);
-  const [isLoadingMore, setIsLoadingMore] = useState(false);
-  const itemsPerPage = 50;
+  // With frontend grouping, we fetch all products at once (up to 1000)
+  // No pagination state needed
 
   // Load featured products when no search is active
   const loadFeaturedProducts = async () => {
@@ -104,10 +101,10 @@ export default function HomePage() {
 
     setIsSearching(true);
     setSearchError(null);
-    setCurrentPage(1);
 
     try {
-      const results = await searchProducts(term, { limit: itemsPerPage });
+      // Don't specify limit - backend defaults to 1000 products, frontend groups them
+      const results = await searchProducts(term);
       setApiSearchResults(results);
       setUseApiSearch(true);
     } catch (error) {
@@ -119,38 +116,8 @@ export default function HomePage() {
     }
   };
 
-  const handleLoadMore = async () => {
-    if (!apiSearchResults || !hasMoreResults) return;
-
-    setIsLoadingMore(true);
-    try {
-      const nextPage = currentPage + 1;
-      const offset = (nextPage - 1) * itemsPerPage;
-
-      const moreResults = await searchProducts(searchTerm, {
-        limit: itemsPerPage,
-        offset,
-      });
-
-      // Merge new results with existing ones
-      setApiSearchResults({
-        ...moreResults,
-        groups: [...apiSearchResults.groups, ...moreResults.groups],
-        offset: 0, // Reset offset since we're merging
-      });
-
-      setCurrentPage(nextPage);
-    } catch (error) {
-      console.error("Load more error:", error);
-      setSearchError("Greška pri učitavanju dodatnih rezultata.");
-    } finally {
-      setIsLoadingMore(false);
-    }
-  };
-
-  // Calculate if there are more results to load
-  const hasMoreResults =
-    apiSearchResults && apiSearchResults.total > apiSearchResults.groups.length;
+  // With frontend grouping, we fetch all products at once (up to 1000)
+  // No pagination needed - all groups are available immediately
 
   const totalProductsShown = apiSearchResults
     ? apiSearchResults.groups.flatMap((group) =>
@@ -201,7 +168,7 @@ export default function HomePage() {
           </div>
 
           {useApiSearch ? (
-            isSearching && !isLoadingMore ? (
+            isSearching ? (
               <div className="flex flex-col items-center justify-center py-16">
                 <Spinner size="xl" text="Pretraživanje proizvoda..." />
                 <p className="mt-4 text-gray-600 dark:text-gray-400 text-center max-w-md">
@@ -214,31 +181,11 @@ export default function HomePage() {
                 <p className="text-sm text-red-500 mt-2">{searchError}</p>
               </div>
             ) : apiSearchResults && apiSearchResults.groups.length > 0 ? (
-              <>
-                <ProductList
-                  products={apiSearchResults.groups.flatMap((group) =>
-                    convertProductGroupToProducts(group)
-                  )}
-                />
-
-                {/* Load More Button */}
-                {hasMoreResults && (
-                  <div className="mt-8 text-center">
-                    <button
-                      onClick={handleLoadMore}
-                      disabled={isLoadingMore}
-                      className="px-6 py-3 bg-health-blue text-white rounded-md hover:bg-health-purple transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      {isLoadingMore ? (
-                        <SpinnerInline size="sm" text="Učitavanje..." />
-                      ) : (
-                        `Učitaj još (${apiSearchResults.total - totalProductsShown
-                        } preostalo)`
-                      )}
-                    </button>
-                  </div>
+              <ProductList
+                products={apiSearchResults.groups.flatMap((group) =>
+                  convertProductGroupToProducts(group)
                 )}
-              </>
+              />
             ) : (
               <div className="text-center py-12">
                 <p className="text-lg text-gray-600 dark:text-gray-400">

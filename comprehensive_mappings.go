@@ -358,10 +358,11 @@ func BuildActiveIngredientMap() map[string][]string {
 		},
 
 		// Vitamin D (944 products combined)
+		// Note: "d3" and "d 3" removed - too generic, causes false matches (e.g., "od 3" in Serbian)
 		"vitamin_d": {
 			"vitamin d3", "vitamin d 3", "vitamin d-3", "vitamind3",
-			"vitamin d", "cholecalciferol", "d3", "d 3",
-			"holekalciferol",
+			"vitamin d", "cholecalciferol", "vit d", "vit. d",
+			"holekalciferol", "devitin", "vigantol", "d3 vitamin",
 		},
 
 		// BCAA (489 products)
