@@ -27,8 +27,8 @@ upstream nextjs_backend {
     keepalive 32;
 }
 
-upstream go_backend {
-    server 127.0.0.1:8080;
+upstream connect_backend {
+    server 127.0.0.1:50051;
     keepalive 32;
 }
 
@@ -74,48 +74,36 @@ server {
         try_files \$uri =404;
     }
 
-    # gRPC-Web routes (proxy to grpcwebproxy)
-    location ~ ^/(service\.PharmaAPI|grpc\.|.*\.PharmaAPI)/ {
+    # ConnectRPC routes (proxy to Go backend on port 50051)
+    location /service.PharmaAPI/ {
         limit_req zone=api burst=20 nodelay;
-        
-        proxy_pass http://127.0.0.1:8080;
+
+        proxy_pass http://connect_backend;
         proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection 'upgrade';
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_cache_bypass $http_upgrade;
-        
-        # gRPC-Web specific headers
-        proxy_set_header Content-Type $content_type;
-        proxy_set_header TE trailers;
-        add_header Access-Control-Expose-Headers "grpc-status,grpc-message,content-type";
-        add_header Access-Control-Allow-Headers "content-type,x-grpc-web,x-user-agent";
-        add_header Access-Control-Allow-Methods "POST,OPTIONS";
-        
+        proxy_set_header Connect-Protocol-Version 1;
+
+        # CORS headers
+        add_header Access-Control-Allow-Origin "*" always;
+        add_header Access-Control-Allow-Methods "GET, POST, OPTIONS" always;
+        add_header Access-Control-Allow-Headers "Content-Type, Connect-Protocol-Version" always;
+
         # Handle preflight requests
         if ($request_method = 'OPTIONS') {
-            add_header Access-Control-Allow-Origin $http_origin;
-            add_header Access-Control-Allow-Methods "POST,OPTIONS";
-            add_header Access-Control-Allow-Headers "content-type,x-grpc-web,x-user-agent";
+            add_header Access-Control-Allow-Origin "*";
+            add_header Access-Control-Allow-Methods "GET, POST, OPTIONS";
+            add_header Access-Control-Allow-Headers "Content-Type, Connect-Protocol-Version";
             add_header Access-Control-Max-Age 86400;
             return 204;
         }
-        
-        # Disable compression and buffering for grpc-web binary frames
-        gzip off;
-        proxy_buffering off;
-        proxy_set_header Accept-Encoding identity;
-        proxy_request_buffering off;
-        
+
         # Timeouts
         proxy_connect_timeout 60s;
         proxy_send_timeout 60s;
         proxy_read_timeout 60s;
-        
-        # Buffer settings (disabled for gRPC-Web)
     }
 
 

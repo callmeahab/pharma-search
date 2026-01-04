@@ -1,0 +1,8 @@
+version: v2
+plugins:
+  - local: ./node_modules/.bin/protoc-gen-es
+    out: lib/gen
+    opt: target=ts
+  - local: ./node_modules/.bin/protoc-gen-connect-es
+    out: lib/gen
+    opt: target=ts

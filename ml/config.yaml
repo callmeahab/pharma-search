@@ -1,0 +1,39 @@
+# ML Extraction Configuration
+
+# Model settings
+model:
+  path: models/dosage_ner
+  base_model: xx_ent_wiki_sm  # Multilingual spaCy model
+
+# Training settings
+training:
+  iterations: 30
+  dropout: 0.35
+  batch_size_min: 4
+  batch_size_max: 32
+
+# Extraction settings
+extraction:
+  confidence_threshold: 0.85
+  batch_size: 500
+  max_products_per_run: 10000
+
+# Entity labels
+entities:
+  - DOSAGE      # e.g., "500mg", "100mg/5ml"
+  - BRAND       # e.g., "Brufen", "Paracetamol"
+  - FORM        # e.g., "tablete", "sirup", "kapsule"
+  - VOLUME      # e.g., "100ml", "500ml"
+
+# Unit normalization
+unit_normalization:
+  мг: mg
+  г: g
+  мкг: mcg
+  μg: mcg
+  мл: ml
+  л: l
+  ме: iu
+
+# Cron schedule (for reference)
+# Run every 6 hours: 0 */6 * * * cd /path/to/ml && python3 batch_processor.py

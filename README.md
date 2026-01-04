@@ -1,95 +1,176 @@
-# Pharma Search - Pharmaceutical Product Search System
+# Pharma Search
 
-A full-stack application for searching and comparing pharmaceutical product prices with intelligent normalization for Serbian language support.
+Pharmaceutical product price comparison platform for Serbia. Aggregates prices from 80+ pharmacies and supplement stores with intelligent product grouping.
 
-## Features
+## Architecture
 
-- **Intelligent Product Normalization**: Handles Serbian/English mixed text, extracts dosages, quantities, and brands
-- **Semantic Search**: Uses multilingual embeddings for finding similar products
-- **Fuzzy Matching**: Handles typos and variations in product names
-- **Product Grouping**: Groups similar products for easy price comparison
-- **Real-time Search**: Fast API with pre-built search indexes
+```
+┌─────────────┐     ┌─────────────────┐     ┌─────────────┐
+│   Next.js   │────▶│  Go + ConnectRPC │────▶│ PostgreSQL  │
+│  Frontend   │     │     Backend      │     │             │
+└─────────────┘     └────────┬─────────┘     └─────────────┘
+                             │
+                             ▼
+                    ┌─────────────────┐
+                    │   Meilisearch   │
+                    │  (Search Index) │
+                    └─────────────────┘
+```
 
 ## Tech Stack
 
-- **Backend**: Python 3.12, FastAPI, PostgreSQL, Sentence Transformers, FAISS
-- **Frontend**: Next.js 15 with React 19 (minimal implementation)
+| Component | Technology |
+|-----------|------------|
+| Frontend | Next.js 15, React 19, TailwindCSS, shadcn/ui |
+| Backend | Go 1.24, ConnectRPC |
+| Database | PostgreSQL 16 |
+| Search | Meilisearch |
+| Scrapers | Puppeteer, Bun |
+| ML | Python 3.12, spaCy |
 
-## Setup
+## Local Development
 
 ### Prerequisites
 
-- Docker and Docker Compose
-- Python 3.12+
-- Node.js 22+
+- VS Code with Dev Containers extension
+- Docker Desktop
 
-### Quick Start backend ./start-grpc.sh
-### Quick Start frontend bun dev
-### Quick Start db setup:
-1. dropdb pharmagician
-2. createdb pharmagician
-3. psql pharmagician < schema.sql
-4. psql pharmagician < seed.sql
-###
-1. Clone the repository
-2. Create `.env` files in both backend and frontend directories
-3. Run with Docker Compose:
+### Quick Start
 
-\`\`\`bash
-docker-compose up
-\`\`\`
+1. Open project in VS Code
+2. Click "Reopen in Container" when prompted
+3. Wait for setup to complete
 
-4. Process products:
+The devcontainer automatically:
+- Starts PostgreSQL and Meilisearch
+- Applies database migrations
+- Installs all dependencies
 
-\`\`\`bash
-docker-compose exec backend python scripts/process_products.py
-\`\`\`
+### Running Services
 
-5. Access the application:
-   - Frontend: http://localhost:3000
-   - API: http://localhost:8000/docs
-   -
+```bash
+# Frontend (port 3000)
+cd frontend && bun dev
 
+# Backend (port 50051)
+go run .
 
-### Manual Setup
+# Scrapers
+cd scrapers && bun start
+```
 
-#### Backend
+## Project Structure
 
-\`\`\`bash
-cd backend
+```
+pharma-search/
+├── main.go            # Go API server entry point
+├── gen/               # Generated protobuf code
+├── proto/             # Protocol buffer definitions
+├── frontend/          # Next.js app
+│   ├── app/           # App router pages
+│   ├── components/    # React components
+│   └── lib/           # Utilities, gRPC client
+├── scrapers/          # Price scrapers
+├── ml/                # ML extraction pipeline
+├── migrations/        # SQL migrations
+│   └── seed/          # Seed data
+└── deploy/            # Server deployment scripts
+```
+
+## Database
+
+Four core tables:
+
+| Table | Purpose |
+|-------|---------|
+| Vendor | Pharmacy/store metadata |
+| Product | Scraped products with prices |
+| ProductGroup | Grouped similar products |
+| ProductStandardization | ML-extracted attributes |
+
+### Migrations
+
+```bash
+# Apply migrations (in devcontainer)
+for f in migrations/*.sql; do psql -d pharma_search -f "$f"; done
+
+# Seed data
+psql -d pharma_search -f migrations/seed/vendors.sql
+```
+
+## API
+
+ConnectRPC endpoints on port 50051:
+
+| Method | Description |
+|--------|-------------|
+| `Search` | Full-text product search via Meilisearch |
+| `GetProductGroups` | Retrieve grouped products |
+| `GetVendors` | List all vendors |
+
+### Generating Protobuf Code
+
+```bash
+# Frontend (TypeScript)
+cd frontend && npx buf generate
+
+# Backend (Go)
+buf generate proto
+```
+
+## ML Pipeline
+
+Extracts structured data from product titles:
+
+```
+Input:  "VITAMIN D3 2000IU 60 KAPSULA"
+Output: { name: "Vitamin D3", dosage: 2000, unit: "IU", quantity: 60, form: "kapsula" }
+```
+
+### Training
+
+```bash
+cd ml
+python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-python scripts/process_products.py
-uvicorn src.api:app --reload
-\`\`\`
+python train_ner.py
+```
 
-#### Frontend
+### Batch Processing
 
-\`\`\`bash
-cd frontend
-npm install
-npm run dev
-\`\`\`
+```bash
+python batch_processor.py  # Processes new products
+```
 
-## API Endpoints
+## Deployment
 
-- `GET /api/search` - Search products
-  - Query params: `q` (required), `limit`, `offset`, `min_price`, `max_price`
-- `POST /api/process` - Trigger product processing
+Server deployment scripts in `deploy/`:
 
-## Product Processing
+```bash
+# Full deployment
+./deploy/01-system-setup.sh      # System packages
+./deploy/02-postgresql-setup.sh  # Database
+./deploy/02a-apply-migrations.sh # Migrations
+./deploy/03-app-setup.sh         # Go backend
+./deploy/04-nginx-setup.sh       # Reverse proxy
+```
 
-The system processes products through several steps:
+## Environment Variables
 
-1. **Text Normalization**: Cleans and standardizes product names
-2. **Attribute Extraction**: Extracts brand, dosage, quantity, form
-3. **Group Creation**: Groups similar products together
-4. **Search Index**: Builds semantic and fuzzy search indexes
+### Backend (.env)
 
-## Examples
+```bash
+DATABASE_URL=postgresql://user:pass@localhost:5432/pharma_search
+MEILI_URL=http://localhost:7700
+MEILI_API_KEY=your_key
+```
 
-Search queries that work well:
+### Frontend (.env.local)
 
-- "vitamin d" - finds all Vitamin D variants
-- "omega 3" - finds all Omega-3 products
-- "креатин" - Serbian search works too
-- "whey protein 2kg" - specific searches with attributes
+```bash
+NEXT_PUBLIC_API_URL=http://localhost:50051
+```
+
+## License
+
+Private - All rights reserved

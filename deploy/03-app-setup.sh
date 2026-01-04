@@ -117,19 +117,19 @@ export NODE_OPTIONS="--max_old_space_size=512"
 bun run build
 
 # Setup Backend
-echo "🔨 Setting up Backend (Go gRPC)..."
-cd "$APP_DIR/go-backend"
+echo "🔨 Setting up Backend (Go ConnectRPC)..."
+cd "$APP_DIR"
 
 # Install Go if not installed
 if ! command -v go &> /dev/null; then
     echo "📦 Installing Go..."
     cd /tmp
-    wget https://go.dev/dl/go1.22.3.linux-amd64.tar.gz
+    wget https://go.dev/dl/go1.24.0.linux-amd64.tar.gz
     sudo rm -rf /usr/local/go
-    sudo tar -C /usr/local -xzf go1.22.3.linux-amd64.tar.gz
+    sudo tar -C /usr/local -xzf go1.24.0.linux-amd64.tar.gz
     echo 'export PATH=$PATH:/usr/local/go/bin' >> /root/.bashrc
     export PATH=$PATH:/usr/local/go/bin
-    cd "$APP_DIR/go-backend"
+    cd "$APP_DIR"
 fi
 
 # Install Go dependencies and build
@@ -155,6 +155,5 @@ fi
 
 echo "✅ Application setup completed successfully!"
 echo "🔄 Next steps:"
-echo "  1. Import database schema if needed"
-echo "  2. Configure Nginx with 04-nginx-setup.sh"
-echo "  3. Setup PM2 services with 05-pm2-setup.sh"
+echo "  1. Configure Nginx with 04-nginx-setup.sh"
+echo "  2. Setup PM2 services with 05-pm2-setup.sh"

@@ -477,8 +477,8 @@ def main():
     )
     parser.add_argument(
         '--output',
-        default='go-backend/comprehensive_mappings.go',
-        help='Output Go file path (default: go-backend/comprehensive_mappings.go)'
+        default='comprehensive_mappings.go',
+        help='Output Go file path (default: comprehensive_mappings.go)'
     )
     parser.add_argument(
         '--min-brand-count',
@@ -508,7 +508,7 @@ def main():
     print(f"\n✅ Done! Mappings updated in {output_file}")
     print(f"\n💡 Next steps:")
     print(f"  1. Review the generated mappings")
-    print(f"  2. Test with: cd go-backend && go run test_grouping.go enhanced_grouping.go comprehensive_mappings.go")
+    print(f"  2. Test with: go run . test-search 'vitamin d'")
     print(f"  3. Commit the updated mappings")
 
 

@@ -9,16 +9,16 @@
     "dedupe": "bun deleteDuplicateProducts.ts"
   },
   "dependencies": {
-    "dotenv": "^17.2.1",
+    "dotenv": "^17.2.3",
     "pg": "^8.16.3",
-    "puppeteer": "^24.11.1",
+    "puppeteer": "^24.34.0",
     "puppeteer-extra": "^3.3.6",
     "puppeteer-extra-plugin-stealth": "^2.11.2",
-    "tesseract.js": "^6.0.1"
+    "tesseract.js": "^7.0.0"
   },
   "devDependencies": {
-    "@types/node": "^22.15.34",
+    "@types/node": "^25.0.3",
     "@types/pg": "^8.15.5",
-    "typescript": "^5.8.3"
+    "typescript": "^5.9.3"
   }
 }

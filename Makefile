@@ -21,8 +21,7 @@ update-mappings:
 # Test grouping with current mappings
 test-grouping:
 	@echo "🧪 Testing product grouping..."
-	@cd go-backend && go run test_grouping_example.go.txt enhanced_grouping.go comprehensive_mappings.go 2>/dev/null || \
-	 (echo "⚠️  Standalone test not available. Use 'make build && ./go-backend/pharma-server' to test integration." && exit 1)
+	@go run . test-search "vitamin d" || echo "⚠️ Test failed"
 
 # Update and test (recommended workflow)
 update-and-test: update-mappings test-grouping
@@ -30,8 +29,8 @@ update-and-test: update-mappings test-grouping
 	@echo "✅ Update and test complete!"
 	@echo ""
 	@echo "📝 Next steps:"
-	@echo "  1. Review changes: git diff go-backend/comprehensive_mappings.go"
-	@echo "  2. If good, commit: git add go-backend/comprehensive_mappings.go && git commit -m 'Update mappings'"
+	@echo "  1. Review changes: git diff comprehensive_mappings.go"
+	@echo "  2. If good, commit: git add comprehensive_mappings.go && git commit -m 'Update mappings'"
 	@echo "  3. Deploy your changes"
 
 # Clean temporary files
@@ -40,54 +39,41 @@ clean:
 	rm -f /tmp/variations_output.txt
 	rm -f /tmp/extract_all_variations.py
 	rm -f /tmp/analyze_products.py
+	rm -f pharma-search
 	@echo "✅ Clean complete!"
-
-# Advanced: Update with custom parameters
-update-strict:
-	@echo "🔄 Updating mappings with stricter brand filtering..."
-	python3 scripts/update_mappings.py --min-brand-count 20
-
-update-lenient:
-	@echo "🔄 Updating mappings with lenient brand filtering..."
-	python3 scripts/update_mappings.py --min-brand-count 5
 
 # Development helpers
 dev-test:
 	@echo "🧪 Running development tests..."
-	cd go-backend && go test ./...
+	go test ./...
 
 fmt:
 	@echo "📝 Formatting Go code..."
-	cd go-backend && go fmt ./...
+	go fmt ./...
 
 # Build backend
 build:
 	@echo "🔨 Building backend..."
-	cd go-backend && go build -o pharma-server
+	go build -o pharma-server
 
-# Process products with enhanced grouping
-process:
-	@echo "🔄 Processing products with enhanced grouping..."
-	cd go-backend && go run . process
-
-# Index products to Meilisearch
-index:
-	@echo "📊 Indexing products to Meilisearch..."
-	cd go-backend && go run . index
+# Generate protobuf code
+generate:
+	@echo "🔧 Generating protobuf code..."
+	buf generate proto
 
 # Integration test (requires backend running)
 integration-test:
 	@echo "🌐 Testing grouping via API..."
-	@curl -s "http://localhost:8080/api/search?q=vitamin+d+2000" | jq '.groups[] | {id, product_count, vendor_count}' || echo "⚠️ Backend not running or jq not installed"
+	@curl -s "http://localhost:50051/service.PharmaAPI/Search" -H "Content-Type: application/json" -d '{"q":"vitamin d"}' | jq '.data.groups[] | {id, product_count, vendor_count}' || echo "⚠️ Backend not running or jq not installed"
 
 # Test search relevance (direct CLI test)
 test-search:
 	@echo "🔍 Testing search relevance..."
-	@cd go-backend && go run . test-search "$(QUERY)"
+	@go run . test-search "$(QUERY)"
 
 # Quick search examples
 test-v-vein:
-	@cd go-backend && go run . test-search "v-vein"
+	@go run . test-search "v-vein"
 
 test-omega:
-	@cd go-backend && go run . test-search "omega 3"
+	@go run . test-search "omega 3"

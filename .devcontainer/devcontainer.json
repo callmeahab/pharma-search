@@ -1,0 +1,78 @@
+{
+  "name": "Pharma Search Dev",
+  "dockerComposeFile": "docker-compose.yml",
+  "service": "app",
+  "workspaceFolder": "/workspace",
+
+  "features": {
+    "ghcr.io/devcontainers/features/go:1": {
+      "version": "1.24"
+    },
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "22"
+    },
+    "ghcr.io/devcontainers/features/python:1": {
+      "version": "3.12"
+    },
+    "ghcr.io/oven-sh/bun-feature:1": {
+      "version": "latest"
+    },
+    "ghcr.io/devcontainers/features/git:1": {}
+  },
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "golang.go",
+        "ms-vscode.vscode-typescript-next",
+        "bradlc.vscode-tailwindcss",
+        "esbenp.prettier-vscode",
+        "dbaeumer.vscode-eslint",
+        "mtxr.sqltools",
+        "mtxr.sqltools-driver-pg",
+        "bufbuild.vscode-buf",
+        "humao.rest-client",
+        "ms-python.python",
+        "ms-python.vscode-pylance"
+      ],
+      "settings": {
+        "go.toolsManagement.autoUpdate": true,
+        "go.useLanguageServer": true,
+        "go.lintTool": "golangci-lint",
+        "editor.formatOnSave": true,
+        "editor.defaultFormatter": "esbenp.prettier-vscode",
+        "[go]": {
+          "editor.defaultFormatter": "golang.go"
+        },
+        "sqltools.connections": [
+          {
+            "name": "Local PostgreSQL",
+            "driver": "PostgreSQL",
+            "server": "db",
+            "port": 5432,
+            "database": "pharma_search",
+            "username": "postgres",
+            "password": "postgres"
+          }
+        ]
+      }
+    }
+  },
+
+  "forwardPorts": [3000, 8080, 50051, 5432, 7700],
+
+  "portsAttributes": {
+    "3000": { "label": "Frontend (Next.js)" },
+    "50051": { "label": "Backend (ConnectRPC)" },
+    "5432": { "label": "PostgreSQL" },
+    "7700": { "label": "Meilisearch" }
+  },
+
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
+
+  "remoteEnv": {
+    "DATABASE_URL": "postgresql://postgres:postgres@db:5432/pharma_search",
+    "MEILI_URL": "http://meilisearch:7700",
+    "MEILI_API_KEY": ""
+  }
+}

@@ -41,8 +41,8 @@ module.exports = {
     },
     {
       name: 'pharma-go-backend',
-      cwd: '$APP_DIR/go-backend',
-      script: '$APP_DIR/go-backend/pharma-server',
+      cwd: '$APP_DIR',
+      script: '$APP_DIR/pharma-server',
       instances: 1,
       exec_mode: 'fork',
       interpreter: 'none',

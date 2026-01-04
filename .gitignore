@@ -47,3 +47,23 @@ logs/
 .dockerignore 
 
 scrapers_logs/
+
+# Large data files
+Aposteka_processed.xlsx
+*.csv
+
+# Generated protobuf code (regenerated via buf generate)
+frontend/lib/gen/
+gen/
+
+# Go build artifacts
+pharma-search
+
+# ML models and training data (generated/trained locally)
+ml/models/
+ml/training_data.json
+ml/*.log
+ml/.venv/
+
+# Claude
+.claude
