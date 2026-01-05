@@ -4,8 +4,84 @@ import { PharmaAPI } from "./gen/service_connect";
 import type {
   GenericJsonResponse,
   HealthResponse,
+  ProductGroupChunk,
+  ProductGroup as PbProductGroup,
+  Product as PbProduct,
 } from "./gen/service_pb";
 import { SearchOptions } from "./api";
+import { ProductGroup, BackendProduct } from "@/types/product";
+
+export interface StreamingSearchResult {
+  groups: ProductGroup[];
+  totalProducts: number;
+  totalGroups: number;
+  searchTypeUsed: string;
+  facets: Record<string, Record<string, number>>;
+  isComplete: boolean;
+}
+
+function convertPbProductToBackend(p: PbProduct): BackendProduct {
+  return {
+    id: p.id,
+    title: p.title,
+    price: p.price,
+    vendor_id: p.vendorId,
+    vendor_name: p.vendorName,
+    link: p.link,
+    thumbnail: p.thumbnail,
+    brand_name: p.brandName,
+    group_key: p.groupKey,
+    dosage_value: p.dosageValue,
+    dosage_unit: p.dosageUnit,
+    form: p.form,
+    quantity: p.quantity,
+    rank: p.rank,
+  };
+}
+
+function convertPbGroupToProductGroup(g: PbProductGroup, index: number): ProductGroup {
+  const products = g.products.map(convertPbProductToBackend);
+  return {
+    id: `${g.id}-${index}`,
+    normalized_name: g.normalizedName,
+    products,
+    price_range: {
+      min: g.priceRange?.min || 0,
+      max: g.priceRange?.max || 0,
+      avg: g.priceRange?.avg || 0,
+    },
+    vendor_count: g.vendorCount,
+    product_count: g.productCount,
+    dosage_value: g.dosageValue,
+    dosage_unit: g.dosageUnit,
+  };
+}
+
+function convertChunkToResult(chunk: ProductGroupChunk): StreamingSearchResult {
+  const groups = chunk.groups.map((g, i) => convertPbGroupToProductGroup(g, i));
+
+  // Convert facets from proto format to our format
+  const facets: Record<string, Record<string, number>> = {};
+  if (chunk.metadata?.facets) {
+    for (const [key, facetValues] of Object.entries(chunk.metadata.facets)) {
+      if (facetValues.values) {
+        facets[key] = {};
+        for (const [k, v] of Object.entries(facetValues.values)) {
+          facets[key][k] = v;
+        }
+      }
+    }
+  }
+
+  return {
+    groups,
+    totalProducts: chunk.metadata?.totalProducts || 0,
+    totalGroups: chunk.metadata?.totalGroups || 0,
+    searchTypeUsed: chunk.metadata?.searchTypeUsed || "",
+    facets,
+    isComplete: chunk.isComplete,
+  };
+}
 
 let transport: ReturnType<typeof createConnectTransport> | null = null;
 let client: ReturnType<typeof createClient<typeof PharmaAPI>> | null = null;
@@ -85,7 +161,7 @@ export class GrpcApiClient {
 
     const response = await connectClient.search({
       q: query,
-      limit: options?.limit || 100,
+      limit: options?.limit || 1000,
       offset: options?.offset || 0,
       minPrice: options?.minPrice || 0,
       maxPrice: options?.maxPrice || 0,
@@ -109,6 +185,78 @@ export class GrpcApiClient {
     });
 
     return convertGenericResponse(response);
+  }
+
+  async searchGroupsStream(
+    query: string,
+    onChunk: (result: StreamingSearchResult) => void,
+    options?: { offset?: number; limit?: number }
+  ): Promise<StreamingSearchResult> {
+    const connectClient = getClient();
+    if (!connectClient)
+      throw new Error("Connect client not available on server side");
+
+    let finalResult: StreamingSearchResult = {
+      groups: [],
+      totalProducts: 0,
+      totalGroups: 0,
+      searchTypeUsed: "",
+      facets: {},
+      isComplete: false,
+    };
+
+    const stream = connectClient.searchGroupsStream({
+      q: query,
+      offset: options?.offset || 0,
+      limit: options?.limit || 24,
+    });
+
+    for await (const chunk of stream) {
+      const result = convertChunkToResult(chunk);
+
+      if (chunk.isComplete) {
+        finalResult = result;
+      } else {
+        // Partial chunk - show early results
+        finalResult = result;
+      }
+
+      onChunk(finalResult);
+    }
+
+    return finalResult;
+  }
+
+  // Simple paginated fetch without streaming callbacks
+  async fetchGroupsPage(
+    query: string,
+    offset: number,
+    limit: number
+  ): Promise<StreamingSearchResult> {
+    const connectClient = getClient();
+    if (!connectClient)
+      throw new Error("Connect client not available on server side");
+
+    const stream = connectClient.searchGroupsStream({
+      q: query,
+      offset,
+      limit,
+    });
+
+    let result: StreamingSearchResult = {
+      groups: [],
+      totalProducts: 0,
+      totalGroups: 0,
+      searchTypeUsed: "",
+      facets: {},
+      isComplete: false,
+    };
+
+    for await (const chunk of stream) {
+      result = convertChunkToResult(chunk);
+    }
+
+    return result;
   }
 
   async getFacets() {

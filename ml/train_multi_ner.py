@@ -142,9 +142,15 @@ def load_data_from_xlsx() -> pd.DataFrame:
     return df
 
 
-def find_dosage_spans(text: str, dosage_value: float, dosage_unit: str) -> List[Tuple[int, int, str]]:
+def find_dosage_spans(text: str, dosage_value: Any, dosage_unit: str) -> List[Tuple[int, int, str]]:
     """Find dosage mentions in text based on known value and unit."""
     if pd.isna(dosage_value) or pd.isna(dosage_unit):
+        return []
+
+    # Convert dosage_value to float
+    try:
+        dosage_value = float(dosage_value)
+    except (ValueError, TypeError):
         return []
 
     spans = []

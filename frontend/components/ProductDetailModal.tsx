@@ -53,7 +53,7 @@ const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
 
   const handleBuyClick = () => {
     const price = product.prices[0];
-    const targetUrl = price.link || price.website || `https://www.${price.store.toLowerCase().replace(/\s+/g, "")}.com`;
+    const targetUrl = price.link || `https://www.${price.store.toLowerCase().replace(/\s+/g, "")}.com`;
     trackStoreClick(price.store, targetUrl, product.name);
     window.open(targetUrl, "_blank");
   };

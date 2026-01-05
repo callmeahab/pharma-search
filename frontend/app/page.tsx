@@ -1,34 +1,45 @@
 "use client";
 
-import React, { useState, useEffect, useMemo, useCallback } from "react";
+import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import Navbar from "@/components/Navbar";
 import HeroSection from "@/components/HeroSection";
 import ProductList from "@/components/ProductList";
-import { searchProducts, getFeaturedProducts, SearchResult } from "@/lib/api";
-import { convertProductGroupToProducts, ProductGroup } from "@/types/product";
+import { searchGroupsStreaming, fetchGroupsPage, getFeaturedProducts, SearchResult, StreamingSearchResult } from "@/lib/api";
+import { convertProductGroupToProducts, ProductGroup, BackendProduct, groupProductsByKey } from "@/types/product";
 import { Spinner } from "@/components/ui/spinner";
 import Footer from "@/components/Footer";
 import { FilterSidebar, FilterState, defaultFilters, Facets } from "@/components/FilterSidebar";
 import { FilterChips } from "@/components/FilterChips";
 import { ResultsToolbar } from "@/components/ResultsToolbar";
 import { Button } from "@/components/ui/button";
-import { Filter } from "lucide-react";
+import { Filter, Loader2 } from "lucide-react";
 
 export const dynamic = 'force-dynamic';
 
 const GROUPING_PREFS_KEY = "pharma-search-grouping-prefs";
+const PAGE_SIZE = 24;
 
 export default function HomePage() {
   const [searchTerm, setSearchTerm] = useState("");
-  const [apiSearchResults, setApiSearchResults] = useState<SearchResult | null>(null);
+  const [accumulatedGroups, setAccumulatedGroups] = useState<ProductGroup[]>([]);
+  const [totalGroups, setTotalGroups] = useState(0);
+  const [totalProducts, setTotalProducts] = useState(0);
+  const [facets, setFacets] = useState<Facets | undefined>(undefined);
   const [featuredProducts, setFeaturedProducts] = useState<SearchResult | null>(null);
   const [isSearching, setIsSearching] = useState(false);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [isLoadingFeatured, setIsLoadingFeatured] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [useApiSearch, setUseApiSearch] = useState(false);
+  const [hasMore, setHasMore] = useState(false);
+  const [currentOffset, setCurrentOffset] = useState(0);
 
   const [filters, setFilters] = useState<FilterState>(defaultFilters);
   const [showMobileFilters, setShowMobileFilters] = useState(false);
+
+  // Ref for infinite scroll detection
+  const loadMoreRef = useRef<HTMLDivElement>(null);
+  const currentSearchTermRef = useRef<string>("");
 
   // Load grouping preferences from localStorage on mount
   useEffect(() => {
@@ -80,30 +91,106 @@ export default function HomePage() {
     }
   }, []);
 
-  const handleSearch = useCallback(async (term: string, groupingMode = filters.groupingMode) => {
+  const handleSearch = useCallback(async (term: string) => {
     if (!term || !term.trim()) {
-      setApiSearchResults(null);
+      setAccumulatedGroups([]);
+      setTotalGroups(0);
+      setTotalProducts(0);
+      setFacets(undefined);
       setUseApiSearch(false);
       setSearchError(null);
+      setHasMore(false);
+      setCurrentOffset(0);
+      currentSearchTermRef.current = "";
       loadFeaturedProducts();
       return;
     }
 
+    // Reset state for new search
     setIsSearching(true);
     setSearchError(null);
+    setAccumulatedGroups([]);
+    setCurrentOffset(0);
+    setHasMore(false);
+    currentSearchTermRef.current = term;
 
     try {
-      const results = await searchProducts(term, { groupingMode });
-      setApiSearchResults(results);
-      setUseApiSearch(true);
+      await searchGroupsStreaming(term, (result) => {
+        setAccumulatedGroups(result.groups);
+        setTotalGroups(result.totalGroups);
+        setTotalProducts(result.totalProducts);
+        setFacets(result.facets as Facets | undefined);
+        setUseApiSearch(true);
+        setCurrentOffset(result.groups.length);
+        setHasMore(result.groups.length < result.totalGroups);
+
+        // Stop showing loading spinner once we have results
+        if (result.groups.length > 0) {
+          setIsSearching(false);
+        }
+      }, { offset: 0, limit: PAGE_SIZE });
     } catch (error) {
       console.error("Search error:", error);
       setSearchError("Greška pri pretraživanju. Pokušajte ponovo.");
-      setApiSearchResults(null);
+      setAccumulatedGroups([]);
     } finally {
       setIsSearching(false);
     }
-  }, [loadFeaturedProducts, filters.groupingMode]);
+  }, [loadFeaturedProducts]);
+
+  // Load more groups when scrolling
+  const loadMore = useCallback(async () => {
+    if (isLoadingMore || !hasMore || !currentSearchTermRef.current) return;
+
+    setIsLoadingMore(true);
+    try {
+      const result = await fetchGroupsPage(
+        currentSearchTermRef.current,
+        currentOffset,
+        PAGE_SIZE
+      );
+
+      if (result.groups.length > 0) {
+        setAccumulatedGroups(prev => [...prev, ...result.groups]);
+        setCurrentOffset(prev => prev + result.groups.length);
+        setHasMore(currentOffset + result.groups.length < result.totalGroups);
+
+        // Update facets if not already set
+        if (!facets && result.facets) {
+          setFacets(result.facets as Facets | undefined);
+        }
+      } else {
+        setHasMore(false);
+      }
+    } catch (error) {
+      console.error("Error loading more results:", error);
+    } finally {
+      setIsLoadingMore(false);
+    }
+  }, [isLoadingMore, hasMore, currentOffset, facets]);
+
+  // Intersection Observer for infinite scroll
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && hasMore && !isLoadingMore && !isSearching) {
+          loadMore();
+        }
+      },
+      { threshold: 0.1, rootMargin: "200px" }
+    );
+
+    const currentRef = loadMoreRef.current;
+    if (currentRef) {
+      observer.observe(currentRef);
+    }
+
+    return () => {
+      if (currentRef) {
+        observer.unobserve(currentRef);
+      }
+    };
+  }, [hasMore, isLoadingMore, isSearching, loadMore]);
 
   useEffect(() => {
     const searchParams = new URLSearchParams(window.location.search);
@@ -133,31 +220,32 @@ export default function HomePage() {
     };
   }, [searchTerm, handleSearch]);
 
-  // Re-search when grouping mode changes
-  useEffect(() => {
-    if (searchTerm && useApiSearch) {
-      handleSearch(searchTerm, filters.groupingMode);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- only re-run when groupingMode changes
-  }, [filters.groupingMode]);
-
-  const facets: Facets | undefined = apiSearchResults?.facets as Facets | undefined;
-
-  // Calculate actual price range from search results
+  // Calculate actual price range from accumulated groups
   const priceRange = useMemo(() => {
-    if (!apiSearchResults?.groups?.length) return { min: 0, max: 50000 };
-    const allPrices = apiSearchResults.groups.flatMap(g => g.products.map(p => p.price));
+    if (!accumulatedGroups.length) return { min: 0, max: 50000 };
+    const allPrices = accumulatedGroups.flatMap(g => g.products.map(p => p.price));
     if (allPrices.length === 0) return { min: 0, max: 50000 };
     return {
       min: Math.floor(Math.min(...allPrices) / 100) * 100,
       max: Math.ceil(Math.max(...allPrices) / 100) * 100,
     };
-  }, [apiSearchResults?.groups]);
+  }, [accumulatedGroups]);
+
+  // Re-group products based on the selected grouping mode
+  const regroupedData = useMemo(() => {
+    if (!accumulatedGroups.length) return [];
+
+    // Extract all products from accumulated groups
+    const allProducts: BackendProduct[] = accumulatedGroups.flatMap(g => g.products);
+
+    // Re-group based on the selected grouping mode
+    return groupProductsByKey(allProducts, filters.groupingMode);
+  }, [accumulatedGroups, filters.groupingMode]);
 
   const filteredAndSortedGroups = useMemo(() => {
-    if (!apiSearchResults?.groups) return [];
+    if (!regroupedData.length) return [];
 
-    let groups = [...apiSearchResults.groups];
+    let groups = [...regroupedData];
 
     if (filters.brands.length > 0) {
       groups = groups.filter(group =>
@@ -234,14 +322,15 @@ export default function HomePage() {
     }
 
     return groups;
-  }, [apiSearchResults?.groups, filters, priceRange]);
+  }, [regroupedData, filters, priceRange]);
 
   const displayGroups = filters.groupSimilar
     ? filteredAndSortedGroups
-    : filteredAndSortedGroups.flatMap(g =>
-        g.products.map(p => ({
+    : filteredAndSortedGroups.flatMap((g, groupIdx) =>
+        g.products.map((p, productIdx) => ({
           ...g,
-          id: p.id,
+          // Use combination of indices and vendor to guarantee uniqueness
+          id: `${p.id}-${p.vendor_id}-${groupIdx}-${productIdx}`,
           products: [p],
           vendor_count: 1,
           product_count: 1,
@@ -249,9 +338,8 @@ export default function HomePage() {
         } as ProductGroup))
       );
 
-  const totalProductsShown = displayGroups.flatMap(group =>
-    convertProductGroupToProducts(group)
-  ).length;
+  // Count actual products within all groups, not the converted display products
+  const totalProductsShown = displayGroups.reduce((sum, group) => sum + group.products.length, 0);
 
   const hasActiveFilters = filters.minPrice > priceRange.min ||
     filters.maxPrice < priceRange.max ||
@@ -300,8 +388,9 @@ export default function HomePage() {
                 onGroupSimilarChange={(value) => setFilters(prev => ({ ...prev, groupSimilar: value }))}
                 onGroupingModeChange={(value) => setFilters(prev => ({ ...prev, groupingMode: value }))}
                 onSortGroupsByChange={(value) => setFilters(prev => ({ ...prev, sortGroupsBy: value }))}
-                totalGroups={filteredAndSortedGroups.length}
-                totalProducts={totalProductsShown}
+                totalGroups={totalGroups}
+                totalProducts={totalProducts}
+                loadedGroups={accumulatedGroups.length}
                 className="mb-4"
               />
               <FilterChips
@@ -340,9 +429,24 @@ export default function HomePage() {
                     <p className="text-sm text-red-500 mt-2">{searchError}</p>
                   </div>
                 ) : displayGroups.length > 0 ? (
-                  <ProductList
-                    products={displayGroups.flatMap(group => convertProductGroupToProducts(group))}
-                  />
+                  <>
+                    <ProductList
+                      products={displayGroups.flatMap(group => convertProductGroupToProducts(group))}
+                    />
+                    {/* Infinite scroll trigger */}
+                    <div ref={loadMoreRef} className="h-10" />
+                    {isLoadingMore && (
+                      <div className="flex justify-center py-8">
+                        <Loader2 className="h-8 w-8 animate-spin text-health-primary" />
+                        <span className="ml-2 text-gray-600 dark:text-gray-400">Učitavanje više proizvoda...</span>
+                      </div>
+                    )}
+                    {!hasMore && accumulatedGroups.length > 0 && (
+                      <div className="text-center py-6 text-gray-500 dark:text-gray-400">
+                        Prikazano svih {totalGroups} grupa proizvoda
+                      </div>
+                    )}
+                  </>
                 ) : (
                   <div className="text-center py-12">
                     <p className="text-lg text-gray-600 dark:text-gray-400">

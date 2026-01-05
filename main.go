@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"connectrpc.com/connect"
@@ -31,6 +32,16 @@ type server struct {
 	db              *sql.DB
 	featuredCache   []FeaturedGroup
 	featuredCacheAt time.Time
+	// Search results cache for scroll-based pagination
+	searchCache     map[string]*cachedSearchResult
+	searchCacheMu   sync.RWMutex
+}
+
+type cachedSearchResult struct {
+	groups    []map[string]interface{}
+	facets    map[string]*pb.FacetValues
+	totalHits int
+	cachedAt  time.Time
 }
 
 func connectDB() (*sql.DB, error) {
@@ -586,6 +597,253 @@ func (s *server) SearchGroups(ctx context.Context, req *connect.Request[pb.Searc
 	return connect.NewResponse(&pb.GenericJsonResponse{Data: st}), nil
 }
 
+func (s *server) SearchGroupsStream(ctx context.Context, req *connect.Request[pb.SearchGroupsRequest], stream *connect.ServerStream[pb.ProductGroupChunk]) error {
+	query := strings.TrimSpace(req.Msg.GetQ())
+	requestedOffset := int(req.Msg.GetOffset())
+	requestedLimit := int(req.Msg.GetLimit())
+	if requestedLimit <= 0 {
+		requestedLimit = 24 // Default page size
+	}
+
+	// Check cache first
+	cacheKey := strings.ToLower(query)
+	cached := s.getSearchCache(cacheKey)
+
+	if cached == nil {
+		// Cache miss - fetch all products and group them
+		client := newMeiliClient()
+		const batchSize = 1000
+		var allHits []map[string]interface{}
+		fetchOffset := 0
+
+		for {
+			res, err := client.search(query, nil, batchSize, fetchOffset)
+			if err != nil {
+				return err
+			}
+			allHits = append(allHits, res.Hits...)
+
+			// Send early partial results for first request (offset=0)
+			if requestedOffset == 0 && fetchOffset == 0 && len(res.Hits) > 0 {
+				earlyGroups := convertHitsToGroups(res.Hits, query, s.db)
+				if len(earlyGroups) > 0 {
+					endIdx := min(requestedLimit, len(earlyGroups))
+					chunk := convertGroupsToProto(earlyGroups[:endIdx])
+					chunk.IsComplete = false
+					chunk.Metadata = &pb.SearchMetadata{
+						TotalProducts:  int32(res.NbHits),
+						TotalGroups:    int32(len(earlyGroups)),
+						SearchTypeUsed: "streaming_partial",
+					}
+					if err := stream.Send(chunk); err != nil {
+						return err
+					}
+				}
+			}
+
+			if len(res.Hits) < batchSize || res.NbHits <= fetchOffset+batchSize {
+				break
+			}
+			fetchOffset += batchSize
+			if fetchOffset > 10000 {
+				break
+			}
+		}
+
+		// Group all results
+		allGroups := convertHitsToGroups(allHits, query, s.db)
+		facets := buildFacetsFromHits(allHits)
+
+		// Cache the results
+		cached = &cachedSearchResult{
+			groups:    allGroups,
+			facets:    facets,
+			totalHits: len(allHits),
+			cachedAt:  time.Now(),
+		}
+		s.setSearchCache(cacheKey, cached)
+	}
+
+	// Return the requested slice of groups
+	totalGroups := len(cached.groups)
+	startIdx := requestedOffset
+	endIdx := min(requestedOffset+requestedLimit, totalGroups)
+
+	if startIdx >= totalGroups {
+		// No more results
+		chunk := &pb.ProductGroupChunk{
+			Groups:     []*pb.ProductGroup{},
+			IsComplete: true,
+			Metadata: &pb.SearchMetadata{
+				TotalProducts:  int32(cached.totalHits),
+				TotalGroups:    int32(totalGroups),
+				SearchTypeUsed: "cached_empty",
+				Facets:         cached.facets,
+			},
+		}
+		return stream.Send(chunk)
+	}
+
+	// Send the requested page of groups
+	pageGroups := cached.groups[startIdx:endIdx]
+	chunk := convertGroupsToProto(pageGroups)
+	chunk.IsComplete = true
+	chunk.Metadata = &pb.SearchMetadata{
+		TotalProducts:  int32(cached.totalHits),
+		TotalGroups:    int32(totalGroups),
+		SearchTypeUsed: "cached",
+		Facets:         cached.facets,
+	}
+
+	return stream.Send(chunk)
+}
+
+// Cache helper methods
+func (s *server) getSearchCache(key string) *cachedSearchResult {
+	s.searchCacheMu.RLock()
+	defer s.searchCacheMu.RUnlock()
+	cached, ok := s.searchCache[key]
+	if !ok {
+		return nil
+	}
+	// Cache expires after 5 minutes
+	if time.Since(cached.cachedAt) > 5*time.Minute {
+		return nil
+	}
+	return cached
+}
+
+func (s *server) setSearchCache(key string, result *cachedSearchResult) {
+	s.searchCacheMu.Lock()
+	defer s.searchCacheMu.Unlock()
+	s.searchCache[key] = result
+}
+
+func (s *server) cleanupSearchCache() {
+	ticker := time.NewTicker(1 * time.Minute)
+	for range ticker.C {
+		s.searchCacheMu.Lock()
+		for key, cached := range s.searchCache {
+			if time.Since(cached.cachedAt) > 5*time.Minute {
+				delete(s.searchCache, key)
+			}
+		}
+		s.searchCacheMu.Unlock()
+	}
+}
+
+func convertGroupsToProto(groups []map[string]interface{}) *pb.ProductGroupChunk {
+	pbGroups := make([]*pb.ProductGroup, 0, len(groups))
+
+	for _, g := range groups {
+		products := getSlice(g, "products")
+		pbProducts := make([]*pb.Product, 0, len(products))
+
+		for _, p := range products {
+			pm, ok := p.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			pbProducts = append(pbProducts, &pb.Product{
+				Id:          getString(pm, "id"),
+				Title:       getString(pm, "title"),
+				Price:       getFloat(pm, "price"),
+				VendorId:    getString(pm, "vendor_id"),
+				VendorName:  getString(pm, "vendor_name"),
+				Link:        getString(pm, "link"),
+				Thumbnail:   getString(pm, "thumbnail"),
+				BrandName:   getString(pm, "brand_name"),
+				GroupKey:    getString(pm, "group_key"),
+				DosageValue: getFloat(pm, "dosage_value"),
+				DosageUnit:  getString(pm, "dosage_unit"),
+				Form:        getString(pm, "form"),
+				Quantity:    int32(getFloat(pm, "quantity")),
+				Rank:        int32(getFloat(pm, "rank")),
+			})
+		}
+
+		priceRange := getMap(g, "price_range")
+		pbGroups = append(pbGroups, &pb.ProductGroup{
+			Id:             getString(g, "id"),
+			NormalizedName: getString(g, "normalized_name"),
+			Products:       pbProducts,
+			PriceRange: &pb.PriceRange{
+				Min: getFloat(priceRange, "min"),
+				Max: getFloat(priceRange, "max"),
+				Avg: getFloat(priceRange, "avg"),
+			},
+			VendorCount:  int32(getFloat(g, "vendor_count")),
+			ProductCount: int32(getFloat(g, "product_count")),
+			DosageValue:  getFloat(g, "dosage_value"),
+			DosageUnit:   getString(g, "dosage_unit"),
+		})
+	}
+
+	return &pb.ProductGroupChunk{Groups: pbGroups}
+}
+
+func buildFacetsFromHits(hits []map[string]interface{}) map[string]*pb.FacetValues {
+	facetCounts := make(map[string]map[string]int)
+
+	for _, hit := range hits {
+		// Count vendor names
+		if vendor := getString(hit, "vendorName"); vendor != "" {
+			if facetCounts["vendorName"] == nil {
+				facetCounts["vendorName"] = make(map[string]int)
+			}
+			facetCounts["vendorName"][vendor]++
+		}
+
+		// Count brands
+		if brand := getString(hit, "brand"); brand != "" {
+			if facetCounts["brand"] == nil {
+				facetCounts["brand"] = make(map[string]int)
+			}
+			facetCounts["brand"][brand]++
+		}
+
+		// Count dosage units
+		if unit := getString(hit, "dosageUnit"); unit != "" {
+			if facetCounts["dosageUnit"] == nil {
+				facetCounts["dosageUnit"] = make(map[string]int)
+			}
+			facetCounts["dosageUnit"][unit]++
+		}
+	}
+
+	result := make(map[string]*pb.FacetValues)
+	for facetName, counts := range facetCounts {
+		values := make(map[string]int32)
+		for k, v := range counts {
+			values[k] = int32(v)
+		}
+		result[facetName] = &pb.FacetValues{Values: values}
+	}
+
+	return result
+}
+
+func getSlice(m map[string]interface{}, key string) []interface{} {
+	if v, ok := m[key].([]interface{}); ok {
+		return v
+	}
+	if v, ok := m[key].([]map[string]interface{}); ok {
+		result := make([]interface{}, len(v))
+		for i, item := range v {
+			result[i] = item
+		}
+		return result
+	}
+	return nil
+}
+
+func getMap(m map[string]interface{}, key string) map[string]interface{} {
+	if v, ok := m[key].(map[string]interface{}); ok {
+		return v
+	}
+	return map[string]interface{}{}
+}
+
 func (s *server) GetFacets(ctx context.Context, req *connect.Request[pb.FacetsRequest]) (*connect.Response[pb.GenericJsonResponse], error) {
 	client := newMeiliClient()
 	res, err := client.search("", nil, 0, 0)
@@ -1010,6 +1268,9 @@ func (s *server) RebuildIndexWithStandardization(ctx context.Context, req *conne
 		SearchableAttributes: []string{"title", "standardizedTitle", "normalizedName", "brand", "vendorName"},
 		FilterableAttributes: []string{"vendorId", "vendorName", "brand", "price", "normalizedName", "dosageUnit"},
 		SortableAttributes:   []string{"price", "title"},
+		Pagination: &meilisearch.Pagination{
+			MaxTotalHits: 20000,
+		},
 	}
 	_, _ = index.UpdateSettings(&settings)
 
@@ -1304,6 +1565,28 @@ func (s *server) prefetchFeaturedProducts() {
 	log.Printf("Cached %d featured product groups", len(groups))
 }
 
+func ensureMeilisearchPagination() {
+	meiliURL := os.Getenv("MEILI_URL")
+	if meiliURL == "" {
+		meiliURL = "http://localhost:7700"
+	}
+	client := meilisearch.New(meiliURL, meilisearch.WithAPIKey(os.Getenv("MEILI_API_KEY")))
+	index := client.Index("products")
+
+	// Update pagination settings to allow fetching more results
+	settings := meilisearch.Settings{
+		Pagination: &meilisearch.Pagination{
+			MaxTotalHits: 20000,
+		},
+	}
+	_, err := index.UpdateSettings(&settings)
+	if err != nil {
+		log.Printf("Warning: Failed to update Meilisearch pagination settings: %v", err)
+	} else {
+		log.Println("Meilisearch pagination settings updated (maxTotalHits: 20000)")
+	}
+}
+
 func runConnectServer() {
 	// Connect to database
 	db, err := connectDB()
@@ -1316,10 +1599,19 @@ func runConnectServer() {
 	}
 
 	// Create the Connect handler
-	srv := &server{db: db}
+	srv := &server{
+		db:          db,
+		searchCache: make(map[string]*cachedSearchResult),
+	}
 
 	// Prefetch featured products on startup
 	srv.prefetchFeaturedProducts()
+
+	// Ensure Meilisearch pagination settings are correct
+	ensureMeilisearchPagination()
+
+	// Start cache cleanup goroutine
+	go srv.cleanupSearchCache()
 
 	path, handler := pbconnect.NewPharmaAPIHandler(srv)
 

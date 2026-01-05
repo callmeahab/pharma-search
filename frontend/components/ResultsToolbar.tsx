@@ -14,6 +14,7 @@ interface ResultsToolbarProps {
   onSortGroupsByChange: (value: GroupSortBy) => void;
   totalGroups: number;
   totalProducts: number;
+  loadedGroups?: number;
   className?: string;
 }
 
@@ -26,6 +27,7 @@ export const ResultsToolbar: React.FC<ResultsToolbarProps> = ({
   onSortGroupsByChange,
   totalGroups,
   totalProducts,
+  loadedGroups,
   className,
 }) => {
   return (
@@ -81,8 +83,18 @@ export const ResultsToolbar: React.FC<ResultsToolbarProps> = ({
       <div className="ml-auto text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">
         {groupSimilar ? (
           <>
-            <span className="sm:hidden">{totalGroups}g/{totalProducts}p</span>
-            <span className="hidden sm:inline">{totalGroups} grupa ({totalProducts} proizvoda)</span>
+            <span className="sm:hidden">
+              {loadedGroups !== undefined && loadedGroups < totalGroups
+                ? `${loadedGroups}/${totalGroups}g`
+                : `${totalGroups}g`
+              } ({totalProducts}p)
+            </span>
+            <span className="hidden sm:inline">
+              {loadedGroups !== undefined && loadedGroups < totalGroups
+                ? `${loadedGroups} od ${totalGroups} grupa`
+                : `${totalGroups} grupa`
+              } ({totalProducts} proizvoda)
+            </span>
           </>
         ) : (
           <span>{totalProducts} proizvoda</span>

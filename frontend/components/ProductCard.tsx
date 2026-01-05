@@ -59,7 +59,7 @@ const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
 
   const isWishlisted = isInWishlist(product.id);
   const vendorCount = product.vendorCount || product.prices.length;
-  const vendorWord = pluralizeSr(vendorCount, "apoteci", "apoteke", "apoteka");
+  const vendorWord = pluralizeSr(vendorCount, "proizvod", "proizvoda", "proizvoda");
 
   return (
     <>

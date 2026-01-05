@@ -10,6 +10,7 @@ service PharmaAPI {
   rpc Autocomplete(AutocompleteRequest) returns (AutocompleteResponse) { }
   rpc Search(SearchRequest) returns (GenericJsonResponse) { }
   rpc SearchGroups(SearchGroupsRequest) returns (GenericJsonResponse) { }
+  rpc SearchGroupsStream(SearchGroupsRequest) returns (stream ProductGroupChunk) { }
   rpc GetFacets(FacetsRequest) returns (GenericJsonResponse) { }
   rpc GetFeatured(FeaturedRequest) returns (GenericJsonResponse) { }
   rpc PriceComparison(PriceComparisonRequest) returns (GenericJsonResponse) { }
@@ -43,7 +44,11 @@ message SearchRequest {
   bool in_stock_only = 9;
 }
 
-message SearchGroupsRequest { string q = 1; int32 limit = 2; }
+message SearchGroupsRequest {
+  string q = 1;
+  int32 limit = 2;
+  int32 offset = 3;
+}
 message FacetsRequest {}
 message PriceComparisonRequest { string q = 1; }
 message ContactRequest { string name = 1; string email = 2; string message = 3; }
@@ -52,3 +57,55 @@ message ReprocessAllRequest {}
 message RebuildIndexRequest {}
 message ProcessingAnalysisRequest {}
 message FeaturedRequest { int32 limit = 1; }
+
+// Streaming search response messages
+message ProductGroupChunk {
+  repeated ProductGroup groups = 1;
+  SearchMetadata metadata = 2;
+  bool is_complete = 3;
+}
+
+message ProductGroup {
+  string id = 1;
+  string normalized_name = 2;
+  repeated Product products = 3;
+  PriceRange price_range = 4;
+  int32 vendor_count = 5;
+  int32 product_count = 6;
+  double dosage_value = 7;
+  string dosage_unit = 8;
+}
+
+message Product {
+  string id = 1;
+  string title = 2;
+  double price = 3;
+  string vendor_id = 4;
+  string vendor_name = 5;
+  string link = 6;
+  string thumbnail = 7;
+  string brand_name = 8;
+  string group_key = 9;
+  double dosage_value = 10;
+  string dosage_unit = 11;
+  string form = 12;
+  int32 quantity = 13;
+  int32 rank = 14;
+}
+
+message PriceRange {
+  double min = 1;
+  double max = 2;
+  double avg = 3;
+}
+
+message SearchMetadata {
+  int32 total_products = 1;
+  int32 total_groups = 2;
+  string search_type_used = 3;
+  map<string, FacetValues> facets = 4;
+}
+
+message FacetValues {
+  map<string, int32> values = 1;
+}

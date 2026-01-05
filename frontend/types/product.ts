@@ -152,13 +152,17 @@ export function convertProductGroupToProducts(group: ProductGroup): Product[] {
 
 export type GroupingMode = "strict" | "normal" | "loose";
 
+interface GroupingContext {
+  knownBrands?: Set<string>;
+}
+
 /**
  * Extract a grouping key based on the mode:
  * - strict: exact group_key match
  * - normal: ingredient + dosage (default)
- * - loose: base ingredient name only (ignores dosage/quantity)
+ * - loose: base ingredient name only (ignores dosage/quantity/brand)
  */
-function getGroupingKey(product: BackendProduct, mode: GroupingMode): string {
+function getGroupingKey(product: BackendProduct, mode: GroupingMode, context?: GroupingContext): string {
   const baseKey = product.group_key || product.title.toLowerCase();
 
   switch (mode) {
@@ -174,27 +178,47 @@ function getGroupingKey(product: BackendProduct, mode: GroupingMode): string {
         .replace(/\s+/g, ' ')
         .trim();
 
-    case "loose":
-      // Aggressive grouping - extract core product identity only
-      return baseKey
-        // Remove all numbers and units
-        .replace(/\d+([.,]\d+)?\s*(mg|ml|mcg|µg|g|kg|iu|ij|l|%|x)\b/gi, '')
-        .replace(/\d+\s*x\s*\d+/gi, '') // "30x500" patterns
-        .replace(/\b\d+\b/g, '') // standalone numbers
+    case "loose": {
+      // Loose grouping - group ALL variants of a product together
+      // Uses title directly (not group_key) and removes: brands, dosages, quantities, forms
+      // So "Vitamin D3 1000 IU" and "Vitamin D3 5000 IU" from any brand = same group
+      let key = product.title.toLowerCase();
+
+      // Remove known brands from database
+      if (context?.knownBrands && context.knownBrands.size > 0) {
+        for (const brand of context.knownBrands) {
+          if (brand && brand.length > 2) { // Only remove brands with 3+ chars
+            const escaped = brand.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            key = key.replace(new RegExp(`\\b${escaped}\\b`, 'gi'), ' ');
+          }
+        }
+      }
+
+      key = key
+        // Remove ALL numeric values with units (dosages AND quantities)
+        .replace(/\d+([.,]\d+)?\s*(mg|mcg|µg|g|kg|ml|l|iu|ij|%)\b/gi, ' ')
+        // Remove "x60", "x30", "60x" patterns (quantity indicators)
+        .replace(/\bx\d+\b/gi, ' ')
+        .replace(/\b\d+x\b/gi, ' ')
+        // Remove quantity patterns (30 tableta, 60 caps, etc.)
+        .replace(/\b\d+\s*(tab|tabl|tableta|tablete|kaps|kapsula|kapsule|caps|capsule|softgel|kom|komada|kesica|kesice|komad)\w*\b/gi, ' ')
+        .replace(/\b\d+\s*x\s*\d+\b/gi, ' ') // "30x500" patterns
+        .replace(/\b\d+\b/g, ' ') // standalone numbers
         // Remove product forms
-        .replace(/\b(tablete?|tableta|tabl?|kapsule?|kapsula|kaps?|caps(ule)?|softgel|gel|sirup|sprej|spray|kapi|drops|krema?|cream|losion|lotion|mast|serum|prah|powder|granule?|kesice?|kesica|ampule?|ampula|komada?|kom)\b/gi, '')
-        // Remove common filler words
-        .replace(/\b(za|sa|i|od|u|na|po|ili|plus|extra|forte|max|ultra|super|premium|gold|silver|pro|active|complex|formula|supplement|dietary|natural|organic|vegan|gluten.?free)\b/gi, '')
-        // Remove special characters and normalize
-        .replace(/[+®™©()[\]{}<>\/\\|_\-–—:;,.'"`]/g, ' ')
+        .replace(/\b(tablete?|tableta|tabl|kapsule?|kapsula|kaps|caps|capsule|softgel|gel|sirup|sprej|spray|kapi|drops|krema?|cream|losion|lotion|mast|serum|prah|powder|granule?|kesice?|kesica|ampule?|ampula|komada?|kom|bars?)\b/gi, ' ')
+        // Remove marketing words
+        .replace(/\b(plus|extra|forte|max|ultra|super|premium|gold|silver|pro|active|complex|formula|supplement|dietary|natural|organic|vegan|gluten.?free|nutrition|foods?)\b/gi, ' ')
+        // Remove special characters
+        .replace(/[+®™©()[\]{}<>\/\\|_–—:;'"`]/g, ' ')
+        .replace(/\s*-\s*/g, ' ')
         // Collapse whitespace
         .replace(/\s+/g, ' ')
-        .trim()
-        // Take first 3-4 significant words for core identity
-        .split(' ')
-        .filter(w => w.length > 1)
-        .slice(0, 4)
-        .join(' ');
+        .trim();
+
+      // Take first 3 significant words for core identity (more aggressive grouping)
+      const words = key.split(' ').filter(w => w.length > 1);
+      return words.slice(0, 3).join(' ');
+    }
 
     default:
       return baseKey;
@@ -204,11 +228,33 @@ function getGroupingKey(product: BackendProduct, mode: GroupingMode): string {
 export function groupProductsByKey(products: BackendProduct[], mode: GroupingMode = "normal"): ProductGroup[] {
   if (!products || products.length === 0) return [];
 
+  // For loose mode, collect all known brands from the products
+  const context: GroupingContext = {
+    knownBrands: new Set<string>(),
+  };
+
+  if (mode === "loose") {
+    for (const product of products) {
+      // Collect brands
+      if (product.brand_name && product.brand_name.trim()) {
+        context.knownBrands!.add(product.brand_name.trim().toLowerCase());
+      }
+      // Also extract brand from vendor_name in some cases
+      if (product.vendor_name && product.vendor_name.trim()) {
+        // Vendor names like "Apoteka Benu" - extract the brand part
+        const vendorParts = product.vendor_name.split(/\s+/);
+        if (vendorParts.length > 1) {
+          context.knownBrands!.add(vendorParts[vendorParts.length - 1].toLowerCase());
+        }
+      }
+    }
+  }
+
   const groupMap = new Map<string, { firstRank: number; products: BackendProduct[]; originalKey: string }>();
   const groupOrder: string[] = [];
 
   for (const product of products) {
-    const key = getGroupingKey(product, mode);
+    const key = getGroupingKey(product, mode, context);
     const originalKey = product.group_key || product.title;
 
     if (groupMap.has(key)) {
@@ -219,8 +265,8 @@ export function groupProductsByKey(products: BackendProduct[], mode: GroupingMod
     }
   }
 
-  const groups: ProductGroup[] = groupOrder.map(key => {
-    const { products: groupProducts, originalKey } = groupMap.get(key)!;
+  const groups: ProductGroup[] = groupOrder.map((key, index) => {
+    const { products: groupProducts } = groupMap.get(key)!;
 
     const sortedProducts = [...groupProducts].sort((a, b) => a.price - b.price);
     const vendors = new Set(sortedProducts.map(p => p.vendor_id));
@@ -232,7 +278,8 @@ export function groupProductsByKey(products: BackendProduct[], mode: GroupingMod
     const firstProduct = sortedProducts[0];
 
     return {
-      id: originalKey, // Use original key for identification
+      // Use normalized key + index for unique identification (avoids duplicate key issues)
+      id: `${key}-${index}`,
       normalized_name: firstProduct.title,
       dosage_value: firstProduct.dosage_value,
       dosage_unit: firstProduct.dosage_unit,
