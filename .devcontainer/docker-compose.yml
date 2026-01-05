@@ -14,7 +14,7 @@ services:
         condition: service_started
 
   db:
-    image: postgres:16-alpine
+    image: postgres:18-alpine
     restart: unless-stopped
     environment:
       POSTGRES_USER: postgres
@@ -31,7 +31,7 @@ services:
       - "5432:5432"
 
   meilisearch:
-    image: getmeili/meilisearch:v1.6
+    image: getmeili/meilisearch:v1.29
     restart: unless-stopped
     environment:
       MEILI_ENV: development
@@ -40,7 +40,6 @@ services:
       - meilisearch-data:/meili_data
     ports:
       - "7700:7700"
-    network_mode: service:db
 
 volumes:
   postgres-data:
