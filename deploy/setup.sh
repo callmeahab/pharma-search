@@ -8,7 +8,8 @@ set -e
 
 APP_DIR="/var/www/pharma-search"
 LOG_DIR="/var/log/pharma-search"
-DOMAIN="aposteka.rs"
+SERVER_IP="143.244.182.210"
+DOMAIN="aposteka.rs"  # Update after DNS is configured
 
 echo "========================================"
 echo "  Pharma Search Server Setup"
@@ -190,7 +191,7 @@ upstream connect_backend {
 server {
     listen 80;
     listen [::]:80;
-    server_name aposteka.rs www.aposteka.rs;
+    server_name 143.244.182.210 aposteka.rs www.aposteka.rs;
 
     add_header X-Frame-Options "SAMEORIGIN" always;
     add_header X-XSS-Protection "1; mode=block" always;
@@ -351,10 +352,15 @@ echo "========================================"
 echo "  Server Setup Complete!"
 echo "========================================"
 echo ""
+echo "Server: $SERVER_IP"
+echo ""
 echo "Next steps:"
-echo "  1. Deploy code:     ./deploy.sh user@server"
-echo "  2. Sync data:       ./sync-data.sh user@server"
+echo "  1. Deploy code:     ./deploy.sh root@$SERVER_IP"
+echo "  2. Sync data:       ./sync-data.sh root@$SERVER_IP"
 echo "  3. Setup SSL:       certbot --nginx -d $DOMAIN -d www.$DOMAIN"
+echo ""
+echo "Access:"
+echo "  http://$SERVER_IP"
 echo ""
 echo "Services:"
 echo "  PostgreSQL:   postgresql://root:***@localhost:5432/pharma_search"

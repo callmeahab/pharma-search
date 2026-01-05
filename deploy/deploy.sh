@@ -7,7 +7,7 @@
 set -e
 
 # Configuration
-SERVER="${1:-root@aposteka.rs}"
+SERVER="${1:-pharma}"
 APP_DIR="/var/www/pharma-search"
 LOCAL_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
@@ -30,6 +30,9 @@ fi
 # SYNC CODE
 # ============================================
 echo "[1/4] Syncing code to server..."
+
+# Create directory if it doesn't exist
+ssh "$SERVER" "mkdir -p $APP_DIR"
 
 rsync -avz --delete \
     --exclude '.git' \
@@ -110,6 +113,10 @@ set -e
 cd /var/www/pharma-search
 
 if [ -d "migrations" ]; then
+    # Fix permissions so postgres user can read
+    chmod -R 644 migrations/*.sql 2>/dev/null || true
+    chmod -R 644 migrations/seed/*.sql 2>/dev/null || true
+
     for migration in migrations/*.sql; do
         if [ -f "$migration" ]; then
             echo "  Applying $(basename $migration)..."
@@ -139,6 +146,56 @@ echo "[4/4] Restarting PM2 services..."
 ssh "$SERVER" << 'ENDSSH'
 set -e
 cd /var/www/pharma-search
+
+# Create ecosystem.config.js if it doesn't exist
+if [ ! -f "ecosystem.config.js" ]; then
+    cat << 'EOFPM2' > ecosystem.config.js
+module.exports = {
+  apps: [
+    {
+      name: 'pharma-frontend',
+      cwd: '/var/www/pharma-search/frontend',
+      script: '/root/.bun/bin/bun',
+      args: 'start',
+      instances: 1,
+      exec_mode: 'fork',
+      interpreter: 'none',
+      env: {
+        NODE_ENV: 'production',
+        PORT: 3000,
+        NODE_OPTIONS: '--max_old_space_size=384'
+      },
+      error_file: '/var/log/pharma-search/frontend/error.log',
+      out_file: '/var/log/pharma-search/frontend/out.log',
+      time: true,
+      autorestart: true,
+      max_memory_restart: '512M'
+    },
+    {
+      name: 'pharma-backend',
+      cwd: '/var/www/pharma-search',
+      script: '/var/www/pharma-search/pharma-server',
+      instances: 1,
+      exec_mode: 'fork',
+      interpreter: 'none',
+      env: {
+        DATABASE_URL: 'postgresql://root:pharma_secure_password_2025@localhost:5432/pharma_search',
+        MEILI_URL: 'http://127.0.0.1:7700',
+        MEILI_API_KEY: ''
+      },
+      error_file: '/var/log/pharma-search/backend/error.log',
+      out_file: '/var/log/pharma-search/backend/out.log',
+      time: true,
+      autorestart: true,
+      max_memory_restart: '256M'
+    }
+  ]
+};
+EOFPM2
+fi
+
+# Create log directories
+mkdir -p /var/log/pharma-search/frontend /var/log/pharma-search/backend
 
 # Check if PM2 processes exist
 if pm2 list | grep -q "pharma"; then

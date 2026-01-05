@@ -1,25 +1,29 @@
 #!/bin/bash
 
 # Pharma Search Data Sync Script
-# Syncs PostgreSQL and Meilisearch data from local to server
-# Usage: ./sync-data.sh [user@server] [--pg-only|--meili-only]
+# Syncs PostgreSQL data and rebuilds Meilisearch index
+# Usage: ./sync-data.sh [--skip-schema] [--skip-meili]
 
 set -e
 
 # Configuration
-SERVER="${1:-root@aposteka.rs}"
+SERVER="${1:-pharma}"
 LOCAL_DB_URL="${DATABASE_URL:-postgres://postgres:docker@localhost:5432/pharmagician}"
 REMOTE_DB="pharma_search"
 REMOTE_DB_USER="root"
-DUMP_FILE="/tmp/pharma_dump_$(date +%Y%m%d_%H%M%S).sql"
+REMOTE_DB_PASS="pharma_secure_password_2025"
+REMOTE_DB_URL="postgresql://${REMOTE_DB_USER}:${REMOTE_DB_PASS}@localhost:5432/${REMOTE_DB}"
+APP_DIR="/var/www/pharma-search"
+DUMP_FILE="/tmp/pharma_data_$(date +%Y%m%d_%H%M%S).sql"
 
 # Parse options
-PG_ONLY=false
-MEILI_ONLY=false
+SKIP_SCHEMA=false
+SKIP_MEILI=false
 for arg in "$@"; do
     case $arg in
-        --pg-only) PG_ONLY=true ;;
-        --meili-only) MEILI_ONLY=true ;;
+        --skip-schema) SKIP_SCHEMA=true ;;
+        --skip-meili) SKIP_MEILI=true ;;
+        pharma|root@*) SERVER="$arg" ;;
     esac
 done
 
@@ -30,134 +34,152 @@ echo ""
 echo "Server: $SERVER"
 echo ""
 
-# Check if server is provided
-if [[ "$1" == --* ]] || [[ -z "$1" ]]; then
-    echo "Usage: ./sync-data.sh user@server [--pg-only|--meili-only]"
-    echo ""
-    echo "Options:"
-    echo "  --pg-only     Only sync PostgreSQL data"
-    echo "  --meili-only  Only rebuild Meilisearch index"
-    echo ""
-    echo "Examples:"
-    echo "  ./sync-data.sh root@aposteka.rs"
-    echo "  ./sync-data.sh root@aposteka.rs --pg-only"
-    exit 1
-fi
-
 # ============================================
-# POSTGRESQL SYNC
+# STEP 1: RECREATE SCHEMA FROM MIGRATIONS
 # ============================================
-if [[ "$MEILI_ONLY" == false ]]; then
-    echo "[1/3] Dumping local PostgreSQL database..."
-
-    # Extract connection parts from DATABASE_URL
-    # Format: postgres://user:pass@host:port/dbname
-    LOCAL_HOST=$(echo "$LOCAL_DB_URL" | sed -E 's/.*@([^:]+):.*/\1/')
-    LOCAL_PORT=$(echo "$LOCAL_DB_URL" | sed -E 's/.*:([0-9]+)\/.*/\1/')
-    LOCAL_USER=$(echo "$LOCAL_DB_URL" | sed -E 's/.*\/\/([^:]+):.*/\1/')
-    LOCAL_PASS=$(echo "$LOCAL_DB_URL" | sed -E 's/.*:([^@]+)@.*/\1/')
-    LOCAL_DB=$(echo "$LOCAL_DB_URL" | sed -E 's/.*\/([^?]+).*/\1/')
-
-    # Dump database (data only, excluding problematic tables if any)
-    PGPASSWORD="$LOCAL_PASS" pg_dump \
-        -h "$LOCAL_HOST" \
-        -p "$LOCAL_PORT" \
-        -U "$LOCAL_USER" \
-        -d "$LOCAL_DB" \
-        --data-only \
-        --disable-triggers \
-        --no-owner \
-        --no-privileges \
-        -f "$DUMP_FILE"
-
-    DUMP_SIZE=$(du -h "$DUMP_FILE" | cut -f1)
-    echo "  Dump created: $DUMP_FILE ($DUMP_SIZE)"
-
-    echo "[2/3] Uploading and restoring on server..."
-
-    # Compress and upload
-    gzip -f "$DUMP_FILE"
-    scp "${DUMP_FILE}.gz" "$SERVER:/tmp/"
-
-    # Restore on server
-    ssh "$SERVER" << ENDSSH
-set -e
-
-# Stop PM2 to prevent connections during restore
-pm2 stop all 2>/dev/null || true
-
-# Decompress
-gunzip -f "${DUMP_FILE}.gz"
-
-# Clear existing data and restore
-echo "  Truncating tables..."
-sudo -u postgres psql -d $REMOTE_DB -c "
-DO \\\$\\\$
-DECLARE
-    r RECORD;
-BEGIN
-    FOR r IN (SELECT tablename FROM pg_tables WHERE schemaname = 'public') LOOP
-        EXECUTE 'TRUNCATE TABLE \"' || r.tablename || '\" CASCADE';
-    END LOOP;
-END\\\$\\\$;
-"
-
-echo "  Restoring data..."
-sudo -u postgres psql -d $REMOTE_DB -f "$DUMP_FILE" 2>&1 | grep -v "NOTICE" | head -20
-
-# Cleanup
-rm -f "$DUMP_FILE"
-
-# Restart PM2
-pm2 start all
-
-echo "  Database restored"
-ENDSSH
-
-    # Cleanup local
-    rm -f "${DUMP_FILE}.gz"
-
-    echo "  PostgreSQL sync complete"
-else
-    echo "[1/3] Skipping PostgreSQL (--meili-only)"
-    echo "[2/3] Skipping PostgreSQL (--meili-only)"
-fi
-
-# ============================================
-# MEILISEARCH INDEX REBUILD
-# ============================================
-if [[ "$PG_ONLY" == false ]]; then
-    echo "[3/3] Rebuilding Meilisearch index on server..."
+if [[ "$SKIP_SCHEMA" == false ]]; then
+    echo "[1/5] Recreating database schema on server..."
 
     ssh "$SERVER" << 'ENDSSH'
 set -e
 cd /var/www/pharma-search
 
-# Check if the Go binary exists and has rebuild command
-if [ -f "pharma-server" ]; then
-    echo "  Triggering index rebuild via backend..."
-    # Use the backend's rebuild endpoint or command
-    ./pharma-server rebuild-index 2>/dev/null || \
-    curl -s http://127.0.0.1:50051/rebuild-index 2>/dev/null || \
-    echo "  Note: Run rebuild manually if needed"
+# Drop all tables
+echo "  Dropping existing tables..."
+sudo -u postgres psql -d pharma_search -c "
+DROP SCHEMA public CASCADE;
+CREATE SCHEMA public;
+GRANT ALL ON SCHEMA public TO postgres;
+GRANT ALL ON SCHEMA public TO public;
+" 2>/dev/null || true
+
+# Apply migrations
+echo "  Applying migrations..."
+if [ -d "migrations" ]; then
+    chmod -R 644 migrations/*.sql 2>/dev/null || true
+    for migration in migrations/*.sql; do
+        if [ -f "$migration" ]; then
+            echo "    $(basename $migration)"
+            sudo -u postgres psql -d pharma_search -f "$migration" 2>&1 | grep -v "NOTICE" | grep -v "^$" || true
+        fi
+    done
 fi
 
-# Check Meilisearch health
-if curl -s http://127.0.0.1:7700/health | grep -q "available"; then
-    echo "  Meilisearch is healthy"
+# Grant permissions to app user
+echo "  Granting permissions..."
+sudo -u postgres psql -d pharma_search -c "
+GRANT ALL ON ALL TABLES IN SCHEMA public TO root;
+GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO root;
+GRANT USAGE ON SCHEMA public TO root;
+"
 
-    # Get index stats
-    STATS=$(curl -s http://127.0.0.1:7700/indexes/products/stats 2>/dev/null || echo "{}")
-    DOC_COUNT=$(echo "$STATS" | grep -o '"numberOfDocuments":[0-9]*' | grep -o '[0-9]*' || echo "0")
-    echo "  Products indexed: $DOC_COUNT"
+echo "  Schema ready"
+ENDSSH
+
+    echo "  Schema recreated from migrations"
 else
-    echo "  Warning: Meilisearch not responding"
+    echo "[1/5] Skipping schema recreation (--skip-schema)"
+fi
+
+# ============================================
+# STEP 2: DUMP LOCAL DATA
+# ============================================
+echo "[2/5] Dumping local database..."
+
+# Dump with column inserts for compatibility
+# Include Vendor to preserve IDs that match Product.vendorId
+pg_dump "$LOCAL_DB_URL" \
+    --data-only \
+    --no-owner \
+    --no-privileges \
+    --column-inserts \
+    --table='"Vendor"' \
+    --table='"Product"' \
+    --table='"ProductGroup"' \
+    --table='"ProductStandardization"' \
+    -f "$DUMP_FILE"
+
+DUMP_SIZE=$(du -h "$DUMP_FILE" | cut -f1)
+ROW_COUNT=$(grep -c "^INSERT" "$DUMP_FILE" || echo "0")
+echo "  Dump created: $DUMP_FILE ($DUMP_SIZE, ~$ROW_COUNT rows)"
+
+# ============================================
+# STEP 3: UPLOAD DUMP
+# ============================================
+echo "[3/5] Uploading to server..."
+
+scp -q "$DUMP_FILE" "$SERVER:/tmp/pharma_data.sql"
+echo "  Upload complete"
+
+# ============================================
+# STEP 4: RESTORE DATA
+# ============================================
+echo "[4/5] Restoring data on server..."
+
+ssh "$SERVER" << 'ENDSSH'
+set -e
+
+echo "  Disabling foreign key checks..."
+sudo -u postgres psql -d pharma_search -c "SET session_replication_role = replica;"
+
+echo "  Importing data (this may take a while)..."
+sudo -u postgres psql -d pharma_search -f /tmp/pharma_data.sql 2>&1 | \
+    grep -E "^(INSERT|ERROR)" | tail -10 || true
+
+echo "  Re-enabling foreign key checks..."
+sudo -u postgres psql -d pharma_search -c "SET session_replication_role = DEFAULT;"
+
+# Show counts
+echo ""
+echo "  Table counts:"
+sudo -u postgres psql -d pharma_search -t -c "
+SELECT 'Vendor: ' || COUNT(*) FROM \"Vendor\"
+UNION ALL
+SELECT 'Product: ' || COUNT(*) FROM \"Product\"
+UNION ALL
+SELECT 'ProductGroup: ' || COUNT(*) FROM \"ProductGroup\"
+UNION ALL
+SELECT 'ProductStandardization: ' || COUNT(*) FROM \"ProductStandardization\";
+"
+
+# Cleanup
+rm -f /tmp/pharma_data.sql
+ENDSSH
+
+# Local cleanup
+rm -f "$DUMP_FILE"
+
+echo "  Data restored"
+
+# ============================================
+# STEP 5: REBUILD MEILISEARCH INDEX
+# ============================================
+if [[ "$SKIP_MEILI" == false ]]; then
+    echo "[5/5] Rebuilding Meilisearch index..."
+
+    ssh "$SERVER" << ENDSSH
+set -e
+cd /var/www/pharma-search
+
+# Check if backend binary exists
+if [ -f "pharma-server" ]; then
+    echo "  Running index rebuild..."
+    DATABASE_URL="$REMOTE_DB_URL" ./pharma-server rebuild-index 2>&1 | grep -E "(Starting|complete|indexed|Error)" || true
+else
+    echo "  Warning: pharma-server not found, skipping index rebuild"
+fi
+
+# Check Meilisearch status
+if curl -s http://127.0.0.1:7700/health | grep -q "available"; then
+    STATS=\$(curl -s http://127.0.0.1:7700/indexes/products/stats 2>/dev/null || echo "{}")
+    DOC_COUNT=\$(echo "\$STATS" | grep -o '"numberOfDocuments":[0-9]*' | grep -o '[0-9]*' || echo "0")
+    echo "  Meilisearch products indexed: \$DOC_COUNT"
 fi
 ENDSSH
 
-    echo "  Meilisearch rebuild triggered"
+    echo "  Meilisearch index rebuilt"
 else
-    echo "[3/3] Skipping Meilisearch (--pg-only)"
+    echo "[5/5] Skipping Meilisearch rebuild (--skip-meili)"
 fi
 
 # ============================================
@@ -168,6 +190,6 @@ echo "========================================"
 echo "  Data Sync Complete!"
 echo "========================================"
 echo ""
-echo "Verify on server:"
-echo "  ssh $SERVER 'sudo -u postgres psql -d $REMOTE_DB -c \"SELECT COUNT(*) FROM \\\"Product\\\";\"'"
-echo "  ssh $SERVER 'curl -s http://127.0.0.1:7700/indexes/products/stats'"
+echo "Options:"
+echo "  --skip-schema  Skip dropping/recreating tables"
+echo "  --skip-meili   Skip Meilisearch index rebuild"
