@@ -89,7 +89,7 @@ export default function ResetPasswordPage() {
   }
 
   // Handle verification and password reset
-  function onResetSubmit(values: z.infer<typeof resetSchema>) {
+  function onResetSubmit(_values: z.infer<typeof resetSchema>) {
     // In a real app, this would call an API to verify the code and update password
     // For demo purposes, we'll simulate a successful password reset
 

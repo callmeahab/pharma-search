@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Search, X } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { searchProducts, autocomplete, ProductGroup, AutocompleteResult } from "@/lib/api";
+import { autocomplete, ProductGroup, AutocompleteResult } from "@/lib/api";
 import { Product } from "@/types/product";
 import ProductDetailModal from "./ProductDetailModal";
 import { Spinner } from "@/components/ui/spinner";
@@ -40,6 +40,7 @@ const SearchBar: React.FC<SearchBarProps> = ({
         fetchAutocompleteSuggestions(initialTerm);
       }
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialTerm]);
 
   useEffect(() => {
@@ -337,7 +338,7 @@ const SearchBar: React.FC<SearchBarProps> = ({
 
       {hasUnsearchedChanges && (
         <div className="mt-1 text-xs text-health-primary dark:text-health-accent">
-          Pritisnite Enter ili kliknite "Pretraži" da pretražite rezultate
+          Pritisnite Enter ili kliknite &quot;Pretraži&quot; da pretražite rezultate
         </div>
       )}
 

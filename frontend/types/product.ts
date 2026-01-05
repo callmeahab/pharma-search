@@ -72,6 +72,34 @@ export interface SearchResult {
 
 import { humanizeTitle } from "@/lib/utils";
 
+// Serbian pluralization helper
+function pluralize(count: number, one: string, few: string, many: string): string {
+  const absCount = Math.abs(count);
+  const lastTwo = absCount % 100;
+  const lastOne = absCount % 10;
+
+  // Special case for 11-14 (always "many" form)
+  if (lastTwo >= 11 && lastTwo <= 14) {
+    return `${count} ${many}`;
+  }
+
+  if (lastOne === 1) {
+    return `${count} ${one}`;
+  }
+
+  if (lastOne >= 2 && lastOne <= 4) {
+    return `${count} ${few}`;
+  }
+
+  return `${count} ${many}`;
+}
+
+function formatProductDescription(productCount: number, vendorCount: number): string {
+  const products = pluralize(productCount, "proizvod", "proizvoda", "proizvoda");
+  const vendors = pluralize(vendorCount, "apoteci", "apoteke", "apoteka");
+  return `${products} u ${vendors}`;
+}
+
 export function convertBackendProductToProduct(
   backendProduct: BackendProduct,
   group: ProductGroup
@@ -79,7 +107,7 @@ export function convertBackendProductToProduct(
   return {
     id: backendProduct.id,
     name: humanizeTitle(backendProduct.title),
-    description: `${group.product_count || 0} proizvoda u ${group.vendor_count} apoteka`,
+    description: formatProductDescription(group.product_count || 0, group.vendor_count),
     category: "", // No category since we removed badges
     image: backendProduct.thumbnail || "/medicine-placeholder.svg",
     prices: [
@@ -105,7 +133,7 @@ export function convertProductGroupToProducts(group: ProductGroup): Product[] {
   const mainProduct: Product = {
     id: group.id,
     name: productTitle,
-    description: `${group.product_count || 0} proizvoda u ${group.vendor_count} apoteka`,
+    description: formatProductDescription(group.product_count || 0, group.vendor_count),
     category: "",
     image: firstProduct?.thumbnail || "/medicine-placeholder.svg",
     prices: group.products.map((p) => ({

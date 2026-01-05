@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import ThemeToggle from "./ThemeToggle";
 import SearchBar from "./SearchBar";
@@ -17,7 +17,19 @@ const Navbar = () => {
   const [urlSearchTerm, setUrlSearchTerm] = useState("");
   const isMobile = useIsMobile();
 
-  // Get search term from URL safely and listen for popstate (browser back/forward)
+  // Hydrate state from localStorage/URL after mount (legitimate external store sync)
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- syncing with localStorage
+    setIsLoggedIn(localStorage.getItem("isLoggedIn") === "true");
+    try {
+      const params = new URLSearchParams(window.location.search);
+      setUrlSearchTerm(params.get("q") || "");
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  // Listen for popstate (browser back/forward) to update search term
   useEffect(() => {
     const updateFromUrl = () => {
       try {
@@ -28,15 +40,8 @@ const Navbar = () => {
       }
     };
 
-    updateFromUrl();
     window.addEventListener("popstate", updateFromUrl);
     return () => window.removeEventListener("popstate", updateFromUrl);
-  }, []);
-
-  // Check if user is logged in on component mount
-  useEffect(() => {
-    const userLoggedIn = localStorage.getItem("isLoggedIn") === "true";
-    setIsLoggedIn(userLoggedIn);
   }, []);
 
   // Listen for login status changes
@@ -90,10 +95,10 @@ const Navbar = () => {
     <nav className="bg-white shadow-sm py-4 dark:bg-gray-800 dark:border-b dark:border-gray-700 transition-colors duration-200">
       <div className="container mx-auto px-4">
         <div className="flex flex-col md:flex-row justify-between items-center">
-          <div className="w-full flex justify-between items-center mb-4 md:mb-0 md:w-auto">
+          <div className="w-full flex justify-between items-center mb-4 md:mb-0 md:w-auto md:flex-shrink-0">
             <Link
               href="/"
-              className="flex items-center"
+              className="flex items-center justify-start"
               onClick={(e) => {
                 e.preventDefault();
                 handleSearch("");
@@ -136,7 +141,7 @@ const Navbar = () => {
             )}
           </div>
 
-          <div className="flex-grow mx-0 md:mx-4 max-w-full md:max-w-3xl w-full">
+          <div className="flex-grow mx-0 md:mx-6 max-w-full md:max-w-3xl w-full">
             <SearchBar onSearch={handleSearch} initialTerm={urlSearchTerm} />
           </div>
 

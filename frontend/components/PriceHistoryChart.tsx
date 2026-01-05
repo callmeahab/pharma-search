@@ -6,10 +6,9 @@ import {
   YAxis,
   CartesianGrid,
   Tooltip,
-  ResponsiveContainer,
   Legend,
 } from "recharts";
-import { ChartContainer, ChartTooltipContent } from "@/components/ui/chart";
+import { ChartContainer } from "@/components/ui/chart";
 import { Price } from "@/types/product";
 import { format, subDays } from "date-fns";
 import { ChartLine } from "lucide-react";
@@ -28,7 +27,7 @@ const generateHistoryData = (prices: Price[]) => {
   // Generate data for the past 30 days
   for (let i = 30; i >= 0; i--) {
     const date = subDays(today, i);
-    const entry: any = {
+    const entry: Record<string, string | number> = {
       date: format(date, "MMM dd"),
       fullDate: date.toISOString(),
     };
@@ -126,7 +125,15 @@ export const PriceHistoryChart: React.FC<PriceHistoryProps> = ({
 };
 
 // Custom tooltip to show both price and store with lowest price
-const CustomTooltip = ({ active, payload }: any) => {
+interface TooltipPayload {
+  payload: {
+    date: string;
+    lowestPrice: number;
+    lowestStore: string;
+  };
+}
+
+const CustomTooltip = ({ active, payload }: { active?: boolean; payload?: TooltipPayload[] }) => {
   if (active && payload && payload.length) {
     const data = payload[0].payload;
     return (

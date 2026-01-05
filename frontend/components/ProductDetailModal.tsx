@@ -11,13 +11,14 @@ import {
   DialogTabContent,
   DialogClose,
 } from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
 import { Product } from "@/types/product";
 import { PriceComparison } from "./PriceComparison";
 import { PriceHistoryChart } from "./PriceHistoryChart";
-import { Store, Percent, X, Heart } from "lucide-react";
-import { Button } from "./ui/button";
+import { Store, Percent, X, Heart, ExternalLink } from "lucide-react";
 import { useWishlist } from "@/contexts/WishlistContext";
-import { formatPrice } from "@/lib/utils";
+import { formatPrice, formatVendorCount } from "@/lib/utils";
+import { trackStoreClick } from "@/utils/analytics";
 
 interface ProductDetailModalProps {
   product: Product | null;
@@ -30,13 +31,14 @@ const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
   product,
   isOpen,
   onClose,
-  showPriceComparison = false,
+  showPriceComparison: _showPriceComparison = false,
 }) => {
   const { isInWishlist, toggleWishlist } = useWishlist();
   const [imageError, setImageError] = useState(false);
 
   if (!product) return null;
 
+  const isSingleProduct = product.prices.length === 1;
   const lowestPrice = Math.min(...product.prices.map((p) => p.price));
   const highestPrice = Math.max(...product.prices.map((p) => p.price));
   const priceDifference = highestPrice - lowestPrice;
@@ -49,6 +51,107 @@ const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
     toggleWishlist(product);
   };
 
+  const handleBuyClick = () => {
+    const price = product.prices[0];
+    const targetUrl = price.link || price.website || `https://www.${price.store.toLowerCase().replace(/\s+/g, "")}.com`;
+    trackStoreClick(price.store, targetUrl, product.name);
+    window.open(targetUrl, "_blank");
+  };
+
+  // Simplified modal for single product
+  if (isSingleProduct) {
+    const singlePrice = product.prices[0];
+    return (
+      <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
+        <DialogContent className="max-w-xl w-[95vw] sm:w-auto max-h-[90vh] overflow-y-auto bg-white dark:bg-gray-900 shadow-2xl rounded-xl sm:rounded-2xl border border-gray-300 dark:border-gray-700 p-4 sm:p-6">
+          <div className="absolute right-4 top-4 flex items-center space-x-2">
+            <button
+              onClick={handleWishClick}
+              className="p-2 bg-white/80 dark:bg-gray-800/80 rounded-full hover:bg-white dark:hover:bg-gray-800 transition-colors"
+              type="button"
+            >
+              <Heart
+                size={20}
+                className={
+                  isWishlisted
+                    ? "fill-red-500 text-red-500"
+                    : "text-gray-500 hover:text-red-500 transition-colors"
+                }
+              />
+            </button>
+            <DialogClose className="rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100">
+              <X className="h-4 w-4" />
+              <span className="sr-only">Close</span>
+            </DialogClose>
+          </div>
+
+          <DialogHeader className="pr-16">
+            <DialogTitle className="text-lg sm:text-xl font-bold break-words">
+              {product.name}
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="flex flex-col sm:flex-row gap-5 mt-4">
+            <div className="w-full sm:w-48 h-48 flex-shrink-0 overflow-hidden rounded-lg border border-gray-200 dark:border-gray-700 bg-white">
+              {/* eslint-disable-next-line @next/next/no-img-element -- external vendor images */}
+              <img
+                src={imageError ? "/medicine-placeholder.svg" : product.image}
+                alt={product.name}
+                className="h-full w-full object-contain"
+                onError={() => setImageError(true)}
+              />
+            </div>
+
+            <div className="flex-1 flex flex-col">
+              <DialogDescription className="text-sm text-gray-600 dark:text-gray-300 mb-4">
+                {product.description}
+              </DialogDescription>
+
+              <div className="space-y-2 text-sm text-gray-600 dark:text-gray-400 mb-4">
+                {product.category && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-gray-500 dark:text-gray-500">Kategorija:</span>
+                    <span className="text-gray-800 dark:text-gray-200">{product.category}</span>
+                  </div>
+                )}
+                <div className="flex items-center gap-2">
+                  <span className="text-gray-500 dark:text-gray-500">Prodavac:</span>
+                  <span className="text-orange-600 dark:text-orange-400 font-medium">{singlePrice.store}</span>
+                </div>
+                {singlePrice.inStock !== undefined && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-gray-500 dark:text-gray-500">Dostupnost:</span>
+                    <span className={singlePrice.inStock ? "text-green-600 dark:text-green-400" : "text-red-500"}>
+                      {singlePrice.inStock ? "Na stanju" : "Nije na stanju"}
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              <div className="mt-auto pt-4 border-t border-gray-200 dark:border-gray-700">
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-gray-500 dark:text-gray-400 text-sm">Cena:</span>
+                  <span className="text-2xl font-bold text-health-primary dark:text-green-400">
+                    {formatPrice(singlePrice.price)}
+                  </span>
+                </div>
+
+                <Button
+                  onClick={handleBuyClick}
+                  className="w-full bg-health-primary hover:bg-health-secondary text-white"
+                >
+                  <ExternalLink size={16} className="mr-2" />
+                  Kupi na {singlePrice.store}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+    );
+  }
+
+  // Full modal for multiple products
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="max-w-6xl w-[95vw] sm:w-auto max-h-[90vh] sm:max-h-[95vh] overflow-y-auto bg-white dark:bg-gray-900 shadow-2xl drop-shadow-xl rounded-xl sm:rounded-2xl border border-gray-300 dark:border-gray-700 ring-1 ring-black/10 p-4 sm:p-6">
@@ -93,6 +196,7 @@ const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="flex flex-col space-y-4">
               <div className="aspect-square w-full overflow-hidden rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900">
+                {/* eslint-disable-next-line @next/next/no-img-element -- external vendor images */}
                 <img
                   src={imageError ? "/medicine-placeholder.svg" : product.image}
                   alt={product.name}
@@ -128,8 +232,7 @@ const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
               <div className="bg-gray-100 dark:bg-gray-800 rounded-xl p-4 flex items-center justify-center space-x-2 border border-gray-200 dark:border-gray-700 shadow-sm">
                 <Store className="text-health-secondary" size={20} />
                 <span className="text-gray-600 dark:text-gray-300">
-                  Dostupno u {product.vendorCount || product.prices.length}{" "}
-                  apoteka
+                  Dostupno u {formatVendorCount(product.vendorCount || product.prices.length)}
                 </span>
               </div>
             </div>

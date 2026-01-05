@@ -14,29 +14,28 @@ interface UserData {
   address: string;
 }
 
+const defaultUserData: UserData = {
+  firstName: '',
+  lastName: '',
+  email: '',
+  phone: '',
+  address: ''
+};
+
 const UserSettings = () => {
-  const [userData, setUserData] = useState<UserData>({
-    firstName: '',
-    lastName: '',
-    email: '',
-    phone: '',
-    address: ''
-  });
-  
+  const [userData, setUserData] = useState<UserData>(defaultUserData);
+
   const { toast } = useToast();
-  
-  // Load user data from localStorage
+
+  // Hydrate from localStorage after mount (legitimate external store sync)
   useEffect(() => {
-    const savedUserData = localStorage.getItem('userData');
-    if (savedUserData) {
+    const saved = localStorage.getItem('userData');
+    if (saved) {
       try {
-        const parsedData = JSON.parse(savedUserData);
-        setUserData(prevData => ({
-          ...prevData,
-          ...parsedData
-        }));
-      } catch (error) {
-        console.error('Failed to parse user data:', error);
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- syncing with localStorage
+        setUserData(prev => ({ ...prev, ...JSON.parse(saved) }));
+      } catch {
+        // ignore parse errors
       }
     }
   }, []);

@@ -95,3 +95,36 @@ export function formatPrice(price: number): string {
     minimumFractionDigits: 0,
   }).format(price);
 }
+
+/**
+ * Serbian pluralization helper
+ * Serbian has 3 forms: singular (1), few (2-4), many (5+, 0, 11-14)
+ */
+export function pluralizeSr(count: number, one: string, few: string, many: string): string {
+  const absCount = Math.abs(count);
+  const lastTwo = absCount % 100;
+  const lastOne = absCount % 10;
+
+  // Special case for 11-14 (always "many" form)
+  if (lastTwo >= 11 && lastTwo <= 14) {
+    return many;
+  }
+
+  if (lastOne === 1) {
+    return one;
+  }
+
+  if (lastOne >= 2 && lastOne <= 4) {
+    return few;
+  }
+
+  return many;
+}
+
+/**
+ * Format vendor count with proper Serbian grammar
+ */
+export function formatVendorCount(count: number): string {
+  const word = pluralizeSr(count, "apoteci", "apoteke", "apoteka");
+  return `${count} ${word}`;
+}

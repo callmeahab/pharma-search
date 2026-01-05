@@ -236,6 +236,6 @@ export async function submitContact(payload: {
   name: string;
   email: string;
   message: string;
-}): Promise<any> {
-  return grpcClient.submitContact(payload);
+}): Promise<void> {
+  await grpcClient.submitContact(payload);
 }

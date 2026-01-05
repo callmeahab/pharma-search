@@ -16,18 +16,20 @@ export default function ProfilePage() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [userEmail, setUserEmail] = useState("");
   const [userName, setUserName] = useState("");
+  const [mounted, setMounted] = useState(false);
   const [activeTab, setActiveTab] = useState<"settings" | "wishlist">(
     "settings"
   );
 
+  // Hydrate from localStorage after mount (legitimate external store sync)
   useEffect(() => {
-    // Check if user is logged in
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- syncing mounted state
+    setMounted(true);
     const loggedIn = localStorage.getItem("isLoggedIn") === "true";
     if (!loggedIn) {
       router.push("/prijava");
       return;
     }
-
     setIsLoggedIn(loggedIn);
     setUserEmail(localStorage.getItem("userEmail") || "");
     setUserName(localStorage.getItem("userName") || "");
@@ -44,7 +46,7 @@ export default function ProfilePage() {
     router.push("/");
   };
 
-  if (!isLoggedIn) {
+  if (!mounted || !isLoggedIn) {
     return (
       <div className="min-h-screen flex flex-col bg-health-light dark:bg-gray-900">
         <Navbar />

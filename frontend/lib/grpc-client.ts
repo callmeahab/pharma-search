@@ -2,7 +2,6 @@ import { createClient } from "@connectrpc/connect";
 import { createConnectTransport } from "@connectrpc/connect-web";
 import { PharmaAPI } from "./gen/service_connect";
 import type {
-  AutocompleteResponse,
   GenericJsonResponse,
   HealthResponse,
 } from "./gen/service_pb";
@@ -34,6 +33,7 @@ function getClient() {
   return client;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function convertGenericResponse(response: GenericJsonResponse): any {
   if (response.data) {
     return response.data.toJson();

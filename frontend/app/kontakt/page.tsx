@@ -28,7 +28,7 @@ export default function ContactPage() {
       setName("");
       setEmail("");
       setMessage("");
-    } catch (err) {
+    } catch {
       toast({ title: "Greška", description: "Pokušajte ponovo.", variant: "destructive" });
     } finally {
       setSubmitting(false);

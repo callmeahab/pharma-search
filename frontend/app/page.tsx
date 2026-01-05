@@ -1,7 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useMemo } from "react";
-import { useWishlist } from "@/contexts/WishlistContext";
+import React, { useState, useEffect, useMemo, useCallback } from "react";
 import Navbar from "@/components/Navbar";
 import HeroSection from "@/components/HeroSection";
 import ProductList from "@/components/ProductList";
@@ -12,13 +11,11 @@ import Footer from "@/components/Footer";
 import { FilterSidebar, FilterState, defaultFilters, Facets } from "@/components/FilterSidebar";
 import { FilterChips } from "@/components/FilterChips";
 import { Button } from "@/components/ui/button";
-import { Filter, X } from "lucide-react";
+import { Filter } from "lucide-react";
 
 export const dynamic = 'force-dynamic';
 
 export default function HomePage() {
-  const { wishlist } = useWishlist();
-
   const [searchTerm, setSearchTerm] = useState("");
   const [apiSearchResults, setApiSearchResults] = useState<SearchResult | null>(null);
   const [featuredProducts, setFeaturedProducts] = useState<SearchResult | null>(null);
@@ -30,7 +27,7 @@ export default function HomePage() {
   const [filters, setFilters] = useState<FilterState>(defaultFilters);
   const [showMobileFilters, setShowMobileFilters] = useState(false);
 
-  const loadFeaturedProducts = async () => {
+  const loadFeaturedProducts = useCallback(async () => {
     setIsLoadingFeatured(true);
     try {
       const featured = await getFeaturedProducts({ limit: 24 });
@@ -46,37 +43,9 @@ export default function HomePage() {
     } finally {
       setIsLoadingFeatured(false);
     }
-  };
-
-  useEffect(() => {
-    const searchParams = new URLSearchParams(window.location.search);
-    const urlSearchTerm = searchParams.get("q");
-    if (urlSearchTerm && urlSearchTerm.trim()) {
-      setSearchTerm(urlSearchTerm);
-      setUseApiSearch(true);
-      handleSearch(urlSearchTerm);
-    } else {
-      loadFeaturedProducts();
-    }
   }, []);
 
-  useEffect(() => {
-    const handleUrlSearchChanged = (event: CustomEvent) => {
-      const { searchTerm: newSearchTerm } = event.detail;
-      if (newSearchTerm !== searchTerm) {
-        setSearchTerm(newSearchTerm);
-        setUseApiSearch(true);
-        handleSearch(newSearchTerm);
-      }
-    };
-
-    window.addEventListener("urlSearchChanged", handleUrlSearchChanged as EventListener);
-    return () => {
-      window.removeEventListener("urlSearchChanged", handleUrlSearchChanged as EventListener);
-    };
-  }, [searchTerm]);
-
-  const handleSearch = async (term: string) => {
+  const handleSearch = useCallback(async (term: string) => {
     if (!term || !term.trim()) {
       setApiSearchResults(null);
       setUseApiSearch(false);
@@ -99,7 +68,35 @@ export default function HomePage() {
     } finally {
       setIsSearching(false);
     }
-  };
+  }, [loadFeaturedProducts]);
+
+  useEffect(() => {
+    const searchParams = new URLSearchParams(window.location.search);
+    const urlSearchTerm = searchParams.get("q");
+    if (urlSearchTerm && urlSearchTerm.trim()) {
+      setSearchTerm(urlSearchTerm);
+      setUseApiSearch(true);
+      handleSearch(urlSearchTerm);
+    } else {
+      loadFeaturedProducts();
+    }
+  }, [handleSearch, loadFeaturedProducts]);
+
+  useEffect(() => {
+    const handleUrlSearchChanged = (event: CustomEvent) => {
+      const { searchTerm: newSearchTerm } = event.detail;
+      if (newSearchTerm !== searchTerm) {
+        setSearchTerm(newSearchTerm);
+        setUseApiSearch(true);
+        handleSearch(newSearchTerm);
+      }
+    };
+
+    window.addEventListener("urlSearchChanged", handleUrlSearchChanged as EventListener);
+    return () => {
+      window.removeEventListener("urlSearchChanged", handleUrlSearchChanged as EventListener);
+    };
+  }, [searchTerm, handleSearch]);
 
   const facets: Facets | undefined = apiSearchResults?.facets as Facets | undefined;
 
@@ -175,7 +172,7 @@ export default function HomePage() {
     }
 
     return groups;
-  }, [apiSearchResults?.groups, filters]);
+  }, [apiSearchResults?.groups, filters, priceRange]);
 
   const displayGroups = filters.groupSimilar
     ? filteredAndSortedGroups
@@ -330,20 +327,15 @@ export default function HomePage() {
             className="absolute inset-0 bg-black/50 animate-in fade-in duration-200"
             onClick={() => setShowMobileFilters(false)}
           />
-          <div className="absolute right-0 top-0 h-full w-[90%] bg-white dark:bg-gray-900 overflow-y-auto shadow-xl animate-in slide-in-from-right duration-300">
+          <div className="absolute right-0 top-0 h-full w-full max-w-[400px] bg-white dark:bg-gray-900 overflow-y-auto shadow-xl animate-in slide-in-from-right duration-300">
             <div className="p-4">
-              <div className="flex justify-between items-center mb-4">
-                <h3 className="text-lg font-semibold">Filteri</h3>
-                <Button variant="ghost" size="sm" onClick={() => setShowMobileFilters(false)}>
-                  <X className="h-5 w-5" />
-                </Button>
-              </div>
               <FilterSidebar
                 filters={filters}
                 onFiltersChange={setFilters}
                 facets={facets}
                 priceRange={priceRange}
                 onClose={() => setShowMobileFilters(false)}
+                className="border-0"
               />
             </div>
           </div>

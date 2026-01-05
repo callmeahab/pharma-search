@@ -1,6 +1,14 @@
-
 import { Product } from "@/types/product";
 import { toast } from "@/components/ui/use-toast";
+
+interface PriceNotification {
+  productId: string;
+  productName: string;
+  previousPrice: number;
+  currentPrice: number;
+  priceDrop: number;
+  percentDrop: number;
+}
 
 // This would typically be a server-side function or a cron job
 // For this example, we'll simulate it with a function that could be called periodically
@@ -41,7 +49,7 @@ export const saveCurrentPrices = (products: Product[]) => {
 };
 
 // Function to show notifications for price drops
-export const showPriceDropNotifications = (notifications: any[]) => {
+export const showPriceDropNotifications = (notifications: PriceNotification[]) => {
   for (const notification of notifications) {
     toast({
       title: "Snižena cena!",

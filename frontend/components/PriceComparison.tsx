@@ -12,14 +12,26 @@ interface PriceComparisonProps {
   productName?: string; // Add productName as an optional prop
 }
 
+interface PriceDataItem {
+  title: string;
+  store: string;
+  price: number;
+  inStock: boolean;
+  link?: string;
+  website?: string;
+  is_best_deal?: boolean;
+  is_worst_deal?: boolean;
+  diff_from_avg?: number;
+}
+
 export const PriceComparison: React.FC<PriceComparisonProps> = ({
   prices,
   products,
-  isInCard = false,
+  isInCard: _isInCard = false,
   productName,
 }) => {
   // Handle both legacy prices and new products format
-  const priceData = products
+  const priceData: PriceDataItem[] = products
     ? products.map(product => ({
       title: product.title,
       store: product.vendor.name,
@@ -34,14 +46,14 @@ export const PriceComparison: React.FC<PriceComparisonProps> = ({
     : (prices || []).map(p => ({
       ...p,
       // Use individual product title if available, otherwise use store name
-      title: (p as any).title || p.store,
+      title: (p as Price & { title?: string }).title || p.store,
     }));
 
   // Sort prices from lowest to highest
   const sortedPrices = [...priceData].sort((a, b) => a.price - b.price);
   const lowestPrice = sortedPrices[0]?.price || 0;
 
-  const handleStoreClick = (price: any) => {
+  const handleStoreClick = (price: PriceDataItem) => {
     // Track store link click
     // Milose Markovicu, prosledi link od proizvoda sa BackendProduct u Product, zbog analitike
     const targetUrl = price.link || price.website || `https://www.${price.store.toLowerCase().replace(/\s+/g, "")}.com`;
@@ -51,76 +63,72 @@ export const PriceComparison: React.FC<PriceComparisonProps> = ({
     window.open(targetUrl, "_blank");
   };
 
-  const PriceList = () => (
-    <div className="space-y-2">
-      {sortedPrices.map((price, index) => (
-        <button
-          key={`${price.store}-${index}`}
-          onClick={() => handleStoreClick(price)}
-          className={cn(
-            "flex justify-between items-center p-3 rounded transition-colors duration-200 w-full text-left gap-3",
-            price.is_best_deal || index === 0
-              ? "bg-health-light dark:bg-green-800/30 border-l-4 border-health-primary dark:border-green-500"
-              : "hover:bg-gray-50 dark:hover:bg-gray-700 border-l-4 border-transparent"
-          )}
-          aria-label={`Visit ${price.store} website`}
-        >
-          <div className="flex items-center flex-1 min-w-0 pr-4">
-            <div className="flex flex-col min-w-0">
-              <span className="font-medium dark:text-gray-200 hover:text-health-primary dark:hover:text-green-300 inline-flex items-center group gap-1 min-w-0 whitespace-normal break-words">
-                <span className="whitespace-normal break-words">
-                  {price.title || price.store}
-                </span>
-                <ExternalLink
-                  size={14}
-                  className="ml-1 hidden sm:inline-block opacity-60 group-hover:opacity-100 transition-opacity flex-shrink-0"
-                />
-              </span>
-              <span className="text-xs font-medium text-orange-600 dark:text-orange-400 truncate">{price.store}</span>
-            </div>
-          </div>
-          <div className="flex flex-col items-end shrink-0 text-right">
-            <span
-              className={cn(
-                "font-semibold",
-                price.is_best_deal || index === 0
-                  ? "text-health-primary dark:text-green-300"
-                  : "dark:text-gray-200"
-              )}
-            >
-              {formatPrice(price.price)}
-            </span>
-
-            {index > 0 && (
-              <span
-                className={cn(
-                  "text-xs",
-                  price.price - lowestPrice > lowestPrice * 0.3
-                    ? "text-red-500 dark:text-red-400 font-medium"
-                    : "text-gray-500 dark:text-gray-400"
-                )}
-              >
-                +{formatPrice(price.price - lowestPrice)}
-              </span>
-            )}
-
-            {price.diff_from_avg && (
-              <span className="text-xs text-gray-500 dark:text-gray-400">
-                {price.diff_from_avg > 0 ? '+' : ''}{formatPrice(price.diff_from_avg)} from avg
-              </span>
-            )}
-          </div>
-        </button>
-      ))}
-    </div>
-  );
-
   return (
     <div className="w-full mt-2">
       <h4 className="text-lg font-medium mb-3 dark:text-gray-200">
         Poređenje cena
       </h4>
-      <PriceList />
+      <div className="space-y-2">
+        {sortedPrices.map((price, index) => (
+          <button
+            key={`${price.store}-${index}`}
+            onClick={() => handleStoreClick(price)}
+            className={cn(
+              "flex justify-between items-center p-3 rounded transition-colors duration-200 w-full text-left gap-3",
+              price.is_best_deal || index === 0
+                ? "bg-health-light dark:bg-green-800/30 border-l-4 border-health-primary dark:border-green-500"
+                : "hover:bg-gray-50 dark:hover:bg-gray-700 border-l-4 border-transparent"
+            )}
+            aria-label={`Visit ${price.store} website`}
+          >
+            <div className="flex items-center flex-1 min-w-0 pr-4">
+              <div className="flex flex-col min-w-0">
+                <span className="font-medium dark:text-gray-200 hover:text-health-primary dark:hover:text-green-300 inline-flex items-center group gap-1 min-w-0 whitespace-normal break-words">
+                  <span className="whitespace-normal break-words">
+                    {price.title || price.store}
+                  </span>
+                  <ExternalLink
+                    size={14}
+                    className="ml-1 hidden sm:inline-block opacity-60 group-hover:opacity-100 transition-opacity flex-shrink-0"
+                  />
+                </span>
+                <span className="text-xs font-medium text-orange-600 dark:text-orange-400 truncate">{price.store}</span>
+              </div>
+            </div>
+            <div className="flex flex-col items-end shrink-0 text-right">
+              <span
+                className={cn(
+                  "font-semibold",
+                  price.is_best_deal || index === 0
+                    ? "text-health-primary dark:text-green-300"
+                    : "dark:text-gray-200"
+                )}
+              >
+                {formatPrice(price.price)}
+              </span>
+
+              {index > 0 && (
+                <span
+                  className={cn(
+                    "text-xs",
+                    price.price - lowestPrice > lowestPrice * 0.3
+                      ? "text-red-500 dark:text-red-400 font-medium"
+                      : "text-gray-500 dark:text-gray-400"
+                  )}
+                >
+                  +{formatPrice(price.price - lowestPrice)}
+                </span>
+              )}
+
+              {price.diff_from_avg && (
+                <span className="text-xs text-gray-500 dark:text-gray-400">
+                  {price.diff_from_avg > 0 ? '+' : ''}{formatPrice(price.diff_from_avg)} from avg
+                </span>
+              )}
+            </div>
+          </button>
+        ))}
+      </div>
     </div>
   );
 };

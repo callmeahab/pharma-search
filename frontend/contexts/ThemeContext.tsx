@@ -12,25 +12,18 @@ type ThemeContextType = {
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 
 export const ThemeProvider = ({ children }: { children: React.ReactNode }) => {
-  // Start with light theme as default (for SSR)
   const [theme, setTheme] = useState<Theme>("light");
-  const [isClient, setIsClient] = useState(false);
+  const [mounted, setMounted] = useState(false);
 
-  // Effect to run only on client side
+  // Hydrate theme from localStorage after mount (legitimate external store sync)
   useEffect(() => {
-    setIsClient(true);
-
-    // Check if user has a saved preference
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- syncing mounted state
+    setMounted(true);
     const savedTheme = localStorage.getItem("theme") as Theme;
-
     if (savedTheme) {
       setTheme(savedTheme);
-    } else {
-      // Check if user has a system preference
-      const prefersDark = window.matchMedia(
-        "(prefers-color-scheme: dark)"
-      ).matches;
-      setTheme(prefersDark ? "dark" : "light");
+    } else if (window.matchMedia("(prefers-color-scheme: dark)").matches) {
+      setTheme("dark");
     }
   }, []);
 
@@ -39,8 +32,7 @@ export const ThemeProvider = ({ children }: { children: React.ReactNode }) => {
   };
 
   useEffect(() => {
-    // Only run on client side
-    if (!isClient) return;
+    if (!mounted) return;
 
     // Update localStorage
     localStorage.setItem("theme", theme);
@@ -51,7 +43,7 @@ export const ThemeProvider = ({ children }: { children: React.ReactNode }) => {
     } else {
       document.documentElement.classList.remove("dark");
     }
-  }, [theme, isClient]);
+  }, [theme, mounted]);
 
   return (
     <ThemeContext.Provider value={{ theme, toggleTheme }}>

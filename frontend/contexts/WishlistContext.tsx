@@ -27,38 +27,35 @@ export const WishlistProvider: React.FC<{ children: React.ReactNode }> = ({
 }) => {
   const [wishlist, setWishlist] = useState<Product[]>([]);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
-  const [isClient, setIsClient] = useState(false);
+  const [mounted, setMounted] = useState(false);
 
-  // Set client flag and check if user is logged in
+  // Hydrate from localStorage after mount (legitimate external store sync)
   useEffect(() => {
-    setIsClient(true);
-    // This is a simple simulation - in a real app, you'd use your auth system
-    const userLoggedIn = localStorage.getItem("isLoggedIn") === "true";
-    setIsLoggedIn(userLoggedIn);
-  }, []);
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- syncing mounted state
+    setMounted(true);
+    const loggedIn = localStorage.getItem("isLoggedIn") === "true";
+    setIsLoggedIn(loggedIn);
 
-  // Load wishlist from localStorage on initial render
-  useEffect(() => {
-    if (!isClient) return;
-
-    const savedWishlist = localStorage.getItem("wishlist");
-    if (savedWishlist && isLoggedIn) {
-      try {
-        setWishlist(JSON.parse(savedWishlist));
-      } catch (error) {
-        console.error("Failed to parse wishlist:", error);
+    if (loggedIn) {
+      const saved = localStorage.getItem("wishlist");
+      if (saved) {
+        try {
+          setWishlist(JSON.parse(saved));
+        } catch {
+          // ignore parse errors
+        }
       }
     }
-  }, [isLoggedIn, isClient]);
+  }, []);
 
   // Save wishlist to localStorage whenever it changes
   useEffect(() => {
-    if (!isClient) return;
+    if (!mounted) return;
 
     if (isLoggedIn && wishlist.length > 0) {
       localStorage.setItem("wishlist", JSON.stringify(wishlist));
     }
-  }, [wishlist, isLoggedIn, isClient]);
+  }, [wishlist, isLoggedIn, mounted]);
 
   const isInWishlist = (productId: string) => {
     return wishlist.some((item) => item.id === productId);

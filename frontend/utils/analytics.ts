@@ -1,12 +1,10 @@
 import ReactGA from "react-ga4";
 declare global {
   interface Window {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     dataLayer: any[];
   }
 }
-
-// Cookie consent state - default to true as analytics cookies are required
-let cookieConsentGiven = true;
 
 // Helper function to get readable timestamp in dd.MM.yyyy, HH:mm:ss format
 const getReadableTimestamp = () => {
@@ -22,8 +20,7 @@ const getReadableTimestamp = () => {
 };
 
 // Set cookie consent status
-export const setCookieConsent = (hasConsent: boolean) => {
-  cookieConsentGiven = true; // Always set to true as analytics are required
+export const setCookieConsent = (_hasConsent: boolean) => {
 
   // Initialize GA if not already done
   ReactGA.initialize("G-WECSBGJW8J");
@@ -43,7 +40,6 @@ export const setCookieConsent = (hasConsent: boolean) => {
 // Initialize Google Analytics with your tracking ID
 export const initGA = () => {
   // Always initialize with full functionality as analytics are required
-  cookieConsentGiven = true;
   ReactGA.initialize("G-WECSBGJW8J");
 
   window.dataLayer = window.dataLayer || [];

@@ -47,6 +47,7 @@ const UserWishlist = () => {
             className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden"
           >
             <div className="aspect-w-16 aspect-h-9">
+              {/* eslint-disable-next-line @next/next/no-img-element -- external vendor images */}
               <img
                 src={product.image}
                 alt={product.name}

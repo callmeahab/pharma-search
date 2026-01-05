@@ -1,6 +1,7 @@
 import React from 'react';
 import { AspectRatio } from "@/components/ui/aspect-ratio";
 import { useIsMobile } from '@/hooks/use-mobile';
+import Image from "next/image";
 
 const HeroSection = () => {
   const isMobile = useIsMobile();
@@ -8,9 +9,11 @@ const HeroSection = () => {
   return (
     <div className="relative mb-10">
       <AspectRatio ratio={isMobile ? 16 / 9 : 3 / 1} className="bg-muted overflow-hidden rounded-lg">
-        <img 
+        <Image 
           src="/lovable-uploads/dc9443f8-c0b9-4cef-b371-25aa23f36278.png" 
-          alt="Prirodni lekovi i medicinski proizvodi" 
+          alt="" 
+          layout="fill" 
+          objectFit="cover" 
           className="object-cover w-full h-full brightness-[0.8]"
         />
         <div className="absolute inset-0 flex flex-col justify-center items-center text-center p-4 md:p-10">
