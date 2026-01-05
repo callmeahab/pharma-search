@@ -120,39 +120,106 @@ buf generate proto
 
 ## ML Pipeline
 
-Extracts structured data from product titles:
+Extracts structured data from product titles using spaCy NER:
 
 ```
-Input:  "VITAMIN D3 2000IU 60 KAPSULA"
-Output: { name: "Vitamin D3", dosage: 2000, unit: "IU", quantity: 60, form: "kapsula" }
+Input:  "Solgar Vitamin D3 2000IU 60 kapsula"
+Output: { brand: "Solgar", dosage: "2000IU", form: "kapsula", quantity: "60" }
+```
+
+### Setup
+
+```bash
+cd ml
+python -m venv venv && source venv/bin/activate
+pip install -r requirements.txt
+
+# GPU acceleration (optional)
+pip install 'spacy[apple]'    # macOS Apple Silicon
+pip install 'spacy[cuda12x]'  # NVIDIA GPU
 ```
 
 ### Training
 
 ```bash
-cd ml
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-python train_ner.py
+python train_multi_ner.py
 ```
 
-### Batch Processing
+### Populate Database
+
+Extract entities from product titles and update the database:
 
 ```bash
-python batch_processor.py  # Processes new products
+# Show stats and sample extractions (dry run)
+python populate_missing_data.py --dry-run
+
+# Process products with missing data
+python populate_missing_data.py
+
+# Re-process all products
+python populate_missing_data.py --all
+
+# Limit number of products
+python populate_missing_data.py --limit 1000
 ```
 
 ## Deployment
 
-Server deployment scripts in `deploy/`:
+Three scripts in `deploy/` handle server deployment:
+
+### Initial Server Setup
+
+Run once on a fresh Ubuntu server:
 
 ```bash
-# Full deployment
-./deploy/01-system-setup.sh      # System packages
-./deploy/02-postgresql-setup.sh  # Database
-./deploy/02a-apply-migrations.sh # Migrations
-./deploy/03-app-setup.sh         # Go backend
-./deploy/04-nginx-setup.sh       # Reverse proxy
+# SSH into server and run setup
+scp deploy/setup.sh root@your-server:/tmp/
+ssh root@your-server 'bash /tmp/setup.sh'
+```
+
+This installs and configures:
+- Node.js, Bun, PM2, Go 1.24
+- PostgreSQL 15, Meilisearch
+- Nginx reverse proxy
+- UFW firewall
+
+### Deploy Code
+
+Run from your local machine to deploy updates:
+
+```bash
+./deploy/deploy.sh root@your-server
+```
+
+This will:
+- Sync code via rsync (excludes ml/, scrapers/, node_modules/)
+- Build frontend (`bun install` + `bun run build`)
+- Build backend (`go build`)
+- Apply database migrations
+- Restart PM2 processes
+
+### Sync Data
+
+Copy database and rebuild search index:
+
+```bash
+# Sync PostgreSQL and rebuild Meilisearch index
+./deploy/sync-data.sh root@your-server
+
+# PostgreSQL only
+./deploy/sync-data.sh root@your-server --pg-only
+
+# Rebuild Meilisearch index only
+./deploy/sync-data.sh root@your-server --meili-only
+```
+
+### SSL Certificate
+
+After initial setup, configure SSL:
+
+```bash
+ssh root@your-server
+certbot --nginx -d yourdomain.com -d www.yourdomain.com
 ```
 
 ## Environment Variables
