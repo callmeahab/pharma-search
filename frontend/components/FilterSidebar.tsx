@@ -13,6 +13,9 @@ import {
 import { ChevronDown, X, Filter } from "lucide-react";
 import { cn } from "@/lib/utils";
 
+export type GroupingMode = "strict" | "normal" | "loose";
+export type GroupSortBy = "relevance" | "price_asc" | "price_desc" | "savings" | "vendors" | "products";
+
 export interface FilterState {
   minPrice: number;
   maxPrice: number;
@@ -22,6 +25,8 @@ export interface FilterState {
   quantities: string[];
   forms: string[];
   groupSimilar: boolean;
+  groupingMode: GroupingMode;
+  sortGroupsBy: GroupSortBy;
   sortBy: "relevance" | "price_asc" | "price_desc" | "savings" | "vendors";
 }
 
@@ -50,6 +55,8 @@ const defaultFilters: FilterState = {
   quantities: [],
   forms: [],
   groupSimilar: true,
+  groupingMode: "normal",
+  sortGroupsBy: "relevance",
   sortBy: "relevance",
 };
 
@@ -219,8 +226,24 @@ export const FilterSidebar: React.FC<FilterSidebarProps> = ({
       )}
 
       <div className="space-y-4">
-        {/* Sort */}
-        <FilterSection title="Sortiraj po">
+        {/* Sort Groups */}
+        <FilterSection title="Sortiraj grupe">
+          <select
+            value={filters.sortGroupsBy}
+            onChange={(e) => updateFilter("sortGroupsBy", e.target.value as GroupSortBy)}
+            className="w-full p-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
+          >
+            <option value="relevance">Relevantnost</option>
+            <option value="price_asc">Najniža cena</option>
+            <option value="price_desc">Najviša cena</option>
+            <option value="savings">Najveća ušteda</option>
+            <option value="vendors">Najviše apoteka</option>
+            <option value="products">Najviše proizvoda</option>
+          </select>
+        </FilterSection>
+
+        {/* Sort Products */}
+        <FilterSection title="Sortiraj proizvode">
           <select
             value={filters.sortBy}
             onChange={(e) => updateFilter("sortBy", e.target.value as FilterState["sortBy"])}
@@ -234,17 +257,41 @@ export const FilterSidebar: React.FC<FilterSidebarProps> = ({
           </select>
         </FilterSection>
 
-        {/* Grouping toggle */}
-        <FilterSection title="Prikaz">
-          <div className="flex items-center space-x-2">
-            <Checkbox
-              id="groupSimilar"
-              checked={filters.groupSimilar}
-              onCheckedChange={(checked) => updateFilter("groupSimilar", !!checked)}
-            />
-            <Label htmlFor="groupSimilar" className="text-sm text-gray-700 dark:text-gray-300 cursor-pointer">
-              Grupiši slične proizvode
-            </Label>
+        {/* Grouping options */}
+        <FilterSection title="Grupisanje">
+          <div className="space-y-3">
+            <div className="flex items-center space-x-2">
+              <Checkbox
+                id="groupSimilar"
+                checked={filters.groupSimilar}
+                onCheckedChange={(checked) => updateFilter("groupSimilar", !!checked)}
+              />
+              <Label htmlFor="groupSimilar" className="text-sm text-gray-700 dark:text-gray-300 cursor-pointer">
+                Grupiši slične proizvode
+              </Label>
+            </div>
+
+            {filters.groupSimilar && (
+              <div className="pl-6 space-y-2">
+                <Label className="text-xs text-gray-500 dark:text-gray-400">
+                  Tolerancija grupisanja:
+                </Label>
+                <select
+                  value={filters.groupingMode}
+                  onChange={(e) => updateFilter("groupingMode", e.target.value as GroupingMode)}
+                  className="w-full p-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
+                >
+                  <option value="strict">Strogo (tačna podudaranja)</option>
+                  <option value="normal">Normalno (ime + doza)</option>
+                  <option value="loose">Labavo (samo ime)</option>
+                </select>
+                <p className="text-xs text-gray-500 dark:text-gray-400">
+                  {filters.groupingMode === "strict" && "Samo identični proizvodi se grupišu"}
+                  {filters.groupingMode === "normal" && "Proizvodi sa istim imenom i dozom se grupišu"}
+                  {filters.groupingMode === "loose" && "Sve varijante istog proizvoda (sve doze, pakovanja)"}
+                </p>
+              </div>
+            )}
           </div>
         </FilterSection>
 

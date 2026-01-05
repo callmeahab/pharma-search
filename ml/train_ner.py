@@ -43,12 +43,11 @@ def load_training_data_from_db() -> List[Dict[str, Any]]:
 
     # Get products with dosage information
     cur.execute("""
-        SELECT title, normalized_name, dosage_value, dosage_unit
+        SELECT title, "normalizedName", "dosageValue", "dosageUnit"
         FROM "ProductStandardization"
-        WHERE dosage_value IS NOT NULL
-          AND dosage_unit IS NOT NULL
-          AND dosage_value > 0
-        LIMIT 50000
+        WHERE "dosageValue" IS NOT NULL
+          AND "dosageUnit" IS NOT NULL
+          AND "dosageValue" > 0
     """)
 
     rows = cur.fetchall()

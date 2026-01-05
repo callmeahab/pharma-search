@@ -5,6 +5,7 @@ import {
   ProductGroup,
   SearchResult,
   BackendProduct,
+  GroupingMode,
 } from "@/types/product";
 
 
@@ -18,6 +19,7 @@ export interface SearchOptions {
   categories?: string[];
   forms?: string[];
   searchType?: "auto" | "similarity" | "database";
+  groupingMode?: GroupingMode;
 }
 
 export type { ProductGroup, SearchResult, BackendProduct as Product };
@@ -45,7 +47,7 @@ export async function searchProducts(
   options?: SearchOptions
 ): Promise<SearchResult> {
   const flatResult = await grpcClient.searchProducts(query, options) as FlatSearchResult;
-  return convertFlatToGrouped(flatResult);
+  return convertFlatToGrouped(flatResult, options?.groupingMode || "normal");
 }
 
 export async function searchProductsStreaming(

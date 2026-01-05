@@ -10,10 +10,13 @@ import { Spinner } from "@/components/ui/spinner";
 import Footer from "@/components/Footer";
 import { FilterSidebar, FilterState, defaultFilters, Facets } from "@/components/FilterSidebar";
 import { FilterChips } from "@/components/FilterChips";
+import { ResultsToolbar } from "@/components/ResultsToolbar";
 import { Button } from "@/components/ui/button";
 import { Filter } from "lucide-react";
 
 export const dynamic = 'force-dynamic';
+
+const GROUPING_PREFS_KEY = "pharma-search-grouping-prefs";
 
 export default function HomePage() {
   const [searchTerm, setSearchTerm] = useState("");
@@ -26,6 +29,38 @@ export default function HomePage() {
 
   const [filters, setFilters] = useState<FilterState>(defaultFilters);
   const [showMobileFilters, setShowMobileFilters] = useState(false);
+
+  // Load grouping preferences from localStorage on mount
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(GROUPING_PREFS_KEY);
+      if (saved) {
+        const prefs = JSON.parse(saved);
+        setFilters(prev => ({
+          ...prev,
+          groupSimilar: prefs.groupSimilar ?? prev.groupSimilar,
+          groupingMode: prefs.groupingMode ?? prev.groupingMode,
+          sortGroupsBy: prefs.sortGroupsBy ?? prev.sortGroupsBy,
+        }));
+      }
+    } catch {
+      // Ignore localStorage errors
+    }
+  }, []);
+
+  // Save grouping preferences to localStorage when they change
+  useEffect(() => {
+    try {
+      const prefs = {
+        groupSimilar: filters.groupSimilar,
+        groupingMode: filters.groupingMode,
+        sortGroupsBy: filters.sortGroupsBy,
+      };
+      localStorage.setItem(GROUPING_PREFS_KEY, JSON.stringify(prefs));
+    } catch {
+      // Ignore localStorage errors
+    }
+  }, [filters.groupSimilar, filters.groupingMode, filters.sortGroupsBy]);
 
   const loadFeaturedProducts = useCallback(async () => {
     setIsLoadingFeatured(true);
@@ -45,7 +80,7 @@ export default function HomePage() {
     }
   }, []);
 
-  const handleSearch = useCallback(async (term: string) => {
+  const handleSearch = useCallback(async (term: string, groupingMode = filters.groupingMode) => {
     if (!term || !term.trim()) {
       setApiSearchResults(null);
       setUseApiSearch(false);
@@ -58,7 +93,7 @@ export default function HomePage() {
     setSearchError(null);
 
     try {
-      const results = await searchProducts(term);
+      const results = await searchProducts(term, { groupingMode });
       setApiSearchResults(results);
       setUseApiSearch(true);
     } catch (error) {
@@ -68,7 +103,7 @@ export default function HomePage() {
     } finally {
       setIsSearching(false);
     }
-  }, [loadFeaturedProducts]);
+  }, [loadFeaturedProducts, filters.groupingMode]);
 
   useEffect(() => {
     const searchParams = new URLSearchParams(window.location.search);
@@ -97,6 +132,14 @@ export default function HomePage() {
       window.removeEventListener("urlSearchChanged", handleUrlSearchChanged as EventListener);
     };
   }, [searchTerm, handleSearch]);
+
+  // Re-search when grouping mode changes
+  useEffect(() => {
+    if (searchTerm && useApiSearch) {
+      handleSearch(searchTerm, filters.groupingMode);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only re-run when groupingMode changes
+  }, [filters.groupingMode]);
 
   const facets: Facets | undefined = apiSearchResults?.facets as Facets | undefined;
 
@@ -142,33 +185,52 @@ export default function HomePage() {
       );
     }
 
-    switch (filters.sortBy) {
+    // Sort groups
+    switch (filters.sortGroupsBy) {
       case "price_asc":
-        groups.sort((a, b) => {
-          const minA = Math.min(...a.products.map(p => p.price));
-          const minB = Math.min(...b.products.map(p => p.price));
-          return minA - minB;
-        });
+        groups.sort((a, b) => a.price_range.min - b.price_range.min);
         break;
       case "price_desc":
-        groups.sort((a, b) => {
-          const minA = Math.min(...a.products.map(p => p.price));
-          const minB = Math.min(...b.products.map(p => p.price));
-          return minB - minA;
-        });
+        groups.sort((a, b) => b.price_range.min - a.price_range.min);
         break;
       case "savings":
         groups.sort((a, b) => {
-          const savingsA = a.price_range.max - a.price_range.min;
-          const savingsB = b.price_range.max - b.price_range.min;
+          const savingsA = a.price_range.max > 0 ? (a.price_range.max - a.price_range.min) / a.price_range.max : 0;
+          const savingsB = b.price_range.max > 0 ? (b.price_range.max - b.price_range.min) / b.price_range.max : 0;
           return savingsB - savingsA;
         });
         break;
       case "vendors":
         groups.sort((a, b) => b.vendor_count - a.vendor_count);
         break;
-      default:
+      case "products":
+        groups.sort((a, b) => (b.product_count || 0) - (a.product_count || 0));
         break;
+      default:
+        // relevance - keep original order from search
+        break;
+    }
+
+    // Sort products within each group
+    if (filters.sortBy !== "relevance") {
+      groups = groups.map(group => {
+        const sortedProducts = [...group.products];
+        switch (filters.sortBy) {
+          case "price_asc":
+            sortedProducts.sort((a, b) => a.price - b.price);
+            break;
+          case "price_desc":
+            sortedProducts.sort((a, b) => b.price - a.price);
+            break;
+          case "vendors":
+            // Products don't have vendor count, keep price order
+            sortedProducts.sort((a, b) => a.price - b.price);
+            break;
+          default:
+            break;
+        }
+        return { ...group, products: sortedProducts };
+      });
     }
 
     return groups;
@@ -210,46 +272,45 @@ export default function HomePage() {
             <h2 className="text-xl sm:text-2xl font-semibold text-gray-800 dark:text-gray-100 break-words">
               {searchTerm ? `Rezultati za "${searchTerm}"` : "Popularni proizvodi"}
             </h2>
-            <div className="flex items-center gap-4">
-              {useApiSearch && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="lg:hidden"
-                  onClick={() => setShowMobileFilters(true)}
-                >
-                  <Filter className="h-4 w-4 mr-2" />
-                  Filteri
-                  {hasActiveFilters && (
-                    <span className="ml-2 bg-health-primary text-white text-xs px-1.5 py-0.5 rounded-full">
-                      {filters.brands.length + filters.vendors.length + filters.dosages.length +
-                       (filters.minPrice > 0 || filters.maxPrice < 50000 ? 1 : 0)}
-                    </span>
-                  )}
-                </Button>
-              )}
-              <div className="text-xs sm:text-sm text-gray-500 dark:text-gray-400">
-                {useApiSearch && apiSearchResults ? (
-                  <>
-                    <span>{totalProductsShown} proizvoda</span>
-                    {apiSearchResults.total > totalProductsShown && (
-                      <span className="hidden sm:inline"> od ukupno {apiSearchResults.total}</span>
-                    )}
-                  </>
-                ) : featuredProducts?.groups ? (
-                  `${featuredProducts.groups.flatMap(group => convertProductGroupToProducts(group)).length} proizvoda`
-                ) : ""}
-              </div>
-            </div>
+            {useApiSearch && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="lg:hidden"
+                onClick={() => setShowMobileFilters(true)}
+              >
+                <Filter className="h-4 w-4 mr-2" />
+                Filteri
+                {hasActiveFilters && (
+                  <span className="ml-2 bg-health-primary text-white text-xs px-1.5 py-0.5 rounded-full">
+                    {filters.brands.length + filters.vendors.length + filters.dosages.length +
+                     (filters.minPrice > 0 || filters.maxPrice < 50000 ? 1 : 0)}
+                  </span>
+                )}
+              </Button>
+            )}
           </div>
 
           {useApiSearch && (
-            <FilterChips
-              filters={filters}
-              onFiltersChange={setFilters}
-              facets={facets}
-              className="mb-4"
-            />
+            <>
+              <ResultsToolbar
+                groupSimilar={filters.groupSimilar}
+                groupingMode={filters.groupingMode}
+                sortGroupsBy={filters.sortGroupsBy}
+                onGroupSimilarChange={(value) => setFilters(prev => ({ ...prev, groupSimilar: value }))}
+                onGroupingModeChange={(value) => setFilters(prev => ({ ...prev, groupingMode: value }))}
+                onSortGroupsByChange={(value) => setFilters(prev => ({ ...prev, sortGroupsBy: value }))}
+                totalGroups={filteredAndSortedGroups.length}
+                totalProducts={totalProductsShown}
+                className="mb-4"
+              />
+              <FilterChips
+                filters={filters}
+                onFiltersChange={setFilters}
+                facets={facets}
+                className="mb-4"
+              />
+            </>
           )}
 
           {useApiSearch ? (
