@@ -12,6 +12,14 @@ services:
         condition: service_healthy
       meilisearch:
         condition: service_started
+    # GPU support for CUDA (uncomment if using NVIDIA GPU)
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
 
   db:
     image: postgres:18-alpine

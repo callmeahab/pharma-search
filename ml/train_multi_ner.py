@@ -3,12 +3,17 @@
 Train a multi-entity NER model for pharmaceutical product extraction.
 Extracts: BRAND, DOSAGE, FORM, QUANTITY from product titles.
 Uses the Aposteka_processed.xlsx as training data source.
+
+GPU Support:
+- macOS (Apple Silicon): Uses Metal via spacy[apple]
+- Windows/Linux (NVIDIA): Uses CUDA via spacy[cuda12x]
 """
 
 import os
 import re
 import json
 import random
+import platform
 from pathlib import Path
 from typing import List, Tuple, Dict, Any, Optional
 
@@ -18,6 +23,53 @@ from spacy.training import Example
 from spacy.util import minibatch, compounding
 import pandas as pd
 from tqdm import tqdm
+
+
+def setup_gpu():
+    """Detect and configure GPU acceleration (Metal on macOS, CUDA on Windows/Linux)."""
+    system = platform.system()
+    gpu_available = False
+    gpu_type = "CPU"
+
+    try:
+        if system == "Darwin":
+            # macOS - check for Metal (Apple Silicon) via thinc_apple_ops
+            try:
+                from thinc.api import get_current_ops
+                ops = get_current_ops()
+                if ops.name == "apple":
+                    gpu_available = True
+                    gpu_type = "Metal (Apple Silicon)"
+                else:
+                    # Try to import and it will auto-register
+                    import thinc_apple_ops
+                    ops = get_current_ops()
+                    if ops.name == "apple":
+                        gpu_available = True
+                        gpu_type = "Metal (Apple Silicon)"
+            except ImportError:
+                print("Note: Install 'spacy[apple]' for Metal GPU acceleration on macOS")
+        else:
+            # Windows/Linux - try CUDA
+            gpu_available = spacy.prefer_gpu()
+            if gpu_available:
+                gpu_type = "CUDA"
+            else:
+                # Check if CUDA is available but not configured
+                try:
+                    import cupy
+                    print("Note: CuPy found but GPU not available. Check CUDA installation.")
+                except ImportError:
+                    print("Note: Install 'spacy[cuda12x]' for CUDA GPU acceleration")
+    except Exception as e:
+        print(f"GPU detection error: {e}")
+
+    if gpu_available:
+        print(f"GPU acceleration enabled: {gpu_type}")
+    else:
+        print("Using CPU for training (GPU not available)")
+
+    return gpu_available, gpu_type
 
 # Configuration
 MODEL_OUTPUT_DIR = Path(__file__).parent / "models" / "pharma_ner"
@@ -552,6 +604,9 @@ def main():
     print("=" * 50)
     print("Pharmaceutical Multi-Entity NER Model Training")
     print("=" * 50)
+
+    # Setup GPU acceleration
+    gpu_available, gpu_type = setup_gpu()
 
     # Load data
     df = load_data_from_xlsx()

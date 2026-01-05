@@ -53,6 +53,15 @@ python -m venv .venv
 source .venv/bin/activate
 pip install --upgrade pip
 pip install -r requirements.txt
+
+# Install GPU-accelerated spacy (CUDA for Linux/Windows devcontainer)
+if command -v nvidia-smi &> /dev/null; then
+  echo "NVIDIA GPU detected, installing spacy with CUDA support..."
+  pip install spacy[cuda12x]
+else
+  echo "No NVIDIA GPU detected, using CPU-only spacy"
+fi
+
 python -m spacy download xx_ent_wiki_sm || true
 deactivate
 

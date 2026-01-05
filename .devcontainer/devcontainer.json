@@ -23,6 +23,11 @@
       "configureZshAsDefaultShell": true,
       "installOhMyZsh": true,
       "installOhMyZshConfig": true
+    },
+    "ghcr.io/devcontainers/features/nvidia-cuda:1": {
+      "installCudnn": true,
+      "cudaVersion": "12.6",
+      "installToolkit": true
     }
   },
 
