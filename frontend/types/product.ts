@@ -305,3 +305,107 @@ export function convertFlatToGrouped(flat: FlatSearchResult, groupingMode: Group
     facets: flat.facets,
   };
 }
+
+// Common brand names to remove for similarity matching
+const KNOWN_BRANDS = new Set([
+  'solgar', 'now', 'nature', 'natures', 'naturals', 'jarrow', 'life', 'extension',
+  'swanson', 'doctor', 'best', 'doctors', 'pure', 'encapsulations', 'thorne',
+  'nordic', 'naturals', 'garden', 'solaray', 'kal', 'source', 'country',
+  'bluebonnet', 'natrol', 'vitabiotics', 'centrum', 'pharmaton', 'supradyn',
+  'bayer', 'pfizer', 'gsk', 'sanofi', 'roche', 'novartis', 'merck', 'abbott',
+  'esi', 'abela', 'pharm', 'pharma', 'phyto', 'bio', 'biovita', 'biolife',
+  'zdravlje', 'hemofarm', 'galenika', 'alkaloid', 'jadran', 'krka', 'pliva',
+  'vitaminway', 'dietpharm', 'nativa', 'nutrigen', 'nutrilite', 'nutrient',
+  'spring', 'valley', 'kirkland', 'cvs', 'walgreens', 'gnc', 'holland', 'barrett',
+  'webber', 'jamieson', 'vitacost', 'puritan', 'pride', 'twinlab', 'twin', 'lab',
+  'bulk', 'powders', 'myprotein', 'optimum', 'bsn', 'dymatize', 'cellucor',
+  'olimp', 'scitec', 'universal', 'animal', 'muscletech', 'gaspari',
+  'zein', 'doppelherz', 'abtei', 'tetesept', 'altapharma', 'mivolis', 'dm',
+]);
+
+/**
+ * Normalize a product title for similarity matching.
+ * Extracts core ingredient, removing brands, dosages, quantities, and marketing words.
+ * Uses alphabetical sorting for order-independent matching.
+ */
+function normalizeForSimilarity(title: string): string {
+  let key = title.toLowerCase();
+
+  key = key
+    // Remove ALL numeric values with units (dosages AND quantities)
+    .replace(/\d+([.,]\d+)?\s*(mg|mcg|µg|ug|g|kg|ml|l|iu|ij|me|ui|%)\b/gi, ' ')
+    // Remove "x60", "x30", "60x" patterns (quantity indicators)
+    .replace(/\bx\d+\b/gi, ' ')
+    .replace(/\b\d+x\b/gi, ' ')
+    // Remove quantity patterns (30 tableta, 60 caps, etc.)
+    .replace(/\b\d+\s*(tab|tabl|tableta|tablete|kaps|kapsula|kapsule|caps|capsule|softgel|kom|komada|kesica|kesice|komad|sticks?|sachets?|pak|pack)\w*\b/gi, ' ')
+    .replace(/\b\d+\s*x\s*\d+\b/gi, ' ') // "30x500" patterns
+    .replace(/\b\d+\b/g, ' ') // standalone numbers
+    // Remove product forms
+    .replace(/\b(tablete?|tableta|tabl|kapsule?|kapsula|kaps|caps|capsules?|softgels?|gels?|sirups?|sprejs?|sprays?|kapi|drops|krema?|creams?|losion|lotion|mast|serums?|prah|powders?|granule?|kesice?|kesica|ampule?|ampula|komada?|kom|bars?|liquids?|oils?|ulje|tecnost|rastvor|solutions?|suspensions?|šumeć|effervescent|žvakać|chewable|sublingual|sublingval|retard|depo|forte|mite)\b/gi, ' ')
+    // Remove marketing words
+    .replace(/\b(plus|extra|forte|max|maxi|ultra|super|mega|premium|gold|silver|platinum|pro|active|advanced|complex|formula|supplement|dietary|natural|organic|vegan|vegetarian|gluten.?free|sugar.?free|lactose.?free|nutrition|foods?|health|healthy|daily|essential|complete|total|original|classic|standard|regular|basic|simple|easy|fast|quick|slow|release|extended|sustained|delayed|rapid|instant|long|short|high|low|potency|strength|dose|dosage|support|care|protect|defense|immune|energy|power|boost|enhance|improve|maintain|balance|optimal|optimum|best|better|good|great|superior|quality|pure|clean|raw|whole|full|spectrum|broad|narrow|triple|double|single|dual|multi|poly|mono|di|tri|quad|penta|hexa)\b/gi, ' ')
+    // Remove common size/packaging words
+    .replace(/\b(small|medium|large|xl|xxl|mini|micro|nano|travel|size|pack|box|bottle|jar|tube|pouch|bag|sachet|blister|strip)\b/gi, ' ')
+    // Remove special characters
+    .replace(/[+®™©()[\]{}<>\/\\|_–—:;'"`.,!?#@$%^&*=~]/g, ' ')
+    .replace(/\s*-\s*/g, ' ')
+    // Collapse whitespace
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  // Split into words and filter
+  let words = key.split(' ').filter(w => w.length > 1);
+
+  // Remove known brand names
+  words = words.filter(w => !KNOWN_BRANDS.has(w));
+
+  // Remove single letters and very short words
+  words = words.filter(w => w.length > 2 || /^[a-z]\d+$/i.test(w) || ['d3', 'b6', 'b2', 'b1', 'k2', 'c', 'e', 'a', 'd', 'b'].includes(w));
+
+  // Sort alphabetically for order-independent matching
+  words = words.sort();
+
+  // Take first 2 significant words for very loose matching
+  return words.slice(0, 2).join(' ');
+}
+
+/**
+ * Find products similar to the given product from a list of all products.
+ * Uses normalized title matching to find products that are likely the same item
+ * from different vendors or with different quantities.
+ */
+export function findSimilarProducts(
+  product: BackendProduct,
+  allProducts: BackendProduct[],
+  options: { includeSelf?: boolean } = {}
+): BackendProduct[] {
+  const { includeSelf = false } = options;
+  const normalizedKey = normalizeForSimilarity(product.title);
+
+  if (!normalizedKey) return includeSelf ? [product] : [];
+
+  const similar = allProducts.filter(p => {
+    // Skip self unless requested
+    if (!includeSelf && p.id === product.id && p.vendor_id === product.vendor_id) {
+      return false;
+    }
+
+    const pKey = normalizeForSimilarity(p.title);
+    return pKey === normalizedKey;
+  });
+
+  // Sort by price ascending
+  return similar.sort((a, b) => a.price - b.price);
+}
+
+/**
+ * Count similar products for a given product (excluding self).
+ * Useful for showing a badge like "~5 similar".
+ */
+export function countSimilarProducts(
+  product: BackendProduct,
+  allProducts: BackendProduct[]
+): number {
+  return findSimilarProducts(product, allProducts, { includeSelf: false }).length;
+}

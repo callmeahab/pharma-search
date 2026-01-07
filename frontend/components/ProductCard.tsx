@@ -1,18 +1,20 @@
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 import { Card, CardContent, CardFooter } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Store, Heart, ExternalLink } from "lucide-react";
-import { Product } from "@/types/product";
+import { Product, BackendProduct, findSimilarProducts } from "@/types/product";
 import ProductDetailModal from "./ProductDetailModal";
 import { trackProductClick, trackStoreClick } from "@/utils/analytics";
 import { useWishlist } from "@/contexts/WishlistContext";
-import { formatPrice, pluralizeSr } from "@/lib/utils";
+import { formatPrice, pluralizeSr, humanizeTitle } from "@/lib/utils";
 
 interface ProductCardProps {
   product: Product;
+  /** All backend products from search results - used for finding similar products in list mode */
+  allProducts?: BackendProduct[];
 }
 
-const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
+const ProductCard: React.FC<ProductCardProps> = ({ product, allProducts }) => {
   const [showModal, setShowModal] = useState(false);
   const [showPriceComparison, setShowPriceComparison] = useState(false);
   const [imageError, setImageError] = useState(false);
@@ -23,6 +25,59 @@ const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
   const highestPrice = Math.max(...product.prices.map((p) => p.price));
   const priceDifference = highestPrice - lowestPrice;
   const savingsPercentage = Math.round((priceDifference / highestPrice) * 100);
+
+  // Find similar products in list mode (when we have a single price but access to all products)
+  const similarProducts = useMemo(() => {
+    if (!isSingleProduct || !allProducts || allProducts.length === 0) {
+      return null;
+    }
+
+    // Find the backend product that matches this card's price
+    const currentPrice = product.prices[0];
+    const currentProduct = allProducts.find(
+      p => p.vendor_name === currentPrice.store && p.price === currentPrice.price
+    );
+
+    if (!currentProduct) return null;
+
+    // Find similar products (including self)
+    const similar = findSimilarProducts(currentProduct, allProducts, { includeSelf: true });
+
+    // Only show compare if there are multiple similar products
+    if (similar.length <= 1) return null;
+
+    return similar;
+  }, [isSingleProduct, allProducts, product.prices]);
+
+  // Create a merged product with all similar prices for the modal
+  const mergedProduct = useMemo((): Product | null => {
+    if (!similarProducts || similarProducts.length <= 1) return null;
+
+    const prices = similarProducts.map(p => ({
+      store: p.vendor_name,
+      price: p.price,
+      inStock: true,
+      link: p.link,
+      title: p.title,
+    }));
+
+    // Use the first (cheapest) product's info since they're sorted by price
+    const firstProduct = similarProducts[0];
+
+    return {
+      id: product.id,
+      name: humanizeTitle(firstProduct.title),
+      description: product.description,
+      category: product.category,
+      image: firstProduct.thumbnail || product.image,
+      prices,
+      vendorCount: new Set(similarProducts.map(p => p.vendor_id)).size,
+      productCount: similarProducts.length,
+    };
+  }, [similarProducts, product]);
+
+  const hasSimilar = similarProducts && similarProducts.length > 1;
+  const similarCount = similarProducts?.length || 0;
 
   const handleBuyClick = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -39,13 +94,27 @@ const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
     trackProductClick(product.id, product.name, product.category);
   };
 
+  const handleCompareSimilarClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (hasSimilar) {
+      setShowPriceComparison(true);
+      setShowModal(true);
+      trackProductClick(product.id, product.name, product.category);
+    }
+  };
+
   const handleCardClick = () => {
-    if (isSingleProduct) {
-      // For single product, go directly to store
+    if (isSingleProduct && !hasSimilar) {
+      // For single product with no similar items, go directly to store
       const price = product.prices[0];
       const targetUrl = price.link || `https://www.${price.store.toLowerCase().replace(/\s+/g, "")}.com`;
       trackStoreClick(price.store, targetUrl, product.name);
       window.open(targetUrl, "_blank");
+    } else if (hasSimilar) {
+      // Has similar products - show comparison modal
+      setShowPriceComparison(true);
+      setShowModal(true);
+      trackProductClick(product.id, product.name, product.category);
     } else {
       setShowModal(true);
       trackProductClick(product.id, product.name, product.category);
@@ -131,13 +200,28 @@ const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
 
         <CardFooter className="flex flex-col pt-0">
           {isSingleProduct ? (
-            <Button
-              className="w-full bg-health-primary hover:bg-health-secondary text-white"
-              onClick={handleBuyClick}
-            >
-              <ExternalLink size={16} className="mr-2" />
-              Kupi
-            </Button>
+            hasSimilar ? (
+              // List mode with similar products - show compare button
+              <Button
+                variant="outline"
+                className="w-full text-health-primary dark:text-green-400 hover:bg-health-light dark:hover:bg-gray-700/50 dark:hover:text-green-300 border-health-light dark:border-gray-600 bg-health-gray/50 dark:bg-gray-800/30"
+                onClick={handleCompareSimilarClick}
+              >
+                Uporedi cene
+                <span className="ml-2 bg-health-primary text-white text-xs px-1.5 py-0.5 rounded-full">
+                  {similarCount}
+                </span>
+              </Button>
+            ) : (
+              // Single product with no similar - show buy button
+              <Button
+                className="w-full bg-health-primary hover:bg-health-secondary text-white"
+                onClick={handleBuyClick}
+              >
+                <ExternalLink size={16} className="mr-2" />
+                Kupi
+              </Button>
+            )
           ) : (
             <Button
               variant="outline"
@@ -150,9 +234,10 @@ const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
         </CardFooter>
       </Card>
 
-      {!isSingleProduct && (
+      {/* Modal for grouped products or similar products in list mode */}
+      {(!isSingleProduct || hasSimilar) && (
         <ProductDetailModal
-          product={product}
+          product={hasSimilar && mergedProduct ? mergedProduct : product}
           isOpen={showModal}
           onClose={() => {
             setShowModal(false);

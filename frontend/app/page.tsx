@@ -231,16 +231,18 @@ export default function HomePage() {
     };
   }, [accumulatedGroups]);
 
+  // Extract all backend products for similarity matching in list mode
+  const allBackendProducts = useMemo(() => {
+    return accumulatedGroups.flatMap(g => g.products);
+  }, [accumulatedGroups]);
+
   // Re-group products based on the selected grouping mode
   const regroupedData = useMemo(() => {
-    if (!accumulatedGroups.length) return [];
-
-    // Extract all products from accumulated groups
-    const allProducts: BackendProduct[] = accumulatedGroups.flatMap(g => g.products);
+    if (!allBackendProducts.length) return [];
 
     // Re-group based on the selected grouping mode
-    return groupProductsByKey(allProducts, filters.groupingMode);
-  }, [accumulatedGroups, filters.groupingMode]);
+    return groupProductsByKey(allBackendProducts, filters.groupingMode);
+  }, [allBackendProducts, filters.groupingMode]);
 
   const filteredAndSortedGroups = useMemo(() => {
     if (!regroupedData.length) return [];
@@ -432,6 +434,7 @@ export default function HomePage() {
                   <>
                     <ProductList
                       products={displayGroups.flatMap(group => convertProductGroupToProducts(group))}
+                      allProducts={!filters.groupSimilar ? allBackendProducts : undefined}
                     />
                     {/* Infinite scroll trigger */}
                     <div ref={loadMoreRef} className="h-10" />
