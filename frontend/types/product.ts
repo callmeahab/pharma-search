@@ -29,6 +29,7 @@ export interface BackendProduct {
   thumbnail?: string;
   brand_name?: string;
   group_key: string;
+  normalized_name?: string;
   dosage_value?: number;
   dosage_unit?: string;
   form?: string;
@@ -371,9 +372,22 @@ function normalizeForSimilarity(title: string): string {
 }
 
 /**
+ * Get the grouping key for a product.
+ * Prefers normalized_name from database, falls back to computed normalization.
+ */
+function getProductGroupKey(product: BackendProduct): string {
+  // Use database normalized_name if available
+  if (product.normalized_name) {
+    return product.normalized_name.toLowerCase().trim();
+  }
+  // Fall back to computed normalization
+  return normalizeForSimilarity(product.title);
+}
+
+/**
  * Find products similar to the given product from a list of all products.
- * Uses normalized title matching to find products that are likely the same item
- * from different vendors or with different quantities.
+ * Uses normalized_name from database for matching when available,
+ * falls back to computed normalization for products without normalized_name.
  */
 export function findSimilarProducts(
   product: BackendProduct,
@@ -381,9 +395,9 @@ export function findSimilarProducts(
   options: { includeSelf?: boolean } = {}
 ): BackendProduct[] {
   const { includeSelf = false } = options;
-  const normalizedKey = normalizeForSimilarity(product.title);
+  const productKey = getProductGroupKey(product);
 
-  if (!normalizedKey) return includeSelf ? [product] : [];
+  if (!productKey) return includeSelf ? [product] : [];
 
   const similar = allProducts.filter(p => {
     // Skip self unless requested
@@ -391,8 +405,8 @@ export function findSimilarProducts(
       return false;
     }
 
-    const pKey = normalizeForSimilarity(p.title);
-    return pKey === normalizedKey;
+    const pKey = getProductGroupKey(p);
+    return pKey === productKey;
   });
 
   // Sort by price ascending

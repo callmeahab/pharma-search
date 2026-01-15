@@ -343,7 +343,15 @@ func enrichProductsWithGroupKey(hits []map[string]interface{}) []map[string]inte
 	for rank, h := range hits {
 		title := getString(h, "title")
 		normalizedName := getString(h, "normalizedName")
-		groupKey := computeGroupKey(normalizedName, title)
+
+		// Use normalized_name as base for grouping if available, otherwise use title
+		// Always run through extractGroupKey to normalize for grouping
+		var groupKey string
+		if normalizedName != "" {
+			groupKey = extractGroupKey(normalizedName)
+		} else {
+			groupKey = extractGroupKey(title)
+		}
 
 		// Get dosage info from index (pre-computed from ProductStandardization)
 		dosageValue := getFloat(h, "dosageValue")
@@ -354,18 +362,19 @@ func enrichProductsWithGroupKey(hits []map[string]interface{}) []map[string]inte
 		pid := strings.ReplaceAll(getString(h, "id"), "product_", "")
 
 		product := map[string]interface{}{
-			"id":           pid,
-			"title":        title,
-			"price":        price,
-			"vendor_id":    getString(h, "vendorId"),
-			"vendor_name":  getString(h, "vendorName"),
-			"link":         getString(h, "link"),
-			"thumbnail":    getString(h, "thumbnail"),
-			"brand_name":   getString(h, "brand"),
-			"group_key":    groupKey,
-			"dosage_value": dosageValue,
-			"dosage_unit":  dosageUnit,
-			"rank":         rank, // Meilisearch relevance rank
+			"id":              pid,
+			"title":           title,
+			"price":           price,
+			"vendor_id":       getString(h, "vendorId"),
+			"vendor_name":     getString(h, "vendorName"),
+			"link":            getString(h, "link"),
+			"thumbnail":       getString(h, "thumbnail"),
+			"brand_name":      getString(h, "brand"),
+			"group_key":       groupKey,
+			"normalized_name": normalizedName,
+			"dosage_value":    dosageValue,
+			"dosage_unit":     dosageUnit,
+			"rank":            rank, // Meilisearch relevance rank
 		}
 
 		products = append(products, product)
