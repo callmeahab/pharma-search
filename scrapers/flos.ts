@@ -8,13 +8,7 @@ puppeteer.use(StealthPlugin());
 
 const scrapedTitles = new Set<string>();
 const baseUrls = [
-  'https://www.apotekaflos.rs/sr/proizvodi/dijetetski-suplementi',
-  'https://www.apotekaflos.rs/sr/proizvodi/dermokozmetika',
-  'https://www.apotekaflos.rs/sr/proizvodi/mame-bebe-i-deca',
-  'https://www.apotekaflos.rs/sr/proizvodi/higijena-nega-i-kozmetika',
-  'https://www.apotekaflos.rs/sr/proizvodi/medicinska-oprema-i-materijali',
-  'https://www.apotekaflos.rs/sr/proizvodi/zdrava-hrana',
-  'https://www.apotekaflos.rs/sr/proizvodi/medicinska-sredstva',
+  'https://www.apotekaflos.rs/index.php?route=product/catalog&limit=100',
 ];
 
 async function scrapePage(
@@ -31,32 +25,31 @@ async function scrapePage(
     ]);
 
     await page
-      .waitForSelector('.product-preview-item', {
+      .waitForSelector('.product-layout', {
         timeout: 5000,
       })
       .catch(() => console.log('No products found on page'));
 
     await new Promise((resolve) => setTimeout(resolve, 1000));
 
-    const products = await page.$$eval('.product-preview-item', (elements) => {
+    const products = await page.$$eval('.product-layout', (elements) => {
       return elements
         .map((element) => {
-          const title = element.querySelector('h3')?.textContent?.trim() || '';
-          const offStockElement = element.querySelector('.aaa');
+          const title = element.querySelector('.name a')?.textContent?.trim() || '';
+          const offStockElement = element.querySelector('.product-label b');
 
-          if (offStockElement) {
+          if (offStockElement?.textContent?.trim() === 'Nema na stanju') {
             return null;
           }
 
           const price =
-            element.querySelector('.price')?.textContent?.trim() || '';
+            element.querySelector('.price-normal')?.textContent?.trim() || '';
           const link =
-            element.querySelector('h3 > a')?.getAttribute('href') || '';
-          const imageElement = element.querySelector('.image-wrapper img');
+            element.querySelector('.name a')?.getAttribute('href') || '';
+          const imageElement = element.querySelector('.product-img img.img-first');
           let img =
-            imageElement?.getAttribute('data-src') ||
             imageElement?.getAttribute('src') ||
-            imageElement?.getAttribute('data-original') ||
+            imageElement?.getAttribute('data-src') ||
             '';
 
           if (img.startsWith('data:image')) {
@@ -89,16 +82,6 @@ async function scrapePage(
   }
 }
 
-async function hasNextPage(page: Page): Promise<boolean> {
-  try {
-    const nextButton = await page.$('.fa.fa-angle-right');
-    return nextButton !== null;
-  } catch (error) {
-    console.error(`Error checking for next page: ${error}`);
-    return false;
-  }
-}
-
 async function scrapeMultipleBaseUrls(): Promise<Product[]> {
 const browser = await puppeteer.launch({
     headless: ScraperUtils.IS_HEADLESS,
@@ -116,7 +99,7 @@ const browser = await puppeteer.launch({
       let pageNum = 1;
 
       while (true) {
-        const pageUrl = `${baseUrl}/${pageNum}?limit=96`;
+        const pageUrl = `${baseUrl}&page=${pageNum}`;
         console.log(`Scraping page: ${pageUrl}`);
 
         let retryCount = 0;
@@ -136,18 +119,13 @@ const browser = await puppeteer.launch({
 
         if (products.length === 0) {
           console.log(
-            `No products found on page ${pageNum} of ${baseUrl}, stopping...`,
+            `No products found on page ${pageNum}, stopping pagination...`,
           );
           break;
         }
 
         allScrapedProducts = [...allScrapedProducts, ...products];
-
-        const nextPageExists = await hasNextPage(page);
-        if (!nextPageExists) {
-          console.log(`No next page found for ${pageUrl}, stopping...`);
-          break;
-        }
+        console.log(`Found ${products.length} products on page ${pageNum}. Total so far: ${allScrapedProducts.length}`);
 
         pageNum++;
       }

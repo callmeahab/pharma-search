@@ -100,9 +100,8 @@ const baseUrls = [
   'https://ananas.rs/kategorije/lepota-i-nega/intimna-higijena/intimni-gelovi',
   'https://ananas.rs/kategorije/lepota-i-nega/oralna-higijena/paste-za-zube',
   'https://ananas.rs/kategorije/lepota-i-nega/oralna-higijena/izbeljivanje-zuba',
-  'https://ananas.rs/kategorije/lepota-i-nega/oralna-higijena/cetkice-za-zube-i-dodaci/decije-cetkice-za-zube',
-  'https://ananas.rs/kategorije/lepota-i-nega/oralna-higijena/cetkice-za-zube-i-dodaci/interdentalne-cetkice',
-  'https://ananas.rs/kategorije/lepota-i-nega/oralna-higijena/cetkice-za-zube-i-dodaci/cetkice-za-zube',
+  'https://ananas.rs/kategorije/lepota-i-nega/oralna-higijena/interdentalne-cetkice',
+  'https://ananas.rs/kategorije/lepota-i-nega/oralna-higijena/cetkice-za-zube',
   'https://ananas.rs/kategorije/aparati-za-negu-i-lepotu/aparti-za-negu-lica-i-tela/elektricne-cetkice-za-zube',
   'https://ananas.rs/kategorije/aparati-za-negu-i-lepotu/aparti-za-negu-lica-i-tela/masazeri-za-lice',
   'https://ananas.rs/kategorije/aparati-za-negu-i-lepotu/aparti-za-negu-lica-i-tela/masazeri-za-telo',
@@ -438,7 +437,6 @@ async function main() {
     if (products.length > 0) {
       await insertData(products, 'Ananas');
       console.log(`✅ Successfully stored ${products.length} products`);
-      console.log(`⏭️ Total out-of-stock items skipped: ${totalSkipped}`);
     } else {
       console.log('❌ No products found across all categories');
     }

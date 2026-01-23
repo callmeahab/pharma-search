@@ -20,7 +20,6 @@ const baseUrls = [
   'https://www.xlsport.rs/product-category/zastita-zglobova',
   'https://www.xlsport.rs/product-category/vegan',
   'https://www.xlsport.rs/product-category/biljni-preparati',
-  'https://www.xlsport.rs/digestivni-enzimi',
   'https://www.xlsport.rs/product-category/imunitet',
   'https://www.xlsport.rs/product-category/potencija',
   'https://www.xlsport.rs/product-category/lecenje-jetre',
