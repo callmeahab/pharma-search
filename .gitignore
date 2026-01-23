@@ -47,6 +47,7 @@ logs/
 .dockerignore 
 
 scrapers_logs/
+scrapers/output/
 
 # Large data files
 Aposteka_processed.xlsx

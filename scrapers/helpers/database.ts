@@ -1,9 +1,10 @@
 /**
- * Database utilities for scrapers (without Prisma)
- * Handles database connections and operations using asyncpg
+ * CSV utilities for scrapers
+ * Writes scraped product data to CSV files
  */
 
-import { Pool, PoolClient } from 'pg';
+import * as fs from 'fs';
+import * as path from 'path';
 
 export interface Product {
   title: string;
@@ -14,170 +15,37 @@ export interface Product {
   photos: string;
 }
 
-export interface DatabaseConfig {
-  connectionString: string;
-  pool: Pool | null;
+const OUTPUT_DIR = path.join(process.cwd(), 'output');
+
+/**
+ * Escape a value for CSV format
+ */
+function escapeCSV(value: string): string {
+  if (!value) return '';
+  // If the value contains comma, newline, or double quote, wrap in quotes and escape internal quotes
+  if (value.includes(',') || value.includes('\n') || value.includes('"')) {
+    return `"${value.replace(/"/g, '""')}"`;
+  }
+  return value;
 }
 
-class DatabaseManager {
-  private pool: Pool | null = null;
-  private config: DatabaseConfig;
-
-  constructor() {
-    this.config = {
-      connectionString: process.env.DATABASE_URL || '',
-      pool: null
-    };
-  }
-
-  async initialize(): Promise<void> {
-    if (!this.config.connectionString) {
-      throw new Error('DATABASE_URL environment variable is required');
-    }
-
-    if (!this.pool) {
-      this.pool = new Pool({
-        connectionString: this.config.connectionString,
-        max: 20,
-        idleTimeoutMillis: 30000,
-        connectionTimeoutMillis: 2000,
-      });
-
-      // Test connection
-      try {
-        const client = await this.pool.connect();
-        await client.query('SELECT 1');
-        client.release();
-        console.log('✅ Database connection established');
-      } catch (error) {
-        console.error('❌ Failed to connect to database:', error);
-        throw error;
-      }
-    }
-  }
-
-  async getClient(): Promise<PoolClient> {
-    if (!this.pool) {
-      await this.initialize();
-    }
-    return this.pool!.connect();
-  }
-
-  async close(): Promise<void> {
-    if (this.pool) {
-      await this.pool.end();
-      this.pool = null;
-    }
-  }
-
-  async findVendor(vendorName: string): Promise<{ id: string; name: string } | null> {
-    const client = await this.getClient();
-    try {
-      const result = await client.query(
-        'SELECT id, name FROM "Vendor" WHERE name = $1 LIMIT 1',
-        [vendorName]
-      );
-      return result.rows[0] || null;
-    } finally {
-      client.release();
-    }
-  }
-
-  async findExistingProducts(title: string, vendorId: string): Promise<Array<{ id: string; createdAt: Date }>> {
-    const client = await this.getClient();
-    try {
-      const result = await client.query(
-        'SELECT id, "createdAt" FROM "Product" WHERE title = $1 AND "vendorId" = $2 ORDER BY "createdAt" DESC',
-        [title, vendorId]
-      );
-      return result.rows;
-    } finally {
-      client.release();
-    }
-  }
-
-  async deleteDuplicateProducts(productIds: string[]): Promise<number> {
-    if (productIds.length === 0) return 0;
-
-    const client = await this.getClient();
-    try {
-      const result = await client.query(
-        'DELETE FROM "Product" WHERE id = ANY($1::text[])',
-        [productIds]
-      );
-      return result.rowCount || 0;
-    } finally {
-      client.release();
-    }
-  }
-
-  async updateProduct(productId: string, productData: {
-    price: number;
-    category: string;
-    link: string;
-    thumbnail: string;
-    photos: string;
-  }): Promise<void> {
-    const client = await this.getClient();
-    try {
-      await client.query(
-        `UPDATE "Product" 
-         SET price = $2, category = $3, link = $4, thumbnail = $5, photos = $6, "updatedAt" = NOW()
-         WHERE id = $1`,
-        [productId, productData.price, productData.category, productData.link, productData.thumbnail, productData.photos]
-      );
-    } finally {
-      client.release();
-    }
-  }
-
-  async createProduct(productData: {
-    title: string;
-    price: number;
-    category: string;
-    link: string;
-    thumbnail: string;
-    photos: string;
-    vendorId: string;
-  }): Promise<string> {
-    const client = await this.getClient();
-    try {
-      const result = await client.query(
-        `INSERT INTO "Product" (title, price, category, link, thumbnail, photos, "vendorId", "createdAt", "updatedAt")
-         VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
-         RETURNING id`,
-        [
-          productData.title,
-          productData.price,
-          productData.category,
-          productData.link,
-          productData.thumbnail,
-          productData.photos,
-          productData.vendorId
-        ]
-      );
-      return result.rows[0].id;
-    } finally {
-      client.release();
-    }
-  }
-
-  async countVendorProducts(vendorId: string): Promise<number> {
-    const client = await this.getClient();
-    try {
-      const result = await client.query(
-        'SELECT COUNT(*) as count FROM "Product" WHERE "vendorId" = $1',
-        [vendorId]
-      );
-      return parseInt(result.rows[0].count, 10);
-    } finally {
-      client.release();
-    }
-  }
+/**
+ * Convert a product to a CSV row
+ */
+function productToCSVRow(product: Product, parsedPrice: number, vendor: string): string {
+  return [
+    escapeCSV(product.title),
+    parsedPrice.toString(),
+    escapeCSV(product.category),
+    escapeCSV(product.link),
+    escapeCSV(product.thumbnail),
+    escapeCSV(product.photos),
+    escapeCSV(vendor),
+    new Date().toISOString(),
+  ].join(',');
 }
 
-// Global database manager instance
-const dbManager = new DatabaseManager();
+const CSV_HEADER = 'title,price,category,link,thumbnail,photos,vendor,scrapedAt';
 
 /**
  * Parse price string and convert to number
@@ -249,106 +117,60 @@ export function parsePrice(priceString: string): number {
 }
 
 /**
- * Insert scraped product data into database
- * Replaces the Prisma-based insertData function
+ * Write scraped product data to CSV file
  */
 export async function insertData(allProducts: Product[], shopName: string): Promise<void> {
   try {
-    // Find the vendor
-    const vendor = await dbManager.findVendor(shopName);
-    if (!vendor) {
-      throw new Error(`Vendor "${shopName}" not found`);
-    }
+    // Sanitize shop name for filename
+    const safeShopName = shopName.replace(/[^a-zA-Z0-9-_]/g, '_').toLowerCase();
+    const date = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+    const csvPath = path.join(OUTPUT_DIR, `${safeShopName}_${date}.csv`);
 
+    // Build CSV content
+    const rows: string[] = [CSV_HEADER];
     let successCount = 0;
     let errorCount = 0;
 
-    // Process products in smaller batches to avoid overwhelming the database
-    const BATCH_SIZE = 10;
-    for (let i = 0; i < allProducts.length; i += BATCH_SIZE) {
-      const batch = allProducts.slice(i, i + BATCH_SIZE);
-
-      for (const product of batch) {
-        try {
-          const price = parsePrice(product.price);
-
-          // First check for any duplicate products
-          const duplicateProducts = await dbManager.findExistingProducts(product.title, vendor.id);
-
-          if (duplicateProducts.length > 1) {
-            // Keep only the most recent product, delete others
-            const [keepProduct, ...deleteProducts] = duplicateProducts;
-            const deletedCount = await dbManager.deleteDuplicateProducts(
-              deleteProducts.map(p => p.id)
-            );
-            console.log(
-              `Deleted ${deletedCount} duplicate products for "${product.title}"`
-            );
-          }
-
-          // Now proceed with update or create
-          if (duplicateProducts.length > 0) {
-            // Update the most recent product
-            await dbManager.updateProduct(duplicateProducts[0].id, {
-              price,
-              category: product.category,
-              link: product.link,
-              thumbnail: product.thumbnail,
-              photos: product.photos,
-            });
-          } else {
-            // Create new product
-            await dbManager.createProduct({
-              title: product.title,
-              price,
-              category: product.category,
-              link: product.link,
-              thumbnail: product.thumbnail,
-              photos: product.photos,
-              vendorId: vendor.id,
-            });
-          }
-
-          successCount++;
-        } catch (error) {
-          console.error(`Error processing product "${product.title}":`, error);
-          errorCount++;
-        }
-      }
-
-      // Add a small delay between batches to prevent overwhelming the database
-      if (i + BATCH_SIZE < allProducts.length) {
-        await new Promise((resolve) => setTimeout(resolve, 100));
+    for (const product of allProducts) {
+      try {
+        const price = parsePrice(product.price);
+        rows.push(productToCSVRow(product, price, shopName));
+        successCount++;
+      } catch (error) {
+        console.error(`Error processing product "${product.title}":`, error);
+        errorCount++;
       }
     }
 
-    console.log(
-      `Successfully processed ${successCount} products, ${errorCount} errors.`
-    );
+    // Write to file
+    fs.writeFileSync(csvPath, rows.join('\n'), 'utf-8');
 
-    const totalProducts = await dbManager.countVendorProducts(vendor.id);
-    console.log(`Total products for ${shopName}: ${totalProducts}`);
+    console.log(
+      `Successfully wrote ${successCount} products to ${csvPath}, ${errorCount} errors.`
+    );
+    console.log(`Total products for ${shopName}: ${successCount}`);
 
   } catch (error) {
-    console.error("Error inserting products into database:", error);
+    console.error("Error writing products to CSV:", error);
     throw error;
   }
 }
 
 /**
- * Initialize database connection
- * Call this before using any database operations
+ * Initialize output directory
+ * Call this before using any CSV operations
  */
 export async function initializeDatabase(): Promise<void> {
-  await dbManager.initialize();
+  if (!fs.existsSync(OUTPUT_DIR)) {
+    fs.mkdirSync(OUTPUT_DIR, { recursive: true });
+    console.log(`Created output directory: ${OUTPUT_DIR}`);
+  }
+  console.log('CSV writer initialized');
 }
 
 /**
- * Close database connection
- * Call this when done with database operations
+ * Cleanup (no-op for CSV)
  */
 export async function closeDatabase(): Promise<void> {
-  await dbManager.close();
+  console.log('CSV writer closed');
 }
-
-export default dbManager;
