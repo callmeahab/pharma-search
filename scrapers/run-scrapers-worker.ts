@@ -3,17 +3,18 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 const scrapers = [
+  'ananas1.ts',
   '4fitness.ts',
   'adonis.ts',
   'aleksandarMn.ts',
   'alekSuplementi.ts',
   'amgSport.ts',
-  'ananas.ts',
   'apotekamo.ts',
   'apotekaNet.ts',
   'apotekaNis.ts',
   'apotekaOnline.ts',
   'apotekarOnline.ts',
+  'ananas2.ts',
   'apotekaShop.ts',
   'apotekaSunce.ts',
   'apotekaValerijana.ts',
@@ -26,6 +27,7 @@ const scrapers = [
   'biofarm.ts',
   'dm.ts',
   'drMax.ts',
+  'ananas3.ts',
   'eApoteka.ts',
   'eApotekaNet.ts',
   'eApotekaRs.ts',
@@ -41,6 +43,7 @@ const scrapers = [
   'gymBeam.ts',
   'herba.ts',
   'hiper.ts',
+  'ananas4.ts',
   'houseOfSupplements.ts',
   'jankovic.ts',
   'jugofarm.ts',
@@ -52,6 +55,7 @@ const scrapers = [
   'maelia.ts',
   'maxFarm.ts',
   'maximalium.ts',
+  'ananas5.ts',
   'medXapoteka.ts',
   'melisa.ts',
   'milica.ts',
@@ -62,6 +66,7 @@ const scrapers = [
   'oliva.ts',
   'pansport.ts',
   'profFarm.ts',
+  'ananas6.ts',
   'proteinbox.ts',
   'proteini.ts',
   'ringSport.ts',
@@ -126,8 +131,12 @@ async function runScraper(
         const chunk = data.toString();
         fullOutput += chunk;
         
-        if (chunk.includes('Successfully processed')) {
-          const match = fullOutput.match(/Successfully processed (\\d+) products/);
+
+        // Check for both "Successfully processed" and "Successfully wrote" patterns
+        if (chunk.includes('Successfully processed') || chunk.includes('Successfully wrote')) {
+          const processedMatch = fullOutput.match(/Successfully processed (\\d+) products/);
+          const wroteMatch = fullOutput.match(/Successfully wrote (\\d+) products/);
+          const match = processedMatch || wroteMatch;
           if (match) {
             productCount = parseInt(match[1], 10);
             hasSuccessfulScrape = true;
@@ -171,9 +180,13 @@ async function runScraper(
       });
 
       proc.on('close', async (code) => {
-        const finalMatch = fullOutput.match(/Successfully processed (\\d+) products/);
+        // Check for both success patterns
+        const processedMatch = fullOutput.match(/Successfully processed (\\d+) products/);
+        const wroteMatch = fullOutput.match(/Successfully wrote (\\d+) products/);
+        const finalMatch = processedMatch || wroteMatch;
         if (finalMatch) {
           productCount = parseInt(finalMatch[1], 10);
+          hasSuccessfulScrape = true;
         }
         
         // Consider it successful if we found products, even if there were pagination errors
