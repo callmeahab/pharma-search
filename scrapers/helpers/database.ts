@@ -117,7 +117,7 @@ export function parsePrice(priceString: string): number {
 }
 
 /**
- * Write scraped product data to CSV file
+ * Write scraped product data to CSV file using streaming to avoid memory issues
  */
 export async function insertData(allProducts: Product[], shopName: string): Promise<void> {
   try {
@@ -126,24 +126,32 @@ export async function insertData(allProducts: Product[], shopName: string): Prom
     const date = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
     const csvPath = path.join(OUTPUT_DIR, `${safeShopName}_${date}.csv`);
 
-    // Build CSV content
-    const rows: string[] = [CSV_HEADER];
     let successCount = 0;
     let errorCount = 0;
 
-    for (const product of allProducts) {
-      try {
-        const price = parsePrice(product.price);
-        rows.push(productToCSVRow(product, price, shopName));
-        successCount++;
-      } catch (error) {
-        console.error(`Error processing product "${product.title}":`, error);
-        errorCount++;
-      }
-    }
+    // Use write stream to avoid accumulating all rows in memory
+    const writeStream = fs.createWriteStream(csvPath, { encoding: 'utf-8' });
 
-    // Write to file
-    fs.writeFileSync(csvPath, rows.join('\n'), 'utf-8');
+    await new Promise<void>((resolve, reject) => {
+      writeStream.on('error', reject);
+
+      // Write header
+      writeStream.write(CSV_HEADER + '\n');
+
+      // Write each product row directly to stream
+      for (const product of allProducts) {
+        try {
+          const price = parsePrice(product.price);
+          writeStream.write(productToCSVRow(product, price, shopName) + '\n');
+          successCount++;
+        } catch (error) {
+          console.error(`Error processing product "${product.title}":`, error);
+          errorCount++;
+        }
+      }
+
+      writeStream.end(() => resolve());
+    });
 
     console.log(
       `Successfully wrote ${successCount} products to ${csvPath}, ${errorCount} errors.`
