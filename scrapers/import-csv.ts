@@ -129,40 +129,46 @@ async function importCSVFiles() {
       let fileImported = 0;
       let fileErrors = 0;
 
-      // Process in batches
-      const BATCH_SIZE = 10;
+      // Process in batches with upsert
+      const BATCH_SIZE = 1000;
       for (let i = 0; i < products.length; i += BATCH_SIZE) {
         const batch = products.slice(i, i + BATCH_SIZE);
 
-        for (const product of batch) {
-          try {
-            // Check for existing product
-            const existing = await pool.query(
-              'SELECT id FROM "Product" WHERE title = $1 AND "vendorId" = $2 LIMIT 1',
-              [product.title, vendorId]
-            );
+        try {
+          const values: Array<string | number | null> = [];
+          const placeholders = batch
+            .map((product, index) => {
+              const baseIndex = index * 7;
+              values.push(
+                product.title,
+                product.price,
+                product.category,
+                product.link,
+                product.thumbnail,
+                product.photos,
+                vendorId
+              );
+              return `($${baseIndex + 1}, $${baseIndex + 2}, $${baseIndex + 3}, $${baseIndex + 4}, $${baseIndex + 5}, $${baseIndex + 6}, $${baseIndex + 7})`;
+            })
+            .join(', ');
 
-            if (existing.rows.length > 0) {
-              // Update existing
-              await pool.query(
-                `UPDATE "Product"
-                 SET price = $2, category = $3, link = $4, thumbnail = $5, photos = $6, "updatedAt" = NOW()
-                 WHERE id = $1`,
-                [existing.rows[0].id, product.price, product.category, product.link, product.thumbnail, product.photos]
-              );
-            } else {
-              // Insert new
-              await pool.query(
-                `INSERT INTO "Product" (title, price, category, link, thumbnail, photos, "vendorId", "createdAt", "updatedAt")
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())`,
-                [product.title, product.price, product.category, product.link, product.thumbnail, product.photos, vendorId]
-              );
-            }
-            fileImported++;
-          } catch (error) {
-            console.error(`  Error importing "${product.title}":`, error);
-            fileErrors++;
-          }
+          await pool.query(
+            `INSERT INTO "Product" (title, price, category, link, thumbnail, photos, "vendorId", "createdAt", "updatedAt")
+             VALUES ${placeholders}
+             ON CONFLICT (title, "vendorId") DO UPDATE SET
+               price = EXCLUDED.price,
+               category = EXCLUDED.category,
+               link = EXCLUDED.link,
+               thumbnail = EXCLUDED.thumbnail,
+               photos = EXCLUDED.photos,
+               "updatedAt" = NOW()`,
+            values
+          );
+
+          fileImported += batch.length;
+        } catch (error) {
+          console.error(`  Error importing batch starting with "${batch[0]?.title ?? 'unknown'}":`, error);
+          fileErrors += batch.length;
         }
 
         // Small delay between batches

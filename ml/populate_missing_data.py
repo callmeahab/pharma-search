@@ -245,6 +245,48 @@ def get_products_missing_data(conn, limit: int = BATCH_SIZE, update_all: bool = 
     return [{"id": row[0], "title": row[1]} for row in rows]
 
 
+def get_standardizations_for_titles(conn, titles: List[str]) -> Dict[str, Dict[str, Any]]:
+    """Fetch standardization data for matching product titles."""
+    if not titles:
+        return {}
+
+    cur = conn.cursor()
+    query = """
+        SELECT
+            "originalTitle",
+            title,
+            "brandName",
+            "productForm",
+            "dosageValue",
+            "dosageUnit",
+            "quantityValue",
+            "quantityUnit"
+        FROM "ProductStandardization"
+        WHERE "originalTitle" = ANY(%s) OR title = ANY(%s)
+    """
+    cur.execute(query, (titles, titles))
+    rows = cur.fetchall()
+    cur.close()
+
+    standardizations: Dict[str, Dict[str, Any]] = {}
+    for row in rows:
+        original_title, title, brand, form, dosage_value, dosage_unit, quantity_value, quantity_unit = row
+        record = {
+            "brand": brand,
+            "form": form,
+            "dosage_value": dosage_value,
+            "dosage_unit": dosage_unit,
+            "quantity_value": quantity_value,
+            "quantity_unit": quantity_unit,
+        }
+        if original_title and original_title not in standardizations:
+            standardizations[original_title] = record
+        if title and title not in standardizations:
+            standardizations[title] = record
+
+    return standardizations
+
+
 def update_product_table(conn, updates: List[Dict]) -> int:
     """Update the Product table with extracted data."""
     if not updates:
@@ -323,6 +365,7 @@ def process_products(nlp, conn, limit: int = 0, update_all: bool = False,
     total_with_dosage = 0
     total_with_form = 0
     total_with_quantity = 0
+    total_from_standardization = 0
 
     while True:
         # Get batch of products
@@ -335,9 +378,52 @@ def process_products(nlp, conn, limit: int = 0, update_all: bool = False,
         logger.info(f"Processing batch of {len(products)} products")
 
         updates = []
+        standardization_updates = []
+        titles = [product["title"] for product in products]
+        standardizations = get_standardizations_for_titles(conn, titles)
 
         for product in tqdm(products, desc="Extracting entities"):
-            extracted = extract_entities(nlp, product["title"])
+            standardization = standardizations.get(product["title"])
+            extracted = None
+            standardization_missing = False
+            if standardization:
+                total_from_standardization += 1
+                standardization_missing = any(
+                    standardization[field] is None
+                    for field in [
+                        "brand",
+                        "form",
+                        "dosage_value",
+                        "dosage_unit",
+                        "quantity_value",
+                        "quantity_unit",
+                    ]
+                )
+
+            if standardization and not standardization_missing:
+                extracted = {
+                    "brand": standardization["brand"],
+                    "form": standardization["form"],
+                    "dosage_value": standardization["dosage_value"],
+                    "dosage_unit": standardization["dosage_unit"],
+                    "dosage_text": None,
+                    "quantity_value": standardization["quantity_value"],
+                    "quantity_unit": standardization["quantity_unit"],
+                }
+            else:
+                ml_extracted = extract_entities(nlp, product["title"])
+                if standardization:
+                    extracted = {
+                        "brand": standardization["brand"] or ml_extracted["brand"],
+                        "form": standardization["form"] or ml_extracted["form"],
+                        "dosage_value": standardization["dosage_value"] or ml_extracted["dosage_value"],
+                        "dosage_unit": standardization["dosage_unit"] or ml_extracted["dosage_unit"],
+                        "dosage_text": ml_extracted["dosage_text"],
+                        "quantity_value": standardization["quantity_value"] or ml_extracted["quantity_value"],
+                        "quantity_unit": standardization["quantity_unit"] or ml_extracted["quantity_unit"],
+                    }
+                else:
+                    extracted = ml_extracted
 
             update_record = {
                 "id": product["id"],
@@ -352,6 +438,8 @@ def process_products(nlp, conn, limit: int = 0, update_all: bool = False,
             }
 
             updates.append(update_record)
+            if not standardization or standardization_missing:
+                standardization_updates.append(update_record)
 
             # Count extractions
             if extracted["brand"]:
@@ -368,8 +456,8 @@ def process_products(nlp, conn, limit: int = 0, update_all: bool = False,
         logger.info(f"Updated {updated_products} products")
 
         # Update ProductStandardization table
-        if update_standardization:
-            updated_std = update_standardization_table(conn, updates)
+        if update_standardization and standardization_updates:
+            updated_std = update_standardization_table(conn, standardization_updates)
             logger.info(f"Updated {updated_std} standardization records")
 
         total_processed += len(products)
@@ -393,6 +481,7 @@ def process_products(nlp, conn, limit: int = 0, update_all: bool = False,
         "with_dosage": total_with_dosage,
         "with_form": total_with_form,
         "with_quantity": total_with_quantity,
+        "from_standardization": total_from_standardization,
     }
 
 
@@ -504,6 +593,10 @@ def main():
             logger.info(f"  Dosage: {stats['with_dosage']} ({stats['with_dosage']/stats['total_processed']*100:.1f}%)")
             logger.info(f"  Form: {stats['with_form']} ({stats['with_form']/stats['total_processed']*100:.1f}%)")
             logger.info(f"  Quantity: {stats['with_quantity']} ({stats['with_quantity']/stats['total_processed']*100:.1f}%)")
+            logger.info(
+                f"  From standardization: {stats['from_standardization']} "
+                f"({stats['from_standardization']/stats['total_processed']*100:.1f}%)"
+            )
 
     conn.close()
     logger.info("\nDone!")

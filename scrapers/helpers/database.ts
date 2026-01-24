@@ -123,8 +123,16 @@ export async function insertData(allProducts: Product[], shopName: string): Prom
   try {
     // Sanitize shop name for filename
     const safeShopName = shopName.replace(/[^a-zA-Z0-9-_]/g, '_').toLowerCase();
+    const scraperArg = process.argv[1] || '';
+    const scraperName = path.basename(scraperArg, path.extname(scraperArg));
+    const safeScraperName = scraperName
+      ? scraperName.replace(/[^a-zA-Z0-9-_]/g, '_').toLowerCase()
+      : 'scraper';
     const date = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
-    const csvPath = path.join(OUTPUT_DIR, `${safeShopName}_${date}.csv`);
+    const csvPath = path.join(
+      OUTPUT_DIR,
+      `${safeShopName}_${safeScraperName}_${date}.csv`
+    );
 
     let successCount = 0;
     let errorCount = 0;
