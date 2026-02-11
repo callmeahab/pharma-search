@@ -12,47 +12,6 @@ BEGIN
 END;
 $$;
 
--- Function: update_group_stats
-CREATE OR REPLACE FUNCTION public.update_group_stats(group_id text)
-RETURNS void
-LANGUAGE plpgsql
-AS $$
-BEGIN
-    UPDATE "ProductGroup"
-    SET
-        "productCount" = (SELECT COUNT(*) FROM "Product" WHERE "productGroupId" = group_id),
-        "vendorCount" = (SELECT COUNT(DISTINCT "vendorId") FROM "Product" WHERE "productGroupId" = group_id),
-        "minPrice" = (SELECT MIN(price) FROM "Product" WHERE "productGroupId" = group_id),
-        "maxPrice" = (SELECT MAX(price) FROM "Product" WHERE "productGroupId" = group_id),
-        "avgPrice" = (SELECT AVG(price) FROM "Product" WHERE "productGroupId" = group_id),
-        "updatedAt" = CURRENT_TIMESTAMP
-    WHERE id = group_id;
-END;
-$$;
-
--- Function: update_group_stats_trigger (trigger function)
-CREATE OR REPLACE FUNCTION public.update_group_stats_trigger()
-RETURNS trigger
-LANGUAGE plpgsql
-AS $$
-BEGIN
-    IF TG_OP = 'INSERT' AND NEW."productGroupId" IS NOT NULL THEN
-        PERFORM update_group_stats(NEW."productGroupId");
-    ELSIF TG_OP = 'UPDATE' AND (OLD."productGroupId" IS DISTINCT FROM NEW."productGroupId" OR OLD.price != NEW.price) THEN
-        IF OLD."productGroupId" IS NOT NULL THEN
-            PERFORM update_group_stats(OLD."productGroupId");
-        END IF;
-        IF NEW."productGroupId" IS NOT NULL THEN
-            PERFORM update_group_stats(NEW."productGroupId");
-        END IF;
-    ELSIF TG_OP = 'DELETE' AND OLD."productGroupId" IS NOT NULL THEN
-        PERFORM update_group_stats(OLD."productGroupId");
-    END IF;
-
-    RETURN COALESCE(NEW, OLD);
-END;
-$$;
-
 -- Function: expand_pharma_abbreviations (for search)
 CREATE OR REPLACE FUNCTION public.expand_pharma_abbreviations(query text)
 RETURNS text

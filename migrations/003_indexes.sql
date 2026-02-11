@@ -4,14 +4,6 @@
 -- Vendor indexes
 CREATE INDEX IF NOT EXISTS idx_vendor_name ON public."Vendor" USING btree (name);
 
--- ProductGroup indexes
-CREATE INDEX IF NOT EXISTS idx_product_group_key ON public."ProductGroup" USING btree ("groupKey");
-CREATE INDEX IF NOT EXISTS idx_product_group_normalized_trgm ON public."ProductGroup" USING gin ("normalizedName" gin_trgm_ops);
-CREATE INDEX IF NOT EXISTS idx_product_group_core_identity ON public."ProductGroup" USING btree ("coreProductIdentity") WHERE ("coreProductIdentity" IS NOT NULL);
-CREATE INDEX IF NOT EXISTS idx_product_group_product_count ON public."ProductGroup" USING btree ("productCount" DESC);
-CREATE INDEX IF NOT EXISTS idx_product_group_category ON public."ProductGroup" USING btree ("categoryType");
-CREATE INDEX IF NOT EXISTS idx_product_group_ingredient ON public."ProductGroup" USING btree ("coreIngredient");
-
 -- Product indexes - Primary lookups
 CREATE INDEX IF NOT EXISTS idx_product_vendor ON public."Product" USING btree ("vendorId");
 CREATE INDEX IF NOT EXISTS idx_product_vendor_price ON public."Product" USING btree ("vendorId", price);
@@ -34,8 +26,6 @@ CREATE INDEX IF NOT EXISTS idx_product_volume_value ON public."Product" USING bt
 CREATE INDEX IF NOT EXISTS idx_product_spf_value ON public."Product" USING btree ("spfValue") WHERE ("spfValue" IS NOT NULL);
 
 -- Product indexes - Grouping
-CREATE INDEX IF NOT EXISTS idx_product_group ON public."Product" USING btree ("productGroupId") WHERE ("productGroupId" IS NOT NULL);
-CREATE INDEX IF NOT EXISTS idx_product_group_price ON public."Product" USING btree ("productGroupId", price) WHERE ("productGroupId" IS NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_product_core_identity ON public."Product" USING btree ("coreProductIdentity") WHERE ("coreProductIdentity" IS NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_product_computed_group ON public."Product" USING btree ("computedGroupId");
 

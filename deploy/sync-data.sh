@@ -1,8 +1,8 @@
 #!/bin/bash
 
 # Pharma Search Data Sync Script
-# Syncs PostgreSQL data and rebuilds Meilisearch index
-# Usage: ./sync-data.sh [--skip-schema] [--skip-meili]
+# Syncs PostgreSQL data to remote server
+# Usage: ./sync-data.sh [--skip-schema]
 
 set -e
 
@@ -18,11 +18,9 @@ DUMP_FILE="/tmp/pharma_data_$(date +%Y%m%d_%H%M%S).sql"
 
 # Parse options
 SKIP_SCHEMA=false
-SKIP_MEILI=false
 for arg in "$@"; do
     case $arg in
         --skip-schema) SKIP_SCHEMA=true ;;
-        --skip-meili) SKIP_MEILI=true ;;
         pharma|root@*) SERVER="$arg" ;;
     esac
 done
@@ -35,14 +33,34 @@ echo "Server: $SERVER"
 echo ""
 
 # ============================================
-# STEP 1: RECREATE SCHEMA FROM MIGRATIONS
+# STEP 1: RECREATE SCHEMA FROM LOCAL DB
 # ============================================
 if [[ "$SKIP_SCHEMA" == false ]]; then
-    echo "[1/5] Recreating database schema on server..."
+    echo "[1/4] Recreating database schema on server from local DB..."
+
+    # Dump local schema (not data)
+    SCHEMA_FILE="/tmp/pharma_schema_$(date +%Y%m%d_%H%M%S).sql"
+    pg_dump "$LOCAL_DB_URL" \
+        --schema-only \
+        --no-owner \
+        --no-privileges \
+        --table='"Vendor"' \
+        --table='"Product"' \
+        --table='"ProductStandardization"' \
+        -f "$SCHEMA_FILE"
+
+    # Strip PG17-specific settings
+    sed -i.bak '/^SET transaction_timeout/d' "$SCHEMA_FILE"
+    rm -f "${SCHEMA_FILE}.bak"
+
+    echo "  Schema dumped from local DB"
+
+    # Upload schema
+    scp -q "$SCHEMA_FILE" "$SERVER:/tmp/pharma_schema.sql"
+    rm -f "$SCHEMA_FILE"
 
     ssh "$SERVER" << 'ENDSSH'
 set -e
-cd /var/www/pharma-search
 
 # Drop all tables
 echo "  Dropping existing tables..."
@@ -53,13 +71,25 @@ GRANT ALL ON SCHEMA public TO postgres;
 GRANT ALL ON SCHEMA public TO public;
 " 2>/dev/null || true
 
-# Apply migrations
-echo "  Applying migrations..."
+# Re-create extensions (dropped with schema)
+echo "  Re-creating extensions..."
+sudo -u postgres psql -d pharma_search -c "
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+CREATE EXTENSION IF NOT EXISTS unaccent;
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+CREATE EXTENSION IF NOT EXISTS fuzzystrmatch;
+"
+
+# Apply schema from local dump
+echo "  Applying schema..."
+sudo -u postgres psql -d pharma_search -f /tmp/pharma_schema.sql 2>&1 | grep -cE "^(CREATE|ALTER)" || true
+
+# Apply functions and triggers from migrations (these aren't in table dumps)
+cd /var/www/pharma-search
 if [ -d "migrations" ]; then
-    chmod -R 644 migrations/*.sql 2>/dev/null || true
-    for migration in migrations/*.sql; do
+    for migration in migrations/002_functions.sql migrations/004_triggers.sql; do
         if [ -f "$migration" ]; then
-            echo "    $(basename $migration)"
+            echo "    Applying $(basename $migration)"
             sudo -u postgres psql -d pharma_search -f "$migration" 2>&1 | grep -v "NOTICE" | grep -v "^$" || true
         fi
     done
@@ -73,40 +103,39 @@ GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO root;
 GRANT USAGE ON SCHEMA public TO root;
 "
 
+rm -f /tmp/pharma_schema.sql
 echo "  Schema ready"
 ENDSSH
 
-    echo "  Schema recreated from migrations"
+    echo "  Schema recreated from local DB"
 else
-    echo "[1/5] Skipping schema recreation (--skip-schema)"
+    echo "[1/4] Skipping schema recreation (--skip-schema)"
 fi
 
 # ============================================
 # STEP 2: DUMP LOCAL DATA
 # ============================================
-echo "[2/5] Dumping local database..."
+echo "[2/4] Dumping local database..."
 
-# Dump with column inserts for compatibility
+# Dump with COPY format (fast) and --disable-triggers (adds ALTER TABLE DISABLE/ENABLE TRIGGER)
 # Include Vendor to preserve IDs that match Product.vendorId
 pg_dump "$LOCAL_DB_URL" \
     --data-only \
     --no-owner \
     --no-privileges \
-    --column-inserts \
+    --disable-triggers \
     --table='"Vendor"' \
     --table='"Product"' \
-    --table='"ProductGroup"' \
     --table='"ProductStandardization"' \
     -f "$DUMP_FILE"
 
 DUMP_SIZE=$(du -h "$DUMP_FILE" | cut -f1)
-ROW_COUNT=$(grep -c "^INSERT" "$DUMP_FILE" || echo "0")
-echo "  Dump created: $DUMP_FILE ($DUMP_SIZE, ~$ROW_COUNT rows)"
+echo "  Dump created: $DUMP_FILE ($DUMP_SIZE)"
 
 # ============================================
 # STEP 3: UPLOAD DUMP
 # ============================================
-echo "[3/5] Uploading to server..."
+echo "[3/4] Uploading to server..."
 
 scp -q "$DUMP_FILE" "$SERVER:/tmp/pharma_data.sql"
 echo "  Upload complete"
@@ -114,20 +143,18 @@ echo "  Upload complete"
 # ============================================
 # STEP 4: RESTORE DATA
 # ============================================
-echo "[4/5] Restoring data on server..."
+echo "[4/4] Restoring data on server..."
 
 ssh "$SERVER" << 'ENDSSH'
 set -e
 
-echo "  Disabling foreign key checks..."
-sudo -u postgres psql -d pharma_search -c "SET session_replication_role = replica;"
-
-echo "  Importing data (this may take a while)..."
-sudo -u postgres psql -d pharma_search -f /tmp/pharma_data.sql 2>&1 | \
-    grep -E "^(INSERT|ERROR)" | tail -10 || true
-
-echo "  Re-enabling foreign key checks..."
-sudo -u postgres psql -d pharma_search -c "SET session_replication_role = DEFAULT;"
+echo "  Importing data with triggers/FK disabled (this may take a while)..."
+# Strip PG17-specific settings that older PG versions don't support
+sed -i '/^SET transaction_timeout/d' /tmp/pharma_data.sql
+# Pipe SET + dump + RESET into a single psql session
+# COPY FROM stdin requires the data to come through stdin, not via \i
+sudo -u postgres bash -c '(echo "SET session_replication_role = replica;" ; cat /tmp/pharma_data.sql ; echo "SET session_replication_role = DEFAULT;") | psql -d pharma_search 2>&1 | tail -20'
+echo "  Import finished"
 
 # Show counts
 echo ""
@@ -136,8 +163,6 @@ sudo -u postgres psql -d pharma_search -t -c "
 SELECT 'Vendor: ' || COUNT(*) FROM \"Vendor\"
 UNION ALL
 SELECT 'Product: ' || COUNT(*) FROM \"Product\"
-UNION ALL
-SELECT 'ProductGroup: ' || COUNT(*) FROM \"ProductGroup\"
 UNION ALL
 SELECT 'ProductStandardization: ' || COUNT(*) FROM \"ProductStandardization\";
 "
@@ -152,37 +177,6 @@ rm -f "$DUMP_FILE"
 echo "  Data restored"
 
 # ============================================
-# STEP 5: REBUILD MEILISEARCH INDEX
-# ============================================
-if [[ "$SKIP_MEILI" == false ]]; then
-    echo "[5/5] Rebuilding Meilisearch index..."
-
-    ssh "$SERVER" << ENDSSH
-set -e
-cd /var/www/pharma-search
-
-# Check if backend binary exists
-if [ -f "pharma-server" ]; then
-    echo "  Running index rebuild..."
-    DATABASE_URL="$REMOTE_DB_URL" ./pharma-server rebuild-index 2>&1 | grep -E "(Starting|complete|indexed|Error)" || true
-else
-    echo "  Warning: pharma-server not found, skipping index rebuild"
-fi
-
-# Check Meilisearch status
-if curl -s http://127.0.0.1:7700/health | grep -q "available"; then
-    STATS=\$(curl -s http://127.0.0.1:7700/indexes/products/stats 2>/dev/null || echo "{}")
-    DOC_COUNT=\$(echo "\$STATS" | grep -o '"numberOfDocuments":[0-9]*' | grep -o '[0-9]*' || echo "0")
-    echo "  Meilisearch products indexed: \$DOC_COUNT"
-fi
-ENDSSH
-
-    echo "  Meilisearch index rebuilt"
-else
-    echo "[5/5] Skipping Meilisearch rebuild (--skip-meili)"
-fi
-
-# ============================================
 # DONE
 # ============================================
 echo ""
@@ -192,4 +186,3 @@ echo "========================================"
 echo ""
 echo "Options:"
 echo "  --skip-schema  Skip dropping/recreating tables"
-echo "  --skip-meili   Skip Meilisearch index rebuild"

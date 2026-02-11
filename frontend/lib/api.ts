@@ -1,11 +1,8 @@
 import { grpcClient, StreamingSearchResult } from "./grpc-client";
 import {
-  convertFlatToGrouped,
-  FlatSearchResult,
   ProductGroup,
   SearchResult,
   BackendProduct,
-  GroupingMode,
 } from "@/types/product";
 
 export type { StreamingSearchResult };
@@ -21,7 +18,6 @@ export interface SearchOptions {
   categories?: string[];
   forms?: string[];
   searchType?: "auto" | "similarity" | "database";
-  groupingMode?: GroupingMode;
 }
 
 export type { ProductGroup, SearchResult, BackendProduct as Product };
@@ -44,29 +40,6 @@ export async function autocomplete(
   return grpcClient.autocomplete(query, limit);
 }
 
-export async function searchProducts(
-  query: string,
-  options?: SearchOptions
-): Promise<SearchResult> {
-  const flatResult = await grpcClient.searchProducts(query, options) as FlatSearchResult;
-  return convertFlatToGrouped(flatResult, options?.groupingMode || "normal");
-}
-
-export async function searchProductsStreaming(
-  query: string,
-  onBatch: (groups: ProductGroup[], isComplete: boolean) => void,
-  options?: { limit?: number }
-): Promise<void> {
-  try {
-    const result = await searchProducts(query, {
-      limit: options?.limit || 1000,
-    });
-    onBatch(result.groups, true);
-  } catch (error) {
-    throw new Error(`Search failed: ${error}`);
-  }
-}
-
 export async function searchGroupsStreaming(
   query: string,
   onResult: (result: StreamingSearchResult) => void,
@@ -81,50 +54,6 @@ export async function fetchGroupsPage(
   limit: number
 ): Promise<StreamingSearchResult> {
   return grpcClient.fetchGroupsPage(query, offset, limit);
-}
-
-export async function searchAllProducts(
-  query: string,
-  options?: Omit<SearchOptions, "limit" | "offset">
-): Promise<SearchResult> {
-  const initialResult = await searchProducts(query, {
-    ...options,
-    limit: 1,
-    offset: 0,
-  });
-
-  if (initialResult.total <= 1000) {
-    return searchProducts(query, {
-      ...options,
-      limit: 1000,
-      offset: 0,
-    });
-  }
-
-  const allGroups: ProductGroup[] = [];
-  const batchSize = 1000;
-  let offset = 0;
-
-  while (offset < initialResult.total) {
-    const batch = await searchProducts(query, {
-      ...options,
-      limit: batchSize,
-      offset: offset,
-    });
-
-    allGroups.push(...batch.groups);
-    offset += batchSize;
-
-    if (offset > 5000) break;
-  }
-
-  return {
-    groups: allGroups,
-    total: initialResult.total,
-    offset: 0,
-    limit: allGroups.length,
-    search_type_used: initialResult.search_type_used,
-  };
 }
 
 export async function checkHealth(): Promise<{ status: string }> {

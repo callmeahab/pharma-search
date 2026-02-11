@@ -115,13 +115,29 @@ PRODUCT_FORMS = {
 
 # Common brand indicators (words that typically follow brand names)
 BRAND_STOPWORDS = {
-    'vitamin', 'vitamini', 'mineral', 'minerali',
-    'probiotik', 'probiotici', 'prebiotik',
-    'omega', 'kolagen', 'collagen',
-    'protein', 'amino', 'bcaa', 'kreatin', 'creatine',
-    'za', 'sa', 'i', 'od', 'u', 'na',
-    'tablete', 'kapsule', 'sirup', 'sprej', 'kapi',
-    'krema', 'gel', 'mast', 'losion', 'serum',
+    # Active ingredients / product types (Serbian + English)
+    'vitamin', 'vitamini', 'vitamina', 'mineral', 'minerali',
+    'probiotik', 'probiotici', 'prebiotik', 'probiotics',
+    'omega', 'kolagen', 'collagen', 'kolesterol',
+    'protein', 'proteini', 'amino', 'bcaa', 'kreatin', 'creatine',
+    'magnezijum', 'magnesium', 'kalcijum', 'calcium', 'cink', 'zinc',
+    'gvožđe', 'gvozdje', 'iron', 'selen', 'selenium',
+    'folna', 'kiselina', 'acid', 'folic',
+    'glukozamin', 'glucosamine', 'hondroitin', 'chondroitin',
+    'melatonin', 'biotin', 'lutein', 'karnitin', 'carnitine',
+    'hrom', 'chromium', 'bor', 'boron', 'mangan', 'manganese',
+    'koenzim', 'coenzyme', 'q10',
+    # Common Serbian words that aren't brands
+    'za', 'sa', 'i', 'od', 'u', 'na', 'po', 'iz', 'do', 'se',
+    'je', 'su', 'ili', 'ali', 'sve', 'koji', 'koja', 'koje',
+    # Dosage forms
+    'tablete', 'tableta', 'kapsule', 'kapsula', 'sirup', 'sprej', 'kapi',
+    'krema', 'gel', 'mast', 'losion', 'serum', 'prah', 'rastvor',
+    'kesice', 'kesica', 'ampule', 'ampula',
+    # Product descriptors
+    'kompleks', 'complex', 'formula', 'preparat', 'suplement',
+    'ekstrakt', 'extract', 'ulje', 'oil', 'biljni', 'herbal',
+    'dečji', 'decji', 'za decu', 'kids', 'junior', 'baby',
 }
 
 # Quantity unit words
@@ -328,15 +344,15 @@ def find_brand_spans(text: str, other_spans: List[Tuple[int, int, str]]) -> List
         # Stop if word looks like a dosage (contains numbers + unit)
         if re.match(r'^\d+\s*(mg|ml|g|mcg|iu|kg|l)\b', word_lower):
             break
-        # Stop if word is a number followed by nothing pharmaceutical
-        if re.match(r'^\d+$', word_lower) and len(brand_words) > 0:
+        # Stop if word starts with a digit (e.g., "1000IU", "500mg", "30")
+        if re.match(r'^\d', word_lower):
             break
 
         brand_words.append((word, word_start, word_end))
         current_pos = word_end
 
-        # Limit brand to first 4 words max
-        if len(brand_words) >= 4:
+        # Limit brand to first 2 words max (brands are typically 1-2 words)
+        if len(brand_words) >= 2:
             break
 
     if brand_words:

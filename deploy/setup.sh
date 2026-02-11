@@ -25,7 +25,7 @@ fi
 # ============================================
 # SYSTEM PACKAGES
 # ============================================
-echo "[1/7] Installing system packages..."
+echo "[1/6] Installing system packages..."
 
 apt update && apt upgrade -y
 
@@ -64,7 +64,7 @@ echo "  System packages installed"
 # ============================================
 # POSTGRESQL
 # ============================================
-echo "[2/7] Setting up PostgreSQL..."
+echo "[2/6] Setting up PostgreSQL..."
 
 sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
 wget --quiet -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc | apt-key add -
@@ -106,61 +106,9 @@ systemctl restart postgresql
 echo "  PostgreSQL configured"
 
 # ============================================
-# MEILISEARCH
-# ============================================
-echo "[3/7] Setting up Meilisearch..."
-
-curl -L https://install.meilisearch.com | sh
-install -m 0755 meilisearch /usr/local/bin/meilisearch
-
-# Create user
-if ! id -u meilisearch >/dev/null 2>&1; then
-    useradd --system --home /var/lib/meilisearch --create-home --shell /bin/false meilisearch
-fi
-mkdir -p /var/lib/meilisearch/data /var/lib/meilisearch/dumps
-chown -R meilisearch:meilisearch /var/lib/meilisearch
-
-# Config
-cat << EOF > /etc/meilisearch.toml
-db_path = "/var/lib/meilisearch/data"
-env = "development"
-no_analytics = true
-http_addr = "127.0.0.1:7700"
-log_level = "INFO"
-EOF
-chown meilisearch:meilisearch /etc/meilisearch.toml
-chmod 600 /etc/meilisearch.toml
-
-# Systemd service
-cat << EOF > /etc/systemd/system/meilisearch.service
-[Unit]
-Description=Meilisearch
-After=systemd-user-sessions.service
-
-[Service]
-Type=simple
-User=meilisearch
-Group=meilisearch
-ExecStart=/usr/local/bin/meilisearch --config-file-path /etc/meilisearch.toml
-WorkingDirectory=/var/lib/meilisearch
-Restart=on-failure
-LimitNOFILE=65536
-MemoryMax=1G
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-systemctl daemon-reload
-systemctl enable meilisearch
-systemctl start meilisearch
-
-echo "  Meilisearch configured"
-
-# ============================================
 # APPLICATION DIRECTORIES
 # ============================================
-echo "[4/7] Creating application directories..."
+echo "[3/6] Creating application directories..."
 
 mkdir -p "$APP_DIR"
 mkdir -p "$LOG_DIR/frontend" "$LOG_DIR/backend" "$LOG_DIR/pm2"
@@ -170,7 +118,7 @@ echo "  Directories created"
 # ============================================
 # NGINX
 # ============================================
-echo "[5/7] Configuring Nginx..."
+echo "[4/6] Configuring Nginx..."
 
 rm -f /etc/nginx/sites-enabled/default
 
@@ -278,12 +226,11 @@ echo "  Nginx configured"
 # ============================================
 # FIREWALL
 # ============================================
-echo "[6/7] Configuring firewall..."
+echo "[5/6] Configuring firewall..."
 
 ufw allow ssh
 ufw allow 80/tcp
 ufw allow 443/tcp
-ufw deny 7700  # Block external Meilisearch access
 ufw --force enable
 
 echo "  Firewall configured"
@@ -291,7 +238,7 @@ echo "  Firewall configured"
 # ============================================
 # PM2 ECOSYSTEM CONFIG
 # ============================================
-echo "[7/7] Creating PM2 configuration..."
+echo "[6/6] Creating PM2 configuration..."
 
 cat << EOF > "$APP_DIR/ecosystem.config.js"
 module.exports = {
@@ -323,9 +270,7 @@ module.exports = {
       exec_mode: 'fork',
       interpreter: 'none',
       env: {
-        DATABASE_URL: 'postgresql://root:pharma_secure_password_2025@localhost:5432/pharma_search',
-        MEILI_URL: 'http://127.0.0.1:7700',
-        MEILI_API_KEY: ''
+        DATABASE_URL: 'postgresql://root:pharma_secure_password_2025@localhost:5432/pharma_search'
       },
       error_file: '$LOG_DIR/backend/error.log',
       out_file: '$LOG_DIR/backend/out.log',
@@ -364,6 +309,5 @@ echo "  http://$SERVER_IP"
 echo ""
 echo "Services:"
 echo "  PostgreSQL:   postgresql://root:***@localhost:5432/pharma_search"
-echo "  Meilisearch:  http://127.0.0.1:7700"
 echo "  Frontend:     http://localhost:3000 (via PM2)"
 echo "  Backend:      http://localhost:50051 (via PM2)"

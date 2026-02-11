@@ -5,7 +5,7 @@ import Navbar from "@/components/Navbar";
 import HeroSection from "@/components/HeroSection";
 import ProductList from "@/components/ProductList";
 import { searchGroupsStreaming, fetchGroupsPage, getFeaturedProducts, SearchResult, StreamingSearchResult } from "@/lib/api";
-import { convertProductGroupToProducts, ProductGroup, BackendProduct, groupProductsByKey } from "@/types/product";
+import { convertProductGroupToProducts, ProductGroup } from "@/types/product";
 import { Spinner } from "@/components/ui/spinner";
 import Footer from "@/components/Footer";
 import { FilterSidebar, FilterState, defaultFilters, Facets } from "@/components/FilterSidebar";
@@ -41,7 +41,7 @@ export default function HomePage() {
   const loadMoreRef = useRef<HTMLDivElement>(null);
   const currentSearchTermRef = useRef<string>("");
 
-  // Load grouping preferences from localStorage on mount
+  // Load display mode preference from localStorage on mount
   useEffect(() => {
     try {
       const saved = localStorage.getItem(GROUPING_PREFS_KEY);
@@ -50,8 +50,6 @@ export default function HomePage() {
         setFilters(prev => ({
           ...prev,
           groupSimilar: prefs.groupSimilar ?? prev.groupSimilar,
-          groupingMode: prefs.groupingMode ?? prev.groupingMode,
-          sortGroupsBy: prefs.sortGroupsBy ?? prev.sortGroupsBy,
         }));
       }
     } catch {
@@ -59,19 +57,16 @@ export default function HomePage() {
     }
   }, []);
 
-  // Save grouping preferences to localStorage when they change
+  // Save display mode preference to localStorage when it changes
   useEffect(() => {
     try {
-      const prefs = {
+      localStorage.setItem(GROUPING_PREFS_KEY, JSON.stringify({
         groupSimilar: filters.groupSimilar,
-        groupingMode: filters.groupingMode,
-        sortGroupsBy: filters.sortGroupsBy,
-      };
-      localStorage.setItem(GROUPING_PREFS_KEY, JSON.stringify(prefs));
+      }));
     } catch {
       // Ignore localStorage errors
     }
-  }, [filters.groupSimilar, filters.groupingMode, filters.sortGroupsBy]);
+  }, [filters.groupSimilar]);
 
   const loadFeaturedProducts = useCallback(async () => {
     setIsLoadingFeatured(true);
@@ -231,23 +226,10 @@ export default function HomePage() {
     };
   }, [accumulatedGroups]);
 
-  // Extract all backend products for similarity matching in list mode
-  const allBackendProducts = useMemo(() => {
-    return accumulatedGroups.flatMap(g => g.products);
-  }, [accumulatedGroups]);
+  const filteredGroups = useMemo(() => {
+    if (!accumulatedGroups.length) return [];
 
-  // Re-group products based on the selected grouping mode
-  const regroupedData = useMemo(() => {
-    if (!allBackendProducts.length) return [];
-
-    // Re-group based on the selected grouping mode
-    return groupProductsByKey(allBackendProducts, filters.groupingMode);
-  }, [allBackendProducts, filters.groupingMode]);
-
-  const filteredAndSortedGroups = useMemo(() => {
-    if (!regroupedData.length) return [];
-
-    let groups = [...regroupedData];
+    let groups = [...accumulatedGroups];
 
     if (filters.brands.length > 0) {
       groups = groups.filter(group =>
@@ -275,60 +257,12 @@ export default function HomePage() {
       );
     }
 
-    // Sort groups
-    switch (filters.sortGroupsBy) {
-      case "price_asc":
-        groups.sort((a, b) => a.price_range.min - b.price_range.min);
-        break;
-      case "price_desc":
-        groups.sort((a, b) => b.price_range.min - a.price_range.min);
-        break;
-      case "savings":
-        groups.sort((a, b) => {
-          const savingsA = a.price_range.max > 0 ? (a.price_range.max - a.price_range.min) / a.price_range.max : 0;
-          const savingsB = b.price_range.max > 0 ? (b.price_range.max - b.price_range.min) / b.price_range.max : 0;
-          return savingsB - savingsA;
-        });
-        break;
-      case "vendors":
-        groups.sort((a, b) => b.vendor_count - a.vendor_count);
-        break;
-      case "products":
-        groups.sort((a, b) => (b.product_count || 0) - (a.product_count || 0));
-        break;
-      default:
-        // relevance - keep original order from search
-        break;
-    }
-
-    // Sort products within each group
-    if (filters.sortBy !== "relevance") {
-      groups = groups.map(group => {
-        const sortedProducts = [...group.products];
-        switch (filters.sortBy) {
-          case "price_asc":
-            sortedProducts.sort((a, b) => a.price - b.price);
-            break;
-          case "price_desc":
-            sortedProducts.sort((a, b) => b.price - a.price);
-            break;
-          case "vendors":
-            // Products don't have vendor count, keep price order
-            sortedProducts.sort((a, b) => a.price - b.price);
-            break;
-          default:
-            break;
-        }
-        return { ...group, products: sortedProducts };
-      });
-    }
-
     return groups;
-  }, [regroupedData, filters, priceRange]);
+  }, [accumulatedGroups, filters, priceRange]);
 
   const displayGroups = filters.groupSimilar
-    ? filteredAndSortedGroups
-    : filteredAndSortedGroups.flatMap((g, groupIdx) =>
+    ? filteredGroups
+    : filteredGroups.flatMap((g, groupIdx) =>
         g.products.map((p, productIdx) => ({
           ...g,
           // Use combination of indices and vendor to guarantee uniqueness
@@ -385,11 +319,7 @@ export default function HomePage() {
             <>
               <ResultsToolbar
                 groupSimilar={filters.groupSimilar}
-                groupingMode={filters.groupingMode}
-                sortGroupsBy={filters.sortGroupsBy}
                 onGroupSimilarChange={(value) => setFilters(prev => ({ ...prev, groupSimilar: value }))}
-                onGroupingModeChange={(value) => setFilters(prev => ({ ...prev, groupingMode: value }))}
-                onSortGroupsByChange={(value) => setFilters(prev => ({ ...prev, sortGroupsBy: value }))}
                 totalGroups={totalGroups}
                 totalProducts={totalProducts}
                 loadedGroups={accumulatedGroups.length}
@@ -434,7 +364,6 @@ export default function HomePage() {
                   <>
                     <ProductList
                       products={displayGroups.flatMap(group => convertProductGroupToProducts(group))}
-                      allProducts={!filters.groupSimilar ? allBackendProducts : undefined}
                     />
                     {/* Infinite scroll trigger */}
                     <div ref={loadMoreRef} className="h-10" />

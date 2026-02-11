@@ -10,8 +10,6 @@ services:
     depends_on:
       db:
         condition: service_healthy
-      meilisearch:
-        condition: service_started
     # GPU support for CUDA (uncomment if using NVIDIA GPU)
     # deploy:
     #   resources:
@@ -38,17 +36,5 @@ services:
     ports:
       - "5432:5432"
 
-  meilisearch:
-    image: getmeili/meilisearch:v1.29
-    restart: unless-stopped
-    environment:
-      MEILI_ENV: development
-      MEILI_NO_ANALYTICS: true
-    volumes:
-      - meilisearch-data:/meili_data
-    ports:
-      - "7700:7700"
-
 volumes:
   postgres-data:
-  meilisearch-data:

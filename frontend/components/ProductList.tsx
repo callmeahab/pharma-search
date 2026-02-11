@@ -1,14 +1,12 @@
 import React from 'react';
 import ProductCard from './ProductCard';
-import { Product, BackendProduct } from '@/types/product';
+import { Product } from '@/types/product';
 
 interface ProductListProps {
   products: Product[];
-  /** All backend products from search - passed to cards for similarity matching in list mode */
-  allProducts?: BackendProduct[];
 }
 
-const ProductList: React.FC<ProductListProps> = ({ products, allProducts }) => {
+const ProductList: React.FC<ProductListProps> = ({ products }) => {
   if (products.length === 0) {
     return (
       <div className="text-center py-12">
@@ -20,7 +18,7 @@ const ProductList: React.FC<ProductListProps> = ({ products, allProducts }) => {
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 animate-fade-in">
       {products.map((product) => (
-        <ProductCard key={product.id} product={product} allProducts={allProducts} />
+        <ProductCard key={product.id} product={product} />
       ))}
     </div>
   );

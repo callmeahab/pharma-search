@@ -67,8 +67,6 @@ cd /var/www/pharma-search
 if [ ! -f .env ]; then
     cat << EOF > .env
 DATABASE_URL="postgresql://root:pharma_secure_password_2025@localhost:5432/pharma_search"
-MEILI_URL="http://127.0.0.1:7700"
-MEILI_API_KEY=""
 NODE_ENV="production"
 SMTP_HOST="smtp.gmail.com"
 SMTP_PORT="587"
@@ -179,9 +177,7 @@ module.exports = {
       exec_mode: 'fork',
       interpreter: 'none',
       env: {
-        DATABASE_URL: 'postgresql://root:pharma_secure_password_2025@localhost:5432/pharma_search',
-        MEILI_URL: 'http://127.0.0.1:7700',
-        MEILI_API_KEY: ''
+        DATABASE_URL: 'postgresql://root:pharma_secure_password_2025@localhost:5432/pharma_search'
       },
       error_file: '/var/log/pharma-search/backend/error.log',
       out_file: '/var/log/pharma-search/backend/out.log',

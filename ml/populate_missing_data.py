@@ -22,7 +22,7 @@ from datetime import datetime
 
 import spacy
 import psycopg2
-from psycopg2.extras import execute_batch
+from psycopg2.extras import execute_batch, execute_values
 from dotenv import load_dotenv
 from tqdm import tqdm
 
@@ -130,6 +130,319 @@ UNIT_NORMALIZATION = {
 }
 
 
+# Units classified by type
+PHARMA_DOSAGE_UNITS = {"mg", "mcg", "iu", "ij", "i.u.", "i.j.", "μg", "µg"}
+VOLUME_UNITS = {"ml", "l", "mл", "л"}
+AMBIGUOUS_UNITS = {"g", "gr", "gram", "grama"}  # small values = dosage, large = weight
+
+# Regex for finding pharma dosage in title text
+PHARMA_DOSAGE_RE = re.compile(
+    r'(\d+(?:[.,]\d+)?)\s*(mg|mcg|μg|µg|iu|i\.u\.|i\.j\.|ij)\b', re.IGNORECASE
+)
+VOLUME_RE = re.compile(
+    r'(\d+(?:[.,]\d+)?)\s*(ml|l)\b', re.IGNORECASE
+)
+GRAM_RE = re.compile(
+    r'(\d+(?:[.,]\d+)?)\s*(g|gr)\b', re.IGNORECASE
+)
+
+
+def post_process_extraction(extracted: Dict[str, Any], title: str) -> Dict[str, Any]:
+    """
+    Post-process NER extraction to fix misclassified dosage entities.
+
+    If the NER model tagged a volume (ml/l) as DOSAGE, move it to volume fields
+    and regex-scan the title for the actual pharma dosage (mg/mcg/iu).
+    """
+    result = dict(extracted)
+    dosage_unit = (result.get("dosage_unit") or "").lower()
+    dosage_unit_normalized = UNIT_NORMALIZATION.get(dosage_unit, dosage_unit)
+
+    # Check if the NER-extracted "dosage" is actually a volume
+    if dosage_unit_normalized in ("ml", "l") or dosage_unit in VOLUME_UNITS:
+        # Move the misclassified dosage to volume fields
+        result["volume_value"] = result.get("dosage_value")
+        result["volume_unit"] = dosage_unit_normalized
+        # Clear the dosage fields so we can re-extract
+        result["dosage_value"] = None
+        result["dosage_unit"] = None
+        result["dosage_text"] = None
+
+        # Try to find actual pharma dosage in the title
+        match = PHARMA_DOSAGE_RE.search(title)
+        if match:
+            try:
+                val = float(match.group(1).replace(",", "."))
+                unit = UNIT_NORMALIZATION.get(match.group(2).lower(), match.group(2).lower())
+                result["dosage_value"] = val
+                result["dosage_unit"] = unit
+                result["dosage_text"] = match.group(0)
+            except ValueError:
+                pass
+
+    # Handle ambiguous 'g' unit: small values (<=5g) are dosage, larger are weight
+    elif dosage_unit_normalized == "g" or dosage_unit in AMBIGUOUS_UNITS:
+        val = result.get("dosage_value") or 0
+        if val > 5.0:
+            # Large gram value → weight, not dosage
+            result["volume_value"] = result.get("dosage_value")
+            result["volume_unit"] = "g"
+            result["dosage_value"] = None
+            result["dosage_unit"] = None
+            result["dosage_text"] = None
+
+            # Try to find actual pharma dosage
+            match = PHARMA_DOSAGE_RE.search(title)
+            if match:
+                try:
+                    val = float(match.group(1).replace(",", "."))
+                    unit = UNIT_NORMALIZATION.get(match.group(2).lower(), match.group(2).lower())
+                    result["dosage_value"] = val
+                    result["dosage_unit"] = unit
+                    result["dosage_text"] = match.group(0)
+                except ValueError:
+                    pass
+
+    # If NER found no dosage at all, try regex extraction from title
+    if result.get("dosage_value") is None:
+        match = PHARMA_DOSAGE_RE.search(title)
+        if match:
+            try:
+                val = float(match.group(1).replace(",", "."))
+                unit = UNIT_NORMALIZATION.get(match.group(2).lower(), match.group(2).lower())
+                result["dosage_value"] = val
+                result["dosage_unit"] = unit
+                result["dosage_text"] = match.group(0)
+            except ValueError:
+                pass
+        else:
+            # Try gram with small-value threshold
+            match = GRAM_RE.search(title)
+            if match:
+                try:
+                    val = float(match.group(1).replace(",", "."))
+                    if val <= 5.0:
+                        result["dosage_value"] = val
+                        result["dosage_unit"] = "g"
+                        result["dosage_text"] = match.group(0)
+                except ValueError:
+                    pass
+
+    # Extract volume from title if we don't have it yet
+    if result.get("volume_value") is None:
+        match = VOLUME_RE.search(title)
+        if match:
+            try:
+                val = float(match.group(1).replace(",", "."))
+                unit = UNIT_NORMALIZATION.get(match.group(2).lower(), match.group(2).lower())
+                result["volume_value"] = val
+                result["volume_unit"] = unit
+            except ValueError:
+                pass
+
+    return result
+
+
+def generate_normalized_name(extracted: Dict[str, Any], title: str) -> Optional[str]:
+    """
+    Generate a clean canonical name: brand + core ingredient + dosage + form.
+    Used for display and as a base for grouping.
+    """
+    parts = []
+
+    brand = extracted.get("brand")
+    if brand and len(brand.strip()) > 1:
+        parts.append(brand.strip().title())
+
+    # Extract core ingredient from title (remove brand, dosage, form, quantity)
+    ingredient = _extract_core_ingredient(title, brand)
+    if ingredient:
+        parts.append(ingredient)
+
+    # Add dosage
+    dosage_val = extracted.get("dosage_value")
+    dosage_unit = extracted.get("dosage_unit")
+    if dosage_val is not None and dosage_unit:
+        # Format: remove trailing .0 for integer values
+        if dosage_val == int(dosage_val):
+            parts.append(f"{int(dosage_val)} {dosage_unit.upper()}")
+        else:
+            parts.append(f"{dosage_val} {dosage_unit.upper()}")
+
+    # Add form
+    form = extracted.get("form")
+    if form:
+        parts.append(form.strip().lower())
+
+    if len(parts) >= 2:
+        return " ".join(parts)
+    return None
+
+
+_FORM_WORDS = {
+    "tablete", "tableta", "tabl", "tbl", "tab",
+    "kapsule", "kapsula", "kaps", "caps", "capsule", "capsules",
+    "softgel", "softgels",
+    "gel", "gela",
+    "sirup", "sprej", "spray", "kapi", "drops",
+    "krema", "krem", "cream", "mast", "losion", "lotion", "serum",
+    "prah", "powder", "granule", "granula",
+    "kesice", "kesica", "ampule", "ampula",
+    "komada", "kom", "komad",
+    "rastvor", "solution", "suspenzija",
+    "obloženih", "film",
+    "šampon", "sampon", "balzam", "sapun",
+    "parfem", "parfema", "edp", "edt", "parfum",
+    "pasta", "traka",
+    "cps",
+    # Cosmetics/body care form words
+    "ulje", "oil", "maska", "mask", "pena", "foam", "mousse",
+    "puder", "lak", "emulzija", "emulsion", "voda", "water",
+    "ruž", "ruz", "ulošci", "ulosci", "uložak", "ulozak",
+    "tonik", "toner", "mleko", "mlijeko", "spreju",
+    "fluid", "kupka", "dezodorans", "pastile", "pastila",
+    "čaj", "tea", "prahu",
+}
+
+_NOISE_WORDS = {
+    # Serbian single-letter fillers (a=and/but, i=and, u=in, o=about)
+    "a", "i", "u", "o",
+    # Serbian filler words
+    "za", "sa", "od", "na", "po", "iz", "do", "se", "je", "ili", "sve",
+    "the", "of", "with", "and", "for", "in",
+    # Serbian body parts / category words (not product identities)
+    "kosu", "kosa", "kose", "lice", "lica", "telo", "tela",
+    "ruke", "ruku", "noge", "nogu", "nos", "oči", "oci",
+    "usne", "zube", "zubi", "decu", "deca", "bebe",
+    "stopala", "nokti", "nokte",
+    # Serbian category descriptors / demographics
+    "tuširanje", "tusiranje", "kupanje", "pranje", "negu", "nega",
+    "čišćenje", "ciscenje", "hidratacija", "zaštita", "zastita",
+    "ženski", "muški", "muski", "muškarce", "muskarce", "žene", "zene",
+    "odrasle", "odraslih", "noćna", "nocna", "dnevna",
+    "suvu", "osetljivu", "kožu", "kozu", "područje", "podrucje",
+    "oko", "očiju", "ociju",
+    "roze", "plava", "plavi", "bela", "beli", "crna", "crni",
+    "brijanje", "žvakanje", "zvakanje",
+    "zaštitu", "zastitu", "sunca", "toaletna",
+    # Marketing
+    "plus", "extra", "forte", "max", "ultra", "super", "premium",
+    "pro", "active", "natural", "organic",
+    "gratis", "poklon", "set", "promo",
+    # Vendor/packaging noise
+    "dr.", "dr", "theiss",
+    "foods", "pharm", "pharma",
+    # Common suffixes that leak through
+    "2u1", "3u1",
+    # SPF is like dosage for sunscreen, not product identity
+    "spf", "spf15", "spf20", "spf30", "spf50", "spf50+",
+}
+
+
+def _clean_title(t: str) -> list:
+    """Clean a lowercased title string and return significant core words."""
+    # Replace special chars with spaces
+    t = re.sub(r'[®™©()\[\]/\\,;:!?]', ' ', t)
+
+    # Normalize hyphenated alphanumeric tokens: d-3 → d3, b-12 → b12, omega-3 → omega3
+    t = re.sub(r'\b([a-z]+)-(\d+)', r'\1\2', t)
+
+    # Remove concatenated quantity×dosage patterns FIRST: "60x2000iu", "30x500mg"
+    t = re.sub(r'\b\d+\s*[xх×]\s*\d+(?:[.,]\d+)?\s*(mg|mcg|μg|µg|iu|i\.u\.|i\.j\.|ij|ml|l|g|gr|kg)\b', ' ', t, flags=re.IGNORECASE)
+
+    # Remove quantity×count patterns without units: "60x2", "30x1"
+    t = re.sub(r'\b\d+\s*[xх×]\s*\d+\b', ' ', t)
+
+    # Remove dosage patterns: "1000 iu", "500mg", "1000ij", etc.
+    t = re.sub(r'\b\d+(?:[.,]\d+)?\s*(mg|mcg|μg|µg|iu|i\.u\.|i\.j\.|ij|ml|l|g|gr|kg)\b', ' ', t, flags=re.IGNORECASE)
+
+    # Remove quantity + form patterns: "60 tableta", "a30", "30 caps", "x60"
+    t = re.sub(r'\b[ax]?\d+\s*(mikrotablet\w*|mikrokapsul\w*|tab\w*|tabl\w*|tableta|tablete|kaps\w*|kapsula|kapsule|caps\w*|capsule\w*|softgel\w*|gel\w*|komada|kom|komad|kesic\w*|ampul\w*|obložen\w*|film\w*)\b', ' ', t, flags=re.IGNORECASE)
+    t = re.sub(r'\b[ax]\d+\b', ' ', t)
+    t = re.sub(r'\b\d+[xх×]\b', ' ', t)
+
+    # Remove SPF patterns: "spf50", "spf 30", "spf50+"
+    t = re.sub(r'\bspf\s*\d+\+?\b', ' ', t, flags=re.IGNORECASE)
+
+    # Remove standalone pure numbers but keep alphanumeric like d3, b12, k2, q10, c1000
+    t = re.sub(r'(?<![a-z0-9])\d+(?:\+\d+)*(?![a-z0-9])', ' ', t)
+
+    words = t.split()
+    core = []
+    for w in words:
+        w = w.strip(".,;:!?+–—_- ")
+        wl = w.lower()
+        if not wl:
+            continue
+        if len(wl) == 1 and wl not in ('c', 'e', 'd', 'b', 'k'):
+            continue
+        if wl in _FORM_WORDS:
+            continue
+        if wl in _NOISE_WORDS:
+            continue
+        core.append(wl)
+    return core
+
+
+def _extract_core_ingredient(title: str, brand: Optional[str]) -> Optional[str]:
+    """
+    Extract the core product identity from a title (brand-independent).
+    Strips: brand name, dosage+units, quantity+form words, noise/filler, pure numbers.
+    Keeps: product name, key identifiers (d3, b12, omega3, etc.)
+
+    Tries brand-stripped version first for cross-brand grouping.
+    Falls back to full title if brand stripping leaves nothing useful.
+    """
+    t = title.lower()
+
+    # Try brand-stripped version first (enables cross-brand grouping)
+    if brand and len(brand) > 1:
+        t_stripped = t
+        brand_lower = brand.lower().strip()
+        for bw in brand_lower.split():
+            if len(bw) > 1:
+                t_stripped = re.sub(r'\b' + re.escape(bw) + r'\b', ' ', t_stripped)
+
+        core = _clean_title(t_stripped)
+        result = " ".join(core[:4]).title() if core else None
+        # Require at least 2 chars — single letters (b, c) alone are too generic
+        if result and len(result) >= 2:
+            return result
+
+    # Fallback: use full title (brand stays in key)
+    core = _clean_title(t)
+    result = " ".join(core[:4]).title() if core else None
+    if result and len(result) >= 2:
+        return result
+    return None
+
+
+def compute_group_key(extracted: Dict[str, Any], title: str) -> Optional[str]:
+    """
+    Compute a deterministic group key for product comparison.
+    Format: "ingredient::dosage_value::dosage_unit" (lowercase, normalized)
+
+    Intentionally excludes form and quantity so that the same product
+    in tablets vs capsules vs spray groups together.
+    """
+    ingredient = _extract_core_ingredient(title, extracted.get("brand"))
+    if not ingredient:
+        return None
+
+    dosage_val = extracted.get("dosage_value")
+    dosage_unit = (extracted.get("dosage_unit") or "").lower()
+
+    parts = [ingredient.lower().strip()]
+    if dosage_val is not None and dosage_unit:
+        if dosage_val == int(dosage_val):
+            parts.append(str(int(dosage_val)))
+        else:
+            parts.append(str(dosage_val))
+        parts.append(dosage_unit)
+
+    return "::".join(parts)
+
+
 def parse_dosage_text(text: str) -> Optional[Dict[str, Any]]:
     """Parse dosage text to extract value and unit."""
     text = text.lower().strip()
@@ -165,10 +478,8 @@ def parse_quantity_text(text: str) -> Optional[Dict[str, Any]]:
     return None
 
 
-def extract_entities(nlp, title: str) -> Dict[str, Any]:
-    """Extract all entities from a product title."""
-    doc = nlp(title)
-
+def extract_entities_from_doc(doc) -> Dict[str, Any]:
+    """Extract all entities from a processed spaCy doc."""
     result = {
         "brand": None,
         "dosage_value": None,
@@ -177,6 +488,8 @@ def extract_entities(nlp, title: str) -> Dict[str, Any]:
         "form": None,
         "quantity_value": None,
         "quantity_unit": None,
+        "volume_value": None,
+        "volume_unit": None,
         "entities_found": []
     }
 
@@ -208,19 +521,27 @@ def extract_entities(nlp, title: str) -> Dict[str, Any]:
     return result
 
 
-def get_products_missing_data(conn, limit: int = BATCH_SIZE, update_all: bool = False) -> List[Dict]:
+def extract_entities(nlp, title: str) -> Dict[str, Any]:
+    """Extract all entities from a product title."""
+    return extract_entities_from_doc(nlp(title))
+
+
+def get_products_missing_data(conn, limit: int = BATCH_SIZE, update_all: bool = False,
+                               last_id: str = "") -> List[Dict]:
     """Get products with missing extracted data."""
     cur = conn.cursor()
 
     if update_all:
-        # Get all products
+        # Get all products, paginated by last_id
         query = """
             SELECT id, title
             FROM "Product"
             WHERE title IS NOT NULL AND LENGTH(title) > 5
+              AND id > %s
             ORDER BY id
             LIMIT %s
         """
+        cur.execute(query, (last_id, limit))
     else:
         # Get products missing key fields
         query = """
@@ -237,8 +558,8 @@ def get_products_missing_data(conn, limit: int = BATCH_SIZE, update_all: bool = 
             ORDER BY id
             LIMIT %s
         """
+        cur.execute(query, (limit,))
 
-    cur.execute(query, (limit,))
     rows = cur.fetchall()
     cur.close()
 
@@ -294,20 +615,48 @@ def update_product_table(conn, updates: List[Dict]) -> int:
 
     cur = conn.cursor()
 
+    rows = [
+        (
+            update["id"],
+            update["brand"],
+            update["form"],
+            update["dosage_value"],
+            update["dosage_unit"],
+            update["quantity_value"],
+            update["quantity_unit"],
+            update.get("volume_value"),
+            update.get("volume_unit"),
+            update.get("normalized_name"),
+            update.get("computed_group_id"),
+            update.get("core_product_identity"),
+        )
+        for update in updates
+    ]
+
     query = """
-        UPDATE "Product" SET
-            "extractedBrand" = COALESCE(%(brand)s, "extractedBrand"),
-            form = COALESCE(%(form)s, form),
-            "dosageValue" = COALESCE(%(dosage_value)s, "dosageValue"),
-            "dosageUnit" = COALESCE(%(dosage_unit)s, "dosageUnit"),
-            "quantityValue" = COALESCE(%(quantity_value)s, "quantityValue"),
-            "quantityUnit" = COALESCE(%(quantity_unit)s, "quantityUnit"),
+        UPDATE "Product" AS p SET
+            "extractedBrand" = COALESCE(v.brand::text, p."extractedBrand"),
+            form = COALESCE(v.form::text, p.form),
+            "dosageValue" = COALESCE(v.dosage_value::double precision, p."dosageValue"),
+            "dosageUnit" = COALESCE(v.dosage_unit::text, p."dosageUnit"),
+            "quantityValue" = COALESCE(v.quantity_value::integer, p."quantityValue"),
+            "quantityUnit" = COALESCE(v.quantity_unit::text, p."quantityUnit"),
+            "volumeValue" = COALESCE(v.volume_value::numeric, p."volumeValue"),
+            "volumeUnit" = COALESCE(v.volume_unit::text, p."volumeUnit"),
+            "normalizedName" = v.normalized_name::text,
+            "computedGroupId" = v.computed_group_id::text,
+            "coreProductIdentity" = v.core_product_identity::text,
             "processedAt" = CURRENT_TIMESTAMP,
             "updatedAt" = CURRENT_TIMESTAMP
-        WHERE id = %(id)s
+        FROM (VALUES %s) AS v(
+            id, brand, form, dosage_value, dosage_unit, quantity_value, quantity_unit,
+            volume_value, volume_unit, normalized_name, computed_group_id, core_product_identity
+        )
+        WHERE p.id = v.id
+        RETURNING p.id
     """
 
-    execute_batch(cur, query, updates, page_size=100)
+    execute_values(cur, query, rows, page_size=100)
     updated = cur.rowcount
     conn.commit()
     cur.close()
@@ -322,6 +671,35 @@ def update_standardization_table(conn, updates: List[Dict]) -> int:
 
     cur = conn.cursor()
 
+    # Deduplicate by title to avoid "ON CONFLICT DO UPDATE command cannot affect row a second time"
+    seen_titles = set()
+    unique_updates = []
+    for update in updates:
+        if update["title"] not in seen_titles:
+            seen_titles.add(update["title"])
+            unique_updates.append(update)
+
+    rows = [
+        (
+            update["title"],
+            update["title"],
+            update["title"],  # normalizedName
+            update["brand"],
+            update["form"],
+            update["dosage_value"],
+            update["dosage_unit"],
+            update["quantity_value"],
+            update["quantity_unit"],
+            0.8,  # confidence
+            "ml",  # source
+        )
+        for update in unique_updates
+    ]
+
+    if not rows:
+        cur.close()
+        return 0
+
     # Use upsert pattern
     query = """
         INSERT INTO "ProductStandardization" (
@@ -330,13 +708,7 @@ def update_standardization_table(conn, updates: List[Dict]) -> int:
             "dosageValue", "dosageUnit",
             "quantityValue", "quantityUnit",
             confidence, source
-        ) VALUES (
-            %(title)s, %(title)s, LOWER(%(title)s),
-            %(brand)s, %(form)s,
-            %(dosage_value)s, %(dosage_unit)s,
-            %(quantity_value)s, %(quantity_unit)s,
-            0.85, 'ml_extraction'
-        )
+        ) VALUES %s
         ON CONFLICT ("originalTitle", title) DO UPDATE SET
             "brandName" = COALESCE(EXCLUDED."brandName", "ProductStandardization"."brandName"),
             "productForm" = COALESCE(EXCLUDED."productForm", "ProductStandardization"."productForm"),
@@ -346,9 +718,10 @@ def update_standardization_table(conn, updates: List[Dict]) -> int:
             "quantityUnit" = COALESCE(EXCLUDED."quantityUnit", "ProductStandardization"."quantityUnit"),
             confidence = GREATEST(EXCLUDED.confidence, "ProductStandardization".confidence),
             "updatedAt" = CURRENT_TIMESTAMP
+        RETURNING "originalTitle"
     """
 
-    execute_batch(cur, query, updates, page_size=100)
+    execute_values(cur, query, rows, page_size=100)
     updated = cur.rowcount
     conn.commit()
     cur.close()
@@ -360,31 +733,49 @@ def process_products(nlp, conn, limit: int = 0, update_all: bool = False,
                      update_standardization: bool = True):
     """Process products and extract missing data."""
 
+    # Get total count for progress tracking
+    cur = conn.cursor()
+    if update_all:
+        cur.execute('SELECT COUNT(*) FROM "Product" WHERE title IS NOT NULL AND LENGTH(title) > 5')
+    else:
+        cur.execute('''SELECT COUNT(*) FROM "Product"
+                       WHERE title IS NOT NULL AND LENGTH(title) > 5
+                       AND ("extractedBrand" IS NULL OR form IS NULL
+                            OR "dosageValue" IS NULL OR "quantityValue" IS NULL)''')
+    total_to_process = cur.fetchone()[0]
+    cur.close()
+    logger.info(f"Total products to process: {total_to_process}")
+
     total_processed = 0
     total_with_brand = 0
     total_with_dosage = 0
     total_with_form = 0
     total_with_quantity = 0
     total_from_standardization = 0
+    last_id = ""  # Track last processed ID for pagination
 
     while True:
         # Get batch of products
-        products = get_products_missing_data(conn, BATCH_SIZE, update_all)
+        products = get_products_missing_data(conn, BATCH_SIZE, update_all, last_id)
 
         if not products:
             logger.info("No more products to process")
             break
 
-        logger.info(f"Processing batch of {len(products)} products")
+        progress_pct = (total_processed / total_to_process * 100) if total_to_process > 0 else 0
+        logger.info(f"Processing batch of {len(products)} products ({total_processed}/{total_to_process}, {progress_pct:.1f}%)")
 
         updates = []
         standardization_updates = []
         titles = [product["title"] for product in products]
         standardizations = get_standardizations_for_titles(conn, titles)
 
-        for product in tqdm(products, desc="Extracting entities"):
+        ml_indexes: List[int] = []
+        ml_titles: List[str] = []
+        standardization_missing_by_index: Dict[int, bool] = {}
+
+        for idx, product in enumerate(products):
             standardization = standardizations.get(product["title"])
-            extracted = None
             standardization_missing = False
             if standardization:
                 total_from_standardization += 1
@@ -399,8 +790,23 @@ def process_products(nlp, conn, limit: int = 0, update_all: bool = False,
                         "quantity_unit",
                     ]
                 )
+            standardization_missing_by_index[idx] = standardization_missing
 
-            if standardization and not standardization_missing:
+            if not standardization or standardization_missing:
+                ml_indexes.append(idx)
+                ml_titles.append(product["title"])
+
+        ml_extracted_by_index: Dict[int, Dict[str, Any]] = {}
+        if ml_titles:
+            ml_pipe = nlp.pipe(ml_titles, batch_size=128)
+            for i, doc in enumerate(tqdm(ml_pipe, total=len(ml_titles), desc="Extracting entities")):
+                ml_extracted_by_index[ml_indexes[i]] = extract_entities_from_doc(doc)
+
+        for idx, product in enumerate(products):
+            standardization = standardizations.get(product["title"])
+            extracted = None
+
+            if standardization and not standardization_missing_by_index[idx]:
                 extracted = {
                     "brand": standardization["brand"],
                     "form": standardization["form"],
@@ -411,7 +817,7 @@ def process_products(nlp, conn, limit: int = 0, update_all: bool = False,
                     "quantity_unit": standardization["quantity_unit"],
                 }
             else:
-                ml_extracted = extract_entities(nlp, product["title"])
+                ml_extracted = ml_extracted_by_index.get(idx) or extract_entities(nlp, product["title"])
                 if standardization:
                     extracted = {
                         "brand": standardization["brand"] or ml_extracted["brand"],
@@ -425,6 +831,14 @@ def process_products(nlp, conn, limit: int = 0, update_all: bool = False,
                 else:
                     extracted = ml_extracted
 
+            # Post-process: fix misclassified dosage (ml→volume, find real pharma dosage)
+            extracted = post_process_extraction(extracted, product["title"])
+
+            # Generate normalized name and group key
+            norm_name = generate_normalized_name(extracted, product["title"])
+            group_key = compute_group_key(extracted, product["title"])
+            core_identity = _extract_core_ingredient(product["title"], extracted.get("brand"))
+
             update_record = {
                 "id": product["id"],
                 "title": product["title"],
@@ -432,9 +846,14 @@ def process_products(nlp, conn, limit: int = 0, update_all: bool = False,
                 "form": extracted["form"],
                 "dosage_value": extracted["dosage_value"],
                 "dosage_unit": extracted["dosage_unit"],
-                "dosage_text": extracted["dosage_text"],
+                "dosage_text": extracted.get("dosage_text"),
                 "quantity_value": extracted["quantity_value"],
                 "quantity_unit": extracted["quantity_unit"],
+                "volume_value": extracted.get("volume_value"),
+                "volume_unit": extracted.get("volume_unit"),
+                "normalized_name": norm_name,
+                "computed_group_id": group_key,
+                "core_product_identity": core_identity,
             }
 
             updates.append(update_record)
@@ -462,6 +881,10 @@ def process_products(nlp, conn, limit: int = 0, update_all: bool = False,
 
         total_processed += len(products)
 
+        # Update last_id for pagination (when update_all is True)
+        if update_all and products:
+            last_id = products[-1]["id"]
+
         # Check limit
         if limit > 0 and total_processed >= limit:
             logger.info(f"Reached limit of {limit} products")
@@ -470,7 +893,7 @@ def process_products(nlp, conn, limit: int = 0, update_all: bool = False,
         # If update_all is False and we're getting the same products, break
         if not update_all:
             # Get next batch to check if we're making progress
-            next_products = get_products_missing_data(conn, 1, update_all)
+            next_products = get_products_missing_data(conn, 1, update_all, last_id)
             if next_products and next_products[0]["id"] == products[0]["id"]:
                 logger.info("No more products with missing data")
                 break

@@ -128,15 +128,29 @@ async function importCSVFiles() {
       const vendorId = vendorResult.rows[0].id;
       let fileImported = 0;
       let fileErrors = 0;
+      let fileDuplicates = 0;
 
       // Process in batches with upsert
       const BATCH_SIZE = 1000;
       for (let i = 0; i < products.length; i += BATCH_SIZE) {
         const batch = products.slice(i, i + BATCH_SIZE);
+        const dedupedBatchMap = new Map<string, ProductRow>();
+        for (const product of batch) {
+          if (dedupedBatchMap.has(product.title)) {
+            fileDuplicates++;
+            continue;
+          }
+          dedupedBatchMap.set(product.title, product);
+        }
+        const dedupedBatch = Array.from(dedupedBatchMap.values());
+
+        if (dedupedBatch.length === 0) {
+          continue;
+        }
 
         try {
           const values: Array<string | number | null> = [];
-          const placeholders = batch
+          const placeholders = dedupedBatch
             .map((product, index) => {
               const baseIndex = index * 7;
               values.push(
@@ -148,7 +162,7 @@ async function importCSVFiles() {
                 product.photos,
                 vendorId
               );
-              return `($${baseIndex + 1}, $${baseIndex + 2}, $${baseIndex + 3}, $${baseIndex + 4}, $${baseIndex + 5}, $${baseIndex + 6}, $${baseIndex + 7})`;
+              return `($${baseIndex + 1}, $${baseIndex + 2}, $${baseIndex + 3}, $${baseIndex + 4}, $${baseIndex + 5}, $${baseIndex + 6}, $${baseIndex + 7}, NOW(), NOW())`;
             })
             .join(', ');
 
@@ -165,10 +179,10 @@ async function importCSVFiles() {
             values
           );
 
-          fileImported += batch.length;
+          fileImported += dedupedBatch.length;
         } catch (error) {
-          console.error(`  Error importing batch starting with "${batch[0]?.title ?? 'unknown'}":`, error);
-          fileErrors += batch.length;
+          console.error(`  Error importing batch starting with "${dedupedBatch[0]?.title ?? 'unknown'}":`, error);
+          fileErrors += dedupedBatch.length;
         }
 
         // Small delay between batches
@@ -177,6 +191,9 @@ async function importCSVFiles() {
         }
       }
 
+      if (fileDuplicates > 0) {
+        console.log(`  Skipped duplicates in batch: ${fileDuplicates}`);
+      }
       console.log(`  Imported: ${fileImported}, Errors: ${fileErrors}`);
       totalImported += fileImported;
       totalErrors += fileErrors;

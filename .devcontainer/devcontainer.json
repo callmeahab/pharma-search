@@ -70,20 +70,17 @@
     }
   },
 
-  "forwardPorts": [3000, 8080, 50051, 5432, 7700],
+  "forwardPorts": [3000, 8080, 50051, 5432],
 
   "portsAttributes": {
     "3000": { "label": "Frontend (Next.js)" },
     "50051": { "label": "Backend (ConnectRPC)" },
-    "5432": { "label": "PostgreSQL" },
-    "7700": { "label": "Meilisearch" }
+    "5432": { "label": "PostgreSQL" }
   },
 
   "postCreateCommand": "bash .devcontainer/post-create.sh",
 
   "remoteEnv": {
-    "DATABASE_URL": "postgresql://postgres:postgres@db:5432/pharma_search",
-    "MEILI_URL": "http://meilisearch:7700",
-    "MEILI_API_KEY": ""
+    "DATABASE_URL": "postgresql://postgres:postgres@db:5432/pharma_search"
   }
 }
