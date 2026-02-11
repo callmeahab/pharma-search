@@ -76,7 +76,7 @@ func searchProductsDB(db *sql.DB, query string, limit int) ([]map[string]interfa
 			COALESCE(p.thumbnail, '') as thumbnail,
 			COALESCE(p."extractedBrand", '') as brand,
 			COALESCE(p."normalizedName", '') as normalized_name,
-			COALESCE(p."computedGroupId", '') as computed_group_id,
+			COALESCE(p."coreProductIdentity", '') as core_product_identity,
 			p."dosageValue",
 			COALESCE(p."dosageUnit", '') as dosage_unit,
 			p."volumeValue",
@@ -88,10 +88,12 @@ func searchProductsDB(db *sql.DB, query string, limit int) ([]map[string]interfa
 		WHERE p.title ILIKE $1
 		   OR p."normalizedName" ILIKE $1
 		   OR p.title % $2
-		ORDER BY GREATEST(
-			similarity(p.title, $2),
-			similarity(COALESCE(p."normalizedName", ''), $2)
-		) DESC
+		ORDER BY
+			CASE WHEN p.title ILIKE $1 OR COALESCE(p."normalizedName", '') ILIKE $1 THEN 0 ELSE 1 END,
+			GREATEST(
+				similarity(p.title, $2),
+				similarity(COALESCE(p."normalizedName", ''), $2)
+			) DESC
 		LIMIT $3
 	`, likePattern, query, limit)
 	if err != nil {
@@ -102,12 +104,12 @@ func searchProductsDB(db *sql.DB, query string, limit int) ([]map[string]interfa
 	var results []map[string]interface{}
 	for rows.Next() {
 		var id, title, vendorId, vendorName, link, thumbnail string
-		var brand, normalizedName, computedGroupId, dosageUnit, volumeUnit, form string
+		var brand, normalizedName, coreProductIdentity, dosageUnit, volumeUnit, form string
 		var price, dosageValue, volumeValue sql.NullFloat64
 		var quantityValue sql.NullInt64
 
 		if err := rows.Scan(&id, &title, &price, &vendorId, &vendorName, &link, &thumbnail,
-			&brand, &normalizedName, &computedGroupId,
+			&brand, &normalizedName, &coreProductIdentity,
 			&dosageValue, &dosageUnit, &volumeValue, &volumeUnit, &form, &quantityValue); err != nil {
 			return nil, fmt.Errorf("scan error: %w", err)
 		}
@@ -127,7 +129,7 @@ func searchProductsDB(db *sql.DB, query string, limit int) ([]map[string]interfa
 			"thumbnail":       thumbnail,
 			"brand":           brand,
 			"normalizedName":  normalizedName,
-			"computedGroupId": computedGroupId,
+			"coreProductIdentity": coreProductIdentity,
 			"dosageValue":     dosageValue.Float64,
 			"dosageUnit":      dosageUnit,
 			"volumeValue":     volumeValue.Float64,
@@ -425,13 +427,29 @@ func computeGroupKey(normalizedName, title string) string {
 	return extractGroupKey(title)
 }
 
+// buildGroupId constructs a group ID from component fields: "ingredient::dosage::unit"
+func buildGroupId(coreIdentity string, dosageValue float64, dosageUnit string) string {
+	if coreIdentity == "" {
+		return ""
+	}
+	parts := []string{strings.TrimSpace(coreIdentity)}
+	if dosageValue > 0 && dosageUnit != "" {
+		if dosageValue == float64(int(dosageValue)) {
+			parts = append(parts, fmt.Sprintf("%d", int(dosageValue)))
+		} else {
+			parts = append(parts, fmt.Sprintf("%g", dosageValue))
+		}
+		parts = append(parts, strings.ToLower(dosageUnit))
+	}
+	return strings.Join(parts, "::")
+}
+
 func enrichProductsWithGroupKey(hits []map[string]interface{}) []map[string]interface{} {
 	products := make([]map[string]interface{}, 0, len(hits))
 
 	for rank, h := range hits {
 		title := getString(h, "title")
 		normalizedName := getString(h, "normalizedName")
-		computedGroupId := getString(h, "computedGroupId")
 
 		// group_key = specific key for strict mode (includes quantity/form)
 		// computed_group_id = broad key for normal mode (ingredient + dosage only)
@@ -454,6 +472,10 @@ func enrichProductsWithGroupKey(hits []map[string]interface{}) []map[string]inte
 		// Get dosage info from DB (pre-computed from Product table)
 		dosageValue := getFloat(h, "dosageValue")
 		dosageUnit := getString(h, "dosageUnit")
+
+		// Build computed_group_id from component fields (coreProductIdentity + dosage)
+		coreIdentity := strings.ToLower(getString(h, "coreProductIdentity"))
+		computedGroupId := buildGroupId(coreIdentity, dosageValue, dosageUnit)
 
 		// DB stores price in RSD directly (not cents like Meilisearch did)
 		price := getFloat(h, "price")
@@ -484,6 +506,27 @@ func enrichProductsWithGroupKey(hits []map[string]interface{}) []map[string]inte
 	}
 
 	return products
+}
+
+// groupQueryScore scores how well a group ID matches the search query.
+// Returns 2 if the group ID contains the full query as a substring,
+// 1 if all query words appear in the group ID, 0 otherwise.
+func groupQueryScore(groupID, query string) int {
+	gid := strings.ToLower(strings.ReplaceAll(groupID, "::", " "))
+	q := strings.ToLower(strings.TrimSpace(query))
+	if q == "" {
+		return 0
+	}
+	if strings.Contains(gid, q) {
+		return 2
+	}
+	words := strings.Fields(q)
+	for _, w := range words {
+		if !strings.Contains(gid, w) {
+			return 0
+		}
+	}
+	return 1
 }
 
 func convertHitsToGroups(hits []map[string]interface{}, query string, db *sql.DB) []map[string]interface{} {
@@ -562,8 +605,7 @@ func convertHitsToGroups(hits []map[string]interface{}, query string, db *sql.DB
 		groups = append(groups, group)
 	}
 
-	// Sort: multi-product groups first (better for price comparison),
-	// then by relevance rank within each tier
+	// Sort: multi-product groups first, then by query match quality, then by relevance rank
 	sort.SliceStable(groups, func(i, j int) bool {
 		ci := getFloat(groups[i], "product_count")
 		cj := getFloat(groups[j], "product_count")
@@ -571,11 +613,15 @@ func convertHitsToGroups(hits []map[string]interface{}, query string, db *sql.DB
 		if (ci > 1) != (cj > 1) {
 			return ci > 1
 		}
+		// Groups whose ID matches the query sort first
+		si := groupQueryScore(getString(groups[i], "id"), query)
+		sj := groupQueryScore(getString(groups[j], "id"), query)
+		if si != sj {
+			return si > sj
+		}
 		// Within the same tier, sort by relevance rank
 		return getFloat(groups[i], "relevance_rank") < getFloat(groups[j], "relevance_rank")
 	})
-
-	_ = query
 	return groups
 }
 

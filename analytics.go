@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"sort"
+	"strings"
 )
 
 // FeaturedProduct represents a product for the featured section
@@ -44,20 +46,20 @@ func (s *server) GetFeaturedProducts(ctx context.Context, limit int) ([]Featured
 	query := `
 		WITH top_groups AS (
 			SELECT
-				p."computedGroupId" as group_key,
+				p."coreProductIdentity" as core_identity,
+				p."dosageValue" as dosage_value,
+				COALESCE(p."dosageUnit", '') as dosage_unit,
 				MIN(p."normalizedName") as normalized_name,
-				MIN(p."dosageValue") as dosage_value,
-				MIN(p."dosageUnit") as dosage_unit,
 				COUNT(DISTINCT p."vendorId") as vendor_count,
 				COUNT(*) as product_count,
 				MIN(p.price) as min_price,
 				MAX(p.price) as max_price,
 				AVG(p.price) as avg_price
 			FROM "Product" p
-			WHERE p."computedGroupId" IS NOT NULL
-			  AND p."computedGroupId" != ''
+			WHERE p."coreProductIdentity" IS NOT NULL
+			  AND p."coreProductIdentity" != ''
 			  AND p.price > 0
-			GROUP BY p."computedGroupId"
+			GROUP BY p."coreProductIdentity", p."dosageValue", p."dosageUnit"
 			HAVING COUNT(DISTINCT p."vendorId") > 1
 			   AND COUNT(*) < 100
 			   AND COUNT(*) / COUNT(DISTINCT p."vendorId") < 5
@@ -65,7 +67,7 @@ func (s *server) GetFeaturedProducts(ctx context.Context, limit int) ([]Featured
 			LIMIT $1
 		)
 		SELECT
-			g.group_key,
+			g.core_identity,
 			g.normalized_name,
 			g.dosage_value,
 			g.dosage_unit,
@@ -85,7 +87,9 @@ func (s *server) GetFeaturedProducts(ctx context.Context, limit int) ([]Featured
 		FROM top_groups g
 		CROSS JOIN LATERAL (
 			SELECT * FROM "Product" pr
-			WHERE pr."computedGroupId" = g.group_key
+			WHERE pr."coreProductIdentity" = g.core_identity
+			  AND (pr."dosageValue" = g.dosage_value OR (pr."dosageValue" IS NULL AND g.dosage_value IS NULL))
+			  AND COALESCE(pr."dosageUnit", '') = g.dosage_unit
 			  AND pr.price > 0
 			ORDER BY pr.price ASC
 			LIMIT 10
@@ -106,13 +110,14 @@ func (s *server) GetFeaturedProducts(ctx context.Context, limit int) ([]Featured
 
 	for rows.Next() {
 		var (
-			id, title, vendorID, vendorName, link, thumbnail, brandName, groupKey, dosageUnit, normalizedName string
-			price, dosageValue, minPrice, maxPrice, avgPrice float64
+			id, title, vendorID, vendorName, link, thumbnail, brandName, coreIdentity, dosageUnit, normalizedName string
+			price, minPrice, maxPrice, avgPrice float64
+			dosageValue sql.NullFloat64
 			vendorCount, productCount int
 		)
 
 		err := rows.Scan(
-			&groupKey, &normalizedName, &dosageValue, &dosageUnit,
+			&coreIdentity, &normalizedName, &dosageValue, &dosageUnit,
 			&vendorCount, &productCount, &minPrice, &maxPrice, &avgPrice,
 			&id, &title, &price, &vendorID, &vendorName, &link, &thumbnail, &brandName,
 		)
@@ -120,11 +125,20 @@ func (s *server) GetFeaturedProducts(ctx context.Context, limit int) ([]Featured
 			continue
 		}
 
+		dv := 0.0
+		if dosageValue.Valid {
+			dv = dosageValue.Float64
+		}
+		groupKey := buildGroupId(strings.ToLower(coreIdentity), dv, dosageUnit)
+		if groupKey == "" {
+			groupKey = coreIdentity
+		}
+
 		if _, exists := groupMap[groupKey]; !exists {
 			groupMap[groupKey] = &FeaturedGroup{
 				ID:             groupKey,
 				NormalizedName: normalizedName,
-				DosageValue:    dosageValue,
+				DosageValue:    dv,
 				DosageUnit:     dosageUnit,
 				VendorCount:    vendorCount,
 				ProductCount:   productCount,
@@ -146,7 +160,7 @@ func (s *server) GetFeaturedProducts(ctx context.Context, limit int) ([]Featured
 			Thumbnail:   thumbnail,
 			BrandName:   brandName,
 			GroupKey:    groupKey,
-			DosageValue: dosageValue,
+			DosageValue: dv,
 			DosageUnit:  dosageUnit,
 		})
 	}

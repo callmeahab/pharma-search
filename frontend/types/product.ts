@@ -30,7 +30,6 @@ export interface BackendProduct {
   brand_name?: string;
   group_key: string;
   normalized_name?: string;
-  computed_group_id?: string;
   dosage_value?: number;
   dosage_unit?: string;
   volume_value?: number;

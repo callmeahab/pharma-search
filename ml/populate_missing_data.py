@@ -417,31 +417,6 @@ def _extract_core_ingredient(title: str, brand: Optional[str]) -> Optional[str]:
     return None
 
 
-def compute_group_key(extracted: Dict[str, Any], title: str) -> Optional[str]:
-    """
-    Compute a deterministic group key for product comparison.
-    Format: "ingredient::dosage_value::dosage_unit" (lowercase, normalized)
-
-    Intentionally excludes form and quantity so that the same product
-    in tablets vs capsules vs spray groups together.
-    """
-    ingredient = _extract_core_ingredient(title, extracted.get("brand"))
-    if not ingredient:
-        return None
-
-    dosage_val = extracted.get("dosage_value")
-    dosage_unit = (extracted.get("dosage_unit") or "").lower()
-
-    parts = [ingredient.lower().strip()]
-    if dosage_val is not None and dosage_unit:
-        if dosage_val == int(dosage_val):
-            parts.append(str(int(dosage_val)))
-        else:
-            parts.append(str(dosage_val))
-        parts.append(dosage_unit)
-
-    return "::".join(parts)
-
 
 def parse_dosage_text(text: str) -> Optional[Dict[str, Any]]:
     """Parse dosage text to extract value and unit."""
@@ -627,7 +602,6 @@ def update_product_table(conn, updates: List[Dict]) -> int:
             update.get("volume_value"),
             update.get("volume_unit"),
             update.get("normalized_name"),
-            update.get("computed_group_id"),
             update.get("core_product_identity"),
         )
         for update in updates
@@ -644,13 +618,12 @@ def update_product_table(conn, updates: List[Dict]) -> int:
             "volumeValue" = COALESCE(v.volume_value::numeric, p."volumeValue"),
             "volumeUnit" = COALESCE(v.volume_unit::text, p."volumeUnit"),
             "normalizedName" = v.normalized_name::text,
-            "computedGroupId" = v.computed_group_id::text,
             "coreProductIdentity" = v.core_product_identity::text,
             "processedAt" = CURRENT_TIMESTAMP,
             "updatedAt" = CURRENT_TIMESTAMP
         FROM (VALUES %s) AS v(
             id, brand, form, dosage_value, dosage_unit, quantity_value, quantity_unit,
-            volume_value, volume_unit, normalized_name, computed_group_id, core_product_identity
+            volume_value, volume_unit, normalized_name, core_product_identity
         )
         WHERE p.id = v.id
         RETURNING p.id
@@ -834,9 +807,8 @@ def process_products(nlp, conn, limit: int = 0, update_all: bool = False,
             # Post-process: fix misclassified dosage (ml→volume, find real pharma dosage)
             extracted = post_process_extraction(extracted, product["title"])
 
-            # Generate normalized name and group key
+            # Generate normalized name and core identity
             norm_name = generate_normalized_name(extracted, product["title"])
-            group_key = compute_group_key(extracted, product["title"])
             core_identity = _extract_core_ingredient(product["title"], extracted.get("brand"))
 
             update_record = {
@@ -852,7 +824,6 @@ def process_products(nlp, conn, limit: int = 0, update_all: bool = False,
                 "volume_value": extracted.get("volume_value"),
                 "volume_unit": extracted.get("volume_unit"),
                 "normalized_name": norm_name,
-                "computed_group_id": group_key,
                 "core_product_identity": core_identity,
             }
 
