@@ -4,8 +4,9 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
+    "proto:generate": "buf generate",
+    "dev": "bun run proto:generate && next dev",
+    "build": "bun run proto:generate && next build",
     "start": "next start",
     "lint": "next lint"
   },

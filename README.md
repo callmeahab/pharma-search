@@ -49,14 +49,24 @@ The devcontainer automatically:
 ### Running Services
 
 ```bash
+# Apply database migrations and sync static vendors
+go run ./cmd/migrate
+
 # Frontend (port 3000)
 cd frontend && bun dev
 
 # Backend (port 50051)
+# Use `go run .` so all files in package main are compiled together.
 go run .
 
 # Scrapers
 cd scrapers && bun start
+
+# Full scrape -> import -> cleanup pipeline
+cd scrapers && bun run pipeline
+
+# Import scraped CSVs through the Go wrapper
+go run ./cmd/importcsv
 ```
 
 ## Project Structure
@@ -79,23 +89,22 @@ pharma-search/
 
 ## Database
 
-Four core tables:
+Core tables:
 
 | Table | Purpose |
 |-------|---------|
 | Vendor | Pharmacy/store metadata |
 | Product | Scraped products with prices |
-| ProductGroup | Grouped similar products |
-| ProductStandardization | ML-extracted attributes |
+| ProductStandardization | Standardized product titles and extracted attributes |
 
 ### Migrations
 
 ```bash
-# Apply migrations (in devcontainer)
-for f in migrations/*.sql; do psql -d pharma_search -f "$f"; done
+# Apply schema migrations and seed vendors
+go run ./cmd/migrate
 
-# Seed data
-psql -d pharma_search -f migrations/seed/vendors.sql
+# Skip the vendor seed if you only want schema changes
+go run ./cmd/migrate -seed-vendors=false
 ```
 
 ## API
@@ -118,32 +127,33 @@ cd frontend && npx buf generate
 buf generate proto
 ```
 
-## ML Pipeline
+## Product Enrichment
 
-Extracts structured data from product titles using spaCy NER:
+Primary product enrichment now comes from lookup tables plus deterministic normalization rules.
+Optional spaCy model support is still possible, but it is no longer the primary workflow.
+
+Example structured output:
 
 ```
 Input:  "Solgar Vitamin D3 2000IU 60 kapsula"
 Output: { brand: "Solgar", dosage: "2000IU", form: "kapsula", quantity: "60" }
 ```
 
-### Setup
+### Runtime Setup
 
 ```bash
 cd ml
 python -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
-
-# GPU acceleration (optional)
-pip install 'spacy[apple]'    # macOS Apple Silicon
-pip install 'spacy[cuda12x]'  # NVIDIA GPU
 ```
 
-### Training
+### Optional spaCy Support
 
 ```bash
-python train_multi_ner.py
+pip install -r requirements-ml.txt
 ```
+
+If you already have a compatible saved model under `ml/models/pharma_ner`, `populate_missing_data.py` will use it automatically. Otherwise it falls back to deterministic rules.
 
 ### Populate Database
 
@@ -161,6 +171,9 @@ python populate_missing_data.py --all
 
 # Limit number of products
 python populate_missing_data.py --limit 1000
+
+# Run without spaCy/model dependencies
+python populate_missing_data.py --rules-only
 ```
 
 ## Deployment

@@ -23,31 +23,12 @@ async function scrapePage(page: Page, url: string): Promise<Product[]> {
   const category = url.split('/')[4];
 
   try {
-    await Promise.all([
-      page.goto(url, {
-        waitUntil: 'domcontentloaded',
-        timeout: 120000,
-      }),
-      page
-        .waitForNavigation({
-          waitUntil: 'networkidle2',
-          timeout: 120000,
-        })
-        .catch((err) => {
-          console.log(
-            `Navigation timeout for ${url}, continuing anyway:`,
-            err.message,
-          );
-        }),
-    ]);
-
-    await new Promise((resolve) => setTimeout(resolve, 3000));
-
-    await page
-      .waitForSelector('.product', {
-        timeout: 10000,
-      })
-      .catch(() => console.log('No products found on page'));
+    await ScraperUtils.gotoAndWaitForSelector(page, url, '.product', {
+      navigationTimeout: 120000,
+      noResultsMessage: 'No products found on page',
+      selectorTimeout: 10000,
+      settleMs: 500,
+    });
 
     const products = await page.$$eval('.product', (elements) => {
       return elements

@@ -1,8 +1,8 @@
-import { Worker } from 'node:worker_threads';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { spawn } from 'node:child_process';
+import { appendFile, mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-const scrapers = [
+const allScrapers = [
   'ananas1.ts',
   '4fitness.ts',
   'adonis.ts',
@@ -90,14 +90,24 @@ const scrapers = [
   'zero.ts',
 ] as const;
 
-const CONCURRENCY = 6;
+const CONCURRENCY = parsePositiveInt(process.env.SCRAPER_CONCURRENCY, 6);
+const MAX_RETRIES = parsePositiveInt(process.env.SCRAPER_RETRIES, 1);
+const SCRAPER_TIMEOUT_MS = parsePositiveInt(
+  process.env.SCRAPER_TIMEOUT_MS,
+  15 * 60 * 1000,
+);
+const RUN_DB_CLEANUP = process.env.SCRAPER_RUN_DB_CLEANUP === '1';
+const RUN_DEDUPE = process.env.SCRAPER_RUN_DEDUPE !== '0';
+const SCRAPER_FILTER = process.env.SCRAPER_FILTER?.trim().toLowerCase() || '';
 
 interface ScraperResult {
   scraper: string;
+  attempt: number;
   startTime: Date;
   duration: number;
   exitCode: number;
   products: number;
+  timedOut: boolean;
 }
 
 interface CleanupResult {
@@ -105,118 +115,30 @@ interface CleanupResult {
   exitCode: number;
 }
 
-async function runScraper(
-  scraper: string,
-): Promise<{ exitCode: number; products: number }> {
-  console.log(`🚀 Starting: ${scraper}`);
-  return new Promise((resolve) => {
-    const worker = new Worker(
-      `
-      import { parentPort, workerData } from 'worker_threads';
-      import { spawn } from 'child_process';
-
-      const { scraper } = workerData;
-      const proc = spawn('bun', ['./${scraper}'], {
-        stdio: ['ignore', 'pipe', 'pipe']
-      });
-
-      let productCount = 0;
-      let fullOutput = '';
-      let hasError = false;
-      let hasSuccessfulScrape = false;
-      let retryCount = 0;
-      const MAX_RETRIES = 3;
-
-      proc.stdout.on('data', (data) => {
-        const chunk = data.toString();
-        fullOutput += chunk;
-        
-
-        // Check for both "Successfully processed" and "Successfully wrote" patterns
-        if (chunk.includes('Successfully processed') || chunk.includes('Successfully wrote')) {
-          const processedMatch = fullOutput.match(/Successfully processed (\\d+) products/);
-          const wroteMatch = fullOutput.match(/Successfully wrote (\\d+) products/);
-          const match = processedMatch || wroteMatch;
-          if (match) {
-            productCount = parseInt(match[1], 10);
-            hasSuccessfulScrape = true;
-          }
-        }
-      });
-
-      proc.stderr.on('data', (data) => {
-        const errorMsg = data.toString();
-        // Check for database-related errors
-        const isDatabaseError = errorMsg.includes('P2002') || // Unique constraint violation
-                              errorMsg.includes('P2025') || // Record not found
-                              errorMsg.includes('P2014') || // Foreign key constraint
-                              errorMsg.includes('P2003');  // Foreign key constraint
-
-        // Only mark as error if it's not a pagination error AND we haven't successfully scraped any products
-        if (!errorMsg.includes('No products found on page') && 
-            !errorMsg.includes('Waiting for selector') && 
-            !errorMsg.includes('Successfully processed') && 
-            !hasSuccessfulScrape) {
-          hasError = true;
-          console.error('Error in ' + scraper + ': ', errorMsg);
-
-          // If it's a database error and we haven't exceeded retries, wait and continue
-          if (isDatabaseError && retryCount < MAX_RETRIES) {
-            retryCount++;
-            console.log('Database error detected, waiting before retry (attempt ' + retryCount + '/' + MAX_RETRIES + ')...');
-            // Instead of killing the process, we'll just wait
-            setTimeout(() => {
-              console.log('Continuing after database error...');
-            }, 2000);
-          }
-        }
-      });
-
-      proc.on('error', (err) => {
-        if (!hasSuccessfulScrape) {
-          hasError = true;
-          console.error('Failed to start ' + scraper + ': ', err);
-        }
-      });
-
-      proc.on('close', async (code) => {
-        // Check for both success patterns
-        const processedMatch = fullOutput.match(/Successfully processed (\\d+) products/);
-        const wroteMatch = fullOutput.match(/Successfully wrote (\\d+) products/);
-        const finalMatch = processedMatch || wroteMatch;
-        if (finalMatch) {
-          productCount = parseInt(finalMatch[1], 10);
-          hasSuccessfulScrape = true;
-        }
-        
-        // Consider it successful if we found products, even if there were pagination errors
-        const effectiveExitCode = (hasError && !hasSuccessfulScrape) || productCount === 0 ? 1 : 0;
-        
-        parentPort.postMessage({ 
-          exitCode: effectiveExitCode,
-          products: productCount 
-        });
-      });
-    `,
-      {
-        eval: true,
-        workerData: { scraper },
-      },
-    );
-
-    worker.on('message', (result) => {
-      if (result.exitCode === 0) {
-        console.log(`✅ Finished: ${scraper} (${result.products} products)`);
-      } else {
-        console.log(`❌ Failed: ${scraper} (exit code: ${result.exitCode})`);
-      }
-      worker.terminate();
-      resolve(result);
-    });
-  });
+function parsePositiveInt(value: string | undefined, fallback: number) {
+  const parsed = Number.parseInt(value || '', 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
-// Timestamp functions
+function getSelectedScrapers() {
+  if (!SCRAPER_FILTER) {
+    return [...allScrapers];
+  }
+
+  const filters = SCRAPER_FILTER
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean);
+
+  return allScrapers.filter((scraper) =>
+    filters.some(
+      (filter) =>
+        scraper.toLowerCase().includes(filter) ||
+        scraper.replace(/\.ts$/, '').toLowerCase() === filter,
+    ),
+  );
+}
+
 function getLogFileName(date = new Date()) {
   const hours = date.getHours().toString().padStart(2, '0');
   const minutes = date.getMinutes().toString().padStart(2, '0');
@@ -233,163 +155,144 @@ function formatDuration(ms: number) {
   return `${minutes}m ${seconds.toString().padStart(2, '0')}s`;
 }
 
-async function runCleanup(): Promise<CleanupResult> {
-  return new Promise<CleanupResult>((resolve) => {
-    const cleanupWorker = new Worker(
-      `
-      import { parentPort } from 'worker_threads';
-      import { spawn } from 'child_process';
-      
-      let cleanupOutput = '';
-      const proc = spawn('bun', ['./deleteItemsWithoutPrice.ts'], {
-        stdio: ['ignore', 'pipe', 'pipe']
-      });
+function extractProductCount(output: string) {
+  const patterns = [
+    /Successfully processed (\d+) products/i,
+    /Successfully wrote (\d+) products/i,
+    /Successfully stored (\d+) products/i,
+    /Total products for .*: (\d+)/i,
+  ];
 
-      proc.stdout.on('data', (data) => {
-        const chunk = data.toString();
-        cleanupOutput += chunk;
-        // Also show in console for real-time feedback
-        process.stdout.write(chunk);
-      });
+  for (const pattern of patterns) {
+    const match = output.match(pattern);
+    if (match) {
+      return Number.parseInt(match[1], 10);
+    }
+  }
 
-      proc.stderr.on('data', (data) => {
-        const chunk = data.toString();
-        cleanupOutput += chunk;
-        process.stderr.write(chunk);
-      });
+  return 0;
+}
 
-      proc.on('close', (code) => {
-        parentPort.postMessage({ 
-          output: cleanupOutput,
-          exitCode: code 
-        });
-      });
-    `,
-      { eval: true },
-    );
+function runBunScript(
+  script: string,
+  label: string,
+  timeoutMs = SCRAPER_TIMEOUT_MS,
+): Promise<CleanupResult & { products: number; timedOut: boolean }> {
+  return new Promise((resolve) => {
+    const proc = spawn('bun', [`./${script}`], {
+      cwd: process.cwd(),
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
 
-    cleanupWorker.on('message', resolve);
+    let output = '';
+    let timedOut = false;
+    let timeoutHandle: NodeJS.Timeout | undefined;
+
+    const finish = (exitCode: number | null) => {
+      if (timeoutHandle) {
+        clearTimeout(timeoutHandle);
+      }
+
+      resolve({
+        output,
+        exitCode: exitCode ?? 1,
+        products: extractProductCount(output),
+        timedOut,
+      });
+    };
+
+    if (timeoutMs > 0) {
+      timeoutHandle = setTimeout(() => {
+        timedOut = true;
+        console.error(`⏰ ${label} exceeded ${formatDuration(timeoutMs)}. Stopping...`);
+        proc.kill('SIGTERM');
+        setTimeout(() => {
+          if (proc.exitCode === null && proc.signalCode === null) {
+            proc.kill('SIGKILL');
+          }
+        }, 5000);
+      }, timeoutMs);
+    }
+
+    proc.stdout.on('data', (data) => {
+      const chunk = data.toString();
+      output += chunk;
+      process.stdout.write(chunk);
+    });
+
+    proc.stderr.on('data', (data) => {
+      const chunk = data.toString();
+      output += chunk;
+      process.stderr.write(chunk);
+    });
+
+    proc.on('error', (error) => {
+      output += `${error.message}\n`;
+      finish(1);
+    });
+
+    proc.on('close', (code) => {
+      finish(code);
+    });
   });
 }
 
-async function runDuplicateCleanup(): Promise<CleanupResult> {
-  return new Promise<CleanupResult>((resolve) => {
-    const duplicateWorker = new Worker(
-      `
-      import { parentPort } from 'worker_threads';
-      import { spawn } from 'child_process';
-      
-      let cleanupOutput = '';
-      const proc = spawn('bun', ['./deleteDuplicateProducts.ts'], {
-        stdio: ['ignore', 'pipe', 'pipe']
-      });
+async function runScraper(scraper: string, attempt: number): Promise<ScraperResult> {
+  const startTime = new Date();
+  console.log(`🚀 Starting: ${scraper} (attempt ${attempt}/${MAX_RETRIES + 1})`);
+  const result = await runBunScript(scraper, scraper);
+  const duration = Date.now() - startTime.getTime();
+  const exitCode =
+    result.timedOut || result.exitCode !== 0 || result.products === 0 ? 1 : 0;
 
-      proc.stdout.on('data', (data) => {
-        const chunk = data.toString();
-        cleanupOutput += chunk;
-        // Also show in console for real-time feedback
-        process.stdout.write(chunk);
-      });
-
-      proc.stderr.on('data', (data) => {
-        const chunk = data.toString();
-        cleanupOutput += chunk;
-        process.stderr.write(chunk);
-      });
-
-      proc.on('close', (code) => {
-        parentPort.postMessage({ 
-          output: cleanupOutput,
-          exitCode: code 
-        });
-      });
-    `,
-      { eval: true },
+  if (exitCode === 0) {
+    console.log(`✅ Finished: ${scraper} (${result.products} products)`);
+  } else {
+    console.log(
+      `❌ Failed: ${scraper} (${result.timedOut ? 'timed out' : `exit code ${result.exitCode}`})`,
     );
+  }
 
-    duplicateWorker.on('message', resolve);
-  });
+  return {
+    scraper,
+    attempt,
+    startTime,
+    duration,
+    exitCode,
+    products: result.products,
+    timedOut: result.timedOut,
+  };
 }
 
-async function main() {
-  const globalStartTime = Date.now();
-  console.log(`🔄 Starting scrapers with concurrency: ${CONCURRENCY}`);
-  console.log(`📋 Total scrapers to run: ${scrapers.length}\n`);
-  const startMemory = process.memoryUsage();
-  let totalProducts = 0;
-
-  const logDir = '../scrapers_logs';
-  const logFile = path.join(logDir, `${getLogFileName()}.txt`);
-
-  await mkdir(logDir, { recursive: true });
-  await writeFile(
-    logFile,
-    'Time                    Duration    Exit    Products    Scraper\n' +
-      '----                    --------    ----    --------    -------\n',
-  );
-
-  const queue = [...scrapers];
-  const running = new Set();
-  const results: ScraperResult[] = [];
-  const failedScrapers: string[] = [];
+async function runQueue(scrapers: string[]) {
+  const queue = scrapers.map((scraper) => ({ scraper, attempt: 1 }));
+  const running = new Set<Promise<void>>();
+  const finalResults = new Map<string, ScraperResult>();
 
   while (queue.length > 0 || running.size > 0) {
-    // Fill up to CONCURRENCY
     while (running.size < CONCURRENCY && queue.length > 0) {
-      const scraper = queue.shift()!;
-      const startTime = new Date();
+      const next = queue.shift()!;
+      const runPromise = runScraper(next.scraper, next.attempt).then((result) => {
+        running.delete(runPromise);
+        finalResults.set(result.scraper, result);
 
-      const promise = runScraper(scraper).then((result) => {
-        running.delete(promise);
-        const duration = Date.now() - startTime.getTime();
-        results.push({ scraper, startTime, duration, ...result });
-
-        // Add failed scrapers to retry queue
-        if (result.exitCode !== 0) {
-          failedScrapers.push(scraper);
-        } else {
-          totalProducts += result.products;
+        if (result.exitCode !== 0 && next.attempt <= MAX_RETRIES) {
+          queue.push({ scraper: result.scraper, attempt: next.attempt + 1 });
         }
       });
 
-      running.add(promise);
+      running.add(runPromise);
     }
 
-    // Wait for one to complete
     if (running.size > 0) {
       await Promise.race(running);
     }
   }
 
-  // Retry failed scrapers sequentially
-  if (failedScrapers.length > 0) {
-    console.log(
-      `\n🔄 Retrying ${failedScrapers.length} failed scrapers in sequential mode...`,
-    );
+  return Array.from(finalResults.values());
+}
 
-    for (const scraper of failedScrapers) {
-      console.log(`\n🔄 Retrying: ${scraper}`);
-      const startTime = new Date();
-      const result = await runScraper(scraper);
-      const duration = Date.now() - startTime.getTime();
-
-      // Update or add new result
-      const existingIndex = results.findIndex((r) => r.scraper === scraper);
-      const retryResult = { scraper, startTime, duration, ...result };
-
-      if (existingIndex !== -1) {
-        results[existingIndex] = retryResult;
-      } else {
-        results.push(retryResult);
-      }
-
-      if (result.exitCode === 0) {
-        totalProducts += result.products;
-      }
-    }
-  }
-
-  // Write results with padded columns
+async function writeSummaryLog(logFile: string, results: ScraperResult[], totalRuntime: number) {
   for (const result of results.sort(
     (a, b) => a.startTime.getTime() - b.startTime.getTime(),
   )) {
@@ -397,78 +300,128 @@ async function main() {
     const duration = formatDuration(result.duration).padEnd(12);
     const exit = result.exitCode.toString().padEnd(8);
     const products = result.products.toString().padEnd(12);
+    const attempt = `${result.attempt}`.padEnd(8);
+    const timeout = result.timedOut ? 'yes' : 'no';
 
-    await writeFile(
+    await appendFile(
       logFile,
-      `${time}    ${duration}${exit}${products}${result.scraper}\n`,
-      { flag: 'a' },
+      `${time}    ${duration}${exit}${products}${attempt}${timeout.padEnd(8)}${result.scraper}\n`,
     );
   }
 
-  // Run cleanup script twice and capture its output
-  console.log('\n🧹 Running first cleanup...');
-  const firstCleanup = await runCleanup();
-
-  console.log('\n🧹 Running second cleanup...');
-  const secondCleanup = await runCleanup();
-
-  // Run duplicate products cleanup
-  console.log('\n🔍 Running duplicate products cleanup...');
-  const duplicateCleanup = await runDuplicateCleanup();
-
-  // Extract deleted items count from cleanup outputs
-  const getDeletedCount = (output: string) => {
-    const match = output.match(
-      /Deleted (\d+) zero-price products from database/,
+  const slowest = [...results]
+    .sort((a, b) => b.duration - a.duration)
+    .slice(0, Math.min(results.length, 10))
+    .map(
+      (result) =>
+        `${result.scraper}: ${formatDuration(result.duration)} (${result.products} products, attempt ${result.attempt})`,
     );
-    return match ? parseInt(match[1], 10) : 0;
-  };
 
-  // Extract duplicate products count
-  const getDuplicatesCount = (output: string) => {
-    const match = output.match(/Total products deleted: (\d+)/);
-    return match ? parseInt(match[1], 10) : 0;
-  };
-
-  const firstDeletedCount = getDeletedCount(firstCleanup.output);
-  const secondDeletedCount = getDeletedCount(secondCleanup.output);
-  const duplicatesDeletedCount = getDuplicatesCount(duplicateCleanup.output);
-  const totalDeletedItems = firstDeletedCount + secondDeletedCount;
-  const finalProductCount =
-    totalProducts - totalDeletedItems - duplicatesDeletedCount;
-
-  // Add cleanup summaries to log file
-  await writeFile(
-    logFile,
-    '\nCleanup Results:\n--------------\n' +
-      `Deleted ${firstDeletedCount} zero-price products in first cleanup\n` +
-      `Deleted ${secondDeletedCount} zero-price products in second cleanup\n` +
-      `Deleted ${duplicatesDeletedCount} duplicate products\n` +
-      `Products Deleted: ${totalDeletedItems + duplicatesDeletedCount}\n` +
-      `Final Products Count: ${finalProductCount}\n`,
-    { flag: 'a' },
-  );
-
-  console.log(
-    `\n📊 Products Deleted: ${totalDeletedItems + duplicatesDeletedCount}`,
-  );
-  console.log(`📊 Final Products Count: ${finalProductCount}`);
-
-  // After the memory usage logging, add the total runtime calculation
-  const totalRuntime = Date.now() - globalStartTime;
   const hours = Math.floor(totalRuntime / 3600000);
   const minutes = Math.floor((totalRuntime % 3600000) / 60000);
   const seconds = Math.floor((totalRuntime % 60000) / 1000);
 
-  const runtimeStr = `${hours}h ${minutes}m ${seconds}s`;
+  await appendFile(
+    logFile,
+    `\nSlowest Scrapers:\n-----------------\n${slowest.join('\n')}\n\nTotal Runtime: ${hours}h ${minutes}m ${seconds}s\n`,
+  );
+}
 
-  // Add to log file
-  await writeFile(logFile, `\nTotal Runtime: ${runtimeStr}\n`, { flag: 'a' });
+async function runPostProcessing(logFile: string) {
+  if (!RUN_DB_CLEANUP) {
+    console.log('\n⏭️ Skipping database cleanup. Set SCRAPER_RUN_DB_CLEANUP=1 to enable it.');
+    await appendFile(
+      logFile,
+      '\nPost-processing skipped (SCRAPER_RUN_DB_CLEANUP is not enabled)\n',
+    );
+    return;
+  }
 
-  // Log to console
-  console.log(`\n⏱️ Total Runtime: ${runtimeStr}`);
+  console.log('\n🧹 Running zero-price cleanup...');
+  const cleanupResult = await runBunScript(
+    'deleteItemsWithoutPrice.ts',
+    'deleteItemsWithoutPrice.ts',
+    10 * 60 * 1000,
+  );
 
-  // Memory usage logging (existing code)
+  let summary =
+    '\nCleanup Results:\n--------------\n' +
+    `Zero-price cleanup exit code: ${cleanupResult.exitCode}\n`;
+
+  const deletedMatch = cleanupResult.output.match(
+    /Deleted (\d+) zero-price products from database/,
+  );
+  if (deletedMatch) {
+    summary += `Deleted ${deletedMatch[1]} zero-price products\n`;
+  }
+
+  if (RUN_DEDUPE) {
+    console.log('\n🔍 Running duplicate products cleanup...');
+    const dedupeResult = await runBunScript(
+      'deleteDuplicateProducts.ts',
+      'deleteDuplicateProducts.ts',
+      10 * 60 * 1000,
+    );
+
+    summary += `Duplicate cleanup exit code: ${dedupeResult.exitCode}\n`;
+    const duplicateMatch = dedupeResult.output.match(/Total products deleted: (\d+)/);
+    if (duplicateMatch) {
+      summary += `Deleted ${duplicateMatch[1]} duplicate products\n`;
+    }
+  } else {
+    summary += 'Duplicate cleanup skipped (SCRAPER_RUN_DEDUPE=0)\n';
+  }
+
+  await appendFile(logFile, summary);
+}
+
+async function main() {
+  const globalStartTime = Date.now();
+  const scrapers = getSelectedScrapers();
+
+  if (scrapers.length === 0) {
+    throw new Error(
+      `No scrapers matched SCRAPER_FILTER="${process.env.SCRAPER_FILTER || ''}"`,
+    );
+  }
+
+  console.log(`🔄 Starting scrapers with concurrency: ${CONCURRENCY}`);
+  console.log(`📋 Total scrapers to run: ${scrapers.length}`);
+  if (SCRAPER_FILTER) {
+    console.log(`🎯 Filter: ${SCRAPER_FILTER}`);
+  }
+  console.log(`⏱️ Timeout per scraper: ${formatDuration(SCRAPER_TIMEOUT_MS)}\n`);
+
+  const logDir = '../scrapers_logs';
+  const logFile = path.join(logDir, `${getLogFileName()}.txt`);
+  await mkdir(logDir, { recursive: true });
+  await writeFile(
+    logFile,
+    'Time                    Duration    Exit    Products    Attempt TimedOut Scraper\n' +
+      '----                    --------    ----    --------    ------- -------- -------\n',
+  );
+
+  const startMemory = process.memoryUsage();
+  const results = await runQueue(scrapers);
+  const totalRuntime = Date.now() - globalStartTime;
+  const totalProducts = results
+    .filter((result) => result.exitCode === 0)
+    .reduce((sum, result) => sum + result.products, 0);
+  const failures = results.filter((result) => result.exitCode !== 0);
+
+  await writeSummaryLog(logFile, results, totalRuntime);
+  await runPostProcessing(logFile);
+
+  console.log(`\n📦 Total products from successful scrapers: ${totalProducts}`);
+  console.log(`❗ Failed scrapers: ${failures.length}`);
+  if (failures.length > 0) {
+    console.log(
+      failures
+        .map((result) => `  - ${result.scraper} (attempt ${result.attempt})`)
+        .join('\n'),
+    );
+  }
+
   const endMemory = process.memoryUsage();
   console.log('Memory usage (MB):', {
     start: Math.round(startMemory.heapUsed / 1024 / 1024),
@@ -479,7 +432,7 @@ async function main() {
 
 main()
   .then(() => {
-    console.log('\n✅ All scrapers completed successfully');
+    console.log('\n✅ All scrapers completed');
     process.exit(0);
   })
   .catch((error) => {

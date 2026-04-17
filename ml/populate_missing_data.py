@@ -1,30 +1,34 @@
 #!/usr/bin/env python3
 """
-Populate missing product data using the trained multi-entity NER model.
+Populate missing product data using standardization lookups, deterministic rules,
+and an optional trained multi-entity NER model.
 Extracts: BRAND, DOSAGE, FORM, QUANTITY from product titles.
 
 Updates both Product and ProductStandardization tables.
-
-GPU Support:
-- macOS (Apple Silicon): Uses Metal via spacy[apple]
-- Windows/Linux (NVIDIA): Uses CUDA via spacy[cuda12x]
 """
 
 import os
 import re
-import sys
 import logging
-import platform
 import argparse
 from pathlib import Path
 from typing import Dict, Any, Optional, List, Tuple
 from datetime import datetime
 
-import spacy
+try:
+    import spacy
+except ImportError:  # pragma: no cover - exercised only when spaCy is absent
+    spacy = None
 import psycopg2
-from psycopg2.extras import execute_batch, execute_values
+from psycopg2.extras import execute_values
 from dotenv import load_dotenv
 from tqdm import tqdm
+
+from matching_utils import (
+    build_search_metadata,
+    build_standardization_payload,
+    normalize_form,
+)
 
 load_dotenv()
 
@@ -45,73 +49,49 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def setup_gpu() -> Tuple[bool, str]:
-    """Detect and configure GPU acceleration (Metal on macOS, CUDA on Windows/Linux)."""
-    system = platform.system()
-    gpu_available = False
-    gpu_type = "CPU"
-
-    try:
-        if system == "Darwin":
-            # macOS - check for Metal (Apple Silicon) via thinc_apple_ops
-            try:
-                from thinc.api import get_current_ops
-                ops = get_current_ops()
-                if ops.name == "apple":
-                    gpu_available = True
-                    gpu_type = "Metal (Apple Silicon)"
-                    logger.info("Metal acceleration enabled via thinc_apple_ops")
-                else:
-                    # Try to import and it will auto-register
-                    import thinc_apple_ops
-                    ops = get_current_ops()
-                    if ops.name == "apple":
-                        gpu_available = True
-                        gpu_type = "Metal (Apple Silicon)"
-                        logger.info("Metal acceleration enabled via thinc_apple_ops")
-            except ImportError:
-                logger.warning("Metal support not available. Install with: pip install 'spacy[apple]'")
-        else:
-            # Windows/Linux - try CUDA
-            try:
-                gpu_available = spacy.prefer_gpu()
-                if gpu_available:
-                    gpu_type = "CUDA"
-                    # Try to get GPU info
-                    try:
-                        import cupy
-                        device = cupy.cuda.Device()
-                        logger.info(f"CUDA GPU acceleration enabled: {device.compute_capability}")
-                    except Exception:
-                        logger.info("CUDA GPU acceleration enabled")
-                else:
-                    logger.warning("CUDA not available. Install with: pip install 'spacy[cuda12x]'")
-            except Exception as e:
-                logger.warning(f"CUDA initialization failed: {e}")
-    except Exception as e:
-        logger.warning(f"GPU detection error: {e}")
-
-    if not gpu_available:
-        logger.info("Using CPU for inference")
-
-    return gpu_available, gpu_type
-
-
 def get_db_connection():
     """Connect to PostgreSQL database."""
-    db_url = os.getenv("DATABASE_URL", "postgres://postgres:docker@localhost:5432/pharmagician")
+    db_url = os.getenv("DATABASE_URL", "postgres://postgres:docker@localhost:5432/pharma_search")
     return psycopg2.connect(db_url)
 
 
 def load_model():
-    """Load the trained multi-entity NER model."""
+    """Load the optional trained multi-entity NER model when available."""
+    if spacy is None:
+        logger.info("spaCy is not installed. Continuing with deterministic rules only.")
+        return None
+
     if MODEL_PATH.exists():
         logger.info(f"Loading model from {MODEL_PATH}")
         return spacy.load(MODEL_PATH)
-    else:
-        logger.error(f"Model not found at {MODEL_PATH}")
-        logger.error("Run 'python train_multi_ner.py' first to train the model.")
-        sys.exit(1)
+
+    logger.info(f"Model not found at {MODEL_PATH}. Continuing with deterministic rules only.")
+    return None
+
+
+QUANTITY_UNIT_PATTERN = (
+    r"mikrotablet\w*|mikrokapsul\w*|tab\w*|tabl\w*|tableta|tablete|"
+    r"kaps\w*|kapsula|kapsule|caps\w*|capsule\w*|softgel\w*|cps|"
+    r"komada|kom|komad|kesic\w*|ampul\w*"
+)
+FORM_PATTERN = re.compile(
+    r"\b(tablete|tableta|tabl|tab|kapsule|kapsula|kaps|capsules|capsule|caps|softgel|softgels|cps|"
+    r"sirup|sprej|spray|kapi|drops|gel|gela|krema|krem|cream|mast|losion|lotion|serum|"
+    r"rastvor|solution|suspenzija|kesice|kesica|ampule|ampula)\b",
+    re.IGNORECASE,
+)
+QUANTITY_WITH_UNIT_RE = re.compile(
+    rf"\b(\d{{1,4}})\s*({QUANTITY_UNIT_PATTERN})\b",
+    re.IGNORECASE,
+)
+QUANTITY_PREFIX_RE = re.compile(r"\b[axх×]\s*(\d{1,4})\b", re.IGNORECASE)
+BRAND_STOP_WORDS = {
+    "aktiv", "alpha", "beta", "bio", "b12", "b6", "calcium", "cink", "collagen",
+    "coq10", "d3", "dha", "enzim", "formula", "forte", "iron", "kolagen", "k2",
+    "magnezijum", "magnesium", "max", "mega", "omega", "probiotic", "probiotik",
+    "q10", "selen", "sol", "ultra", "vit", "vitamin", "vitamini", "vitamini",
+    "zinc",
+}
 
 
 # Unit normalization mapping
@@ -453,6 +433,110 @@ def parse_quantity_text(text: str) -> Optional[Dict[str, Any]]:
     return None
 
 
+def extract_brand_candidate(title: str) -> Optional[str]:
+    """Conservatively extract a leading brand candidate from the title."""
+    tokens = re.findall(r"[A-Za-zА-Яа-я0-9+-]+", title)
+    if not tokens:
+        return None
+
+    brand_tokens: List[str] = []
+    for token in tokens:
+        normalized = token.lower().strip("+-")
+        if not normalized:
+            continue
+        if re.match(r"^\d", normalized):
+            break
+        if normalized in BRAND_STOP_WORDS:
+            break
+        if FORM_PATTERN.match(normalized):
+            break
+        if PHARMA_DOSAGE_RE.match(normalized) or VOLUME_RE.match(normalized):
+            break
+
+        brand_tokens.append(token)
+        if len(brand_tokens) >= 2:
+            break
+
+    if not brand_tokens:
+        return None
+
+    brand = " ".join(brand_tokens).strip()
+    return brand if len(brand) > 1 else None
+
+
+def extract_entities_rule_based(title: str) -> Dict[str, Any]:
+    """Extract core entities using regexes and conservative heuristics."""
+    result = {
+        "brand": None,
+        "dosage_value": None,
+        "dosage_unit": None,
+        "dosage_text": None,
+        "form": None,
+        "quantity_value": None,
+        "quantity_unit": None,
+        "volume_value": None,
+        "volume_unit": None,
+        "entities_found": []
+    }
+
+    brand = extract_brand_candidate(title)
+    if brand:
+        result["brand"] = brand
+        result["entities_found"].append({"label": "BRAND", "text": brand})
+
+    form_match = FORM_PATTERN.search(title)
+    if form_match:
+        normalized = normalize_form(form_match.group(1)) or form_match.group(1).lower()
+        result["form"] = normalized
+        result["entities_found"].append({"label": "FORM", "text": form_match.group(1)})
+
+    dosage_match = PHARMA_DOSAGE_RE.search(title)
+    if dosage_match:
+        value = float(dosage_match.group(1).replace(",", "."))
+        unit = UNIT_NORMALIZATION.get(dosage_match.group(2).lower(), dosage_match.group(2).lower())
+        result["dosage_value"] = value
+        result["dosage_unit"] = unit
+        result["dosage_text"] = dosage_match.group(0)
+        result["entities_found"].append({"label": "DOSAGE", "text": dosage_match.group(0)})
+    else:
+        gram_match = GRAM_RE.search(title)
+        if gram_match:
+            value = float(gram_match.group(1).replace(",", "."))
+            if value <= 5.0:
+                result["dosage_value"] = value
+                result["dosage_unit"] = "g"
+                result["dosage_text"] = gram_match.group(0)
+                result["entities_found"].append({"label": "DOSAGE", "text": gram_match.group(0)})
+
+    volume_match = VOLUME_RE.search(title)
+    if volume_match:
+        result["volume_value"] = float(volume_match.group(1).replace(",", "."))
+        result["volume_unit"] = UNIT_NORMALIZATION.get(
+            volume_match.group(2).lower(), volume_match.group(2).lower()
+        )
+
+    quantity_match = QUANTITY_WITH_UNIT_RE.search(title)
+    if quantity_match:
+        result["quantity_value"] = int(quantity_match.group(1))
+        result["quantity_unit"] = quantity_match.group(2).lower()
+        result["entities_found"].append({"label": "QUANTITY", "text": quantity_match.group(0)})
+
+        if not result["form"]:
+            normalized = normalize_form(quantity_match.group(2))
+            if normalized and normalized not in {"kom", "komad", "komada"}:
+                result["form"] = normalized
+    else:
+        quantity_prefix_match = QUANTITY_PREFIX_RE.search(title)
+        if quantity_prefix_match:
+            result["quantity_value"] = int(quantity_prefix_match.group(1))
+            result["quantity_unit"] = "kom"
+            result["entities_found"].append(
+                {"label": "QUANTITY", "text": quantity_prefix_match.group(0)}
+            )
+
+    return result
+
+
 def extract_entities_from_doc(doc) -> Dict[str, Any]:
     """Extract all entities from a processed spaCy doc."""
     result = {
@@ -496,8 +580,10 @@ def extract_entities_from_doc(doc) -> Dict[str, Any]:
     return result
 
 
-def extract_entities(nlp, title: str) -> Dict[str, Any]:
-    """Extract all entities from a product title."""
+def extract_entities(title: str, nlp=None) -> Dict[str, Any]:
+    """Extract all entities from a product title using ML when available."""
+    if nlp is None:
+        return extract_entities_rule_based(title)
     return extract_entities_from_doc(nlp(title))
 
 
@@ -524,16 +610,18 @@ def get_products_missing_data(conn, limit: int = BATCH_SIZE, update_all: bool = 
             FROM "Product"
             WHERE title IS NOT NULL
               AND LENGTH(title) > 5
+              AND id > %s
               AND (
-                  "extractedBrand" IS NULL
-                  OR form IS NULL
-                  OR "dosageValue" IS NULL
-                  OR "quantityValue" IS NULL
+                  "processedAt" IS NULL
+                  OR "normalizedName" IS NULL
+                  OR "coreProductIdentity" IS NULL
+                  OR "searchTokens" IS NULL
+                  OR "keywordTags" IS NULL
               )
             ORDER BY id
             LIMIT %s
         """
-        cur.execute(query, (limit,))
+        cur.execute(query, (last_id, limit))
 
     rows = cur.fetchall()
     cur.close()
@@ -546,39 +634,51 @@ def get_standardizations_for_titles(conn, titles: List[str]) -> Dict[str, Dict[s
     if not titles:
         return {}
 
+    normalized_titles = list({title.strip().lower() for title in titles if title and title.strip()})
     cur = conn.cursor()
     query = """
-        SELECT
+        SELECT DISTINCT ON (LOWER(COALESCE("originalTitle", title)), LOWER(title))
             "originalTitle",
             title,
+            "normalizedName",
             "brandName",
             "productForm",
             "dosageValue",
             "dosageUnit",
             "quantityValue",
-            "quantityUnit"
+            "quantityUnit",
+            "volumeValue",
+            "volumeUnit"
         FROM "ProductStandardization"
-        WHERE "originalTitle" = ANY(%s) OR title = ANY(%s)
+        WHERE LOWER(COALESCE("originalTitle", '')) = ANY(%s)
+           OR LOWER(title) = ANY(%s)
+        ORDER BY LOWER(COALESCE("originalTitle", title)), LOWER(title), confidence DESC, "updatedAt" DESC
     """
-    cur.execute(query, (titles, titles))
+    cur.execute(query, (normalized_titles, normalized_titles))
     rows = cur.fetchall()
     cur.close()
 
     standardizations: Dict[str, Dict[str, Any]] = {}
     for row in rows:
-        original_title, title, brand, form, dosage_value, dosage_unit, quantity_value, quantity_unit = row
+        original_title, title, normalized_name, brand, form, dosage_value, dosage_unit, quantity_value, quantity_unit, volume_value, volume_unit = row
         record = {
+            "title": title,
+            "normalized_name": normalized_name,
             "brand": brand,
             "form": form,
             "dosage_value": dosage_value,
             "dosage_unit": dosage_unit,
             "quantity_value": quantity_value,
             "quantity_unit": quantity_unit,
+            "volume_value": volume_value,
+            "volume_unit": volume_unit,
         }
-        if original_title and original_title not in standardizations:
-            standardizations[original_title] = record
-        if title and title not in standardizations:
-            standardizations[title] = record
+        if original_title:
+            standardizations.setdefault(original_title, record)
+            standardizations.setdefault(original_title.lower(), record)
+        if title:
+            standardizations.setdefault(title, record)
+            standardizations.setdefault(title.lower(), record)
 
     return standardizations
 
@@ -603,6 +703,8 @@ def update_product_table(conn, updates: List[Dict]) -> int:
             update.get("volume_unit"),
             update.get("normalized_name"),
             update.get("core_product_identity"),
+            update.get("search_tokens"),
+            update.get("keyword_tags"),
         )
         for update in updates
     ]
@@ -617,13 +719,16 @@ def update_product_table(conn, updates: List[Dict]) -> int:
             "quantityUnit" = COALESCE(v.quantity_unit::text, p."quantityUnit"),
             "volumeValue" = COALESCE(v.volume_value::numeric, p."volumeValue"),
             "volumeUnit" = COALESCE(v.volume_unit::text, p."volumeUnit"),
-            "normalizedName" = v.normalized_name::text,
-            "coreProductIdentity" = v.core_product_identity::text,
+            "normalizedName" = COALESCE(v.normalized_name::text, p."normalizedName"),
+            "coreProductIdentity" = COALESCE(v.core_product_identity::text, p."coreProductIdentity"),
+            "searchTokens" = COALESCE(v.search_tokens::text[], p."searchTokens"),
+            "keywordTags" = COALESCE(v.keyword_tags::text[], p."keywordTags"),
             "processedAt" = CURRENT_TIMESTAMP,
             "updatedAt" = CURRENT_TIMESTAMP
         FROM (VALUES %s) AS v(
             id, brand, form, dosage_value, dosage_unit, quantity_value, quantity_unit,
-            volume_value, volume_unit, normalized_name, core_product_identity
+            volume_value, volume_unit, normalized_name, core_product_identity,
+            search_tokens, keyword_tags
         )
         WHERE p.id = v.id
         RETURNING p.id
@@ -652,22 +757,26 @@ def update_standardization_table(conn, updates: List[Dict]) -> int:
             seen_titles.add(update["title"])
             unique_updates.append(update)
 
-    rows = [
-        (
-            update["title"],
-            update["title"],
-            update["title"],  # normalizedName
-            update["brand"],
-            update["form"],
-            update["dosage_value"],
-            update["dosage_unit"],
-            update["quantity_value"],
-            update["quantity_unit"],
-            0.8,  # confidence
-            "ml",  # source
+    rows = []
+    for update in unique_updates:
+        payload = build_standardization_payload(update)
+        rows.append(
+            (
+                payload["title"],
+                payload["original_title"],
+                payload["normalized_name"],
+                payload["brand"],
+                payload["form"],
+                payload["dosage_value"],
+                payload["dosage_unit"],
+                payload["quantity_value"],
+                payload["quantity_unit"],
+                payload["volume_value"],
+                payload["volume_unit"],
+                0.8,
+                update.get("pipeline_source", "rules_pipeline"),
+            )
         )
-        for update in unique_updates
-    ]
 
     if not rows:
         cur.close()
@@ -680,15 +789,19 @@ def update_standardization_table(conn, updates: List[Dict]) -> int:
             "brandName", "productForm",
             "dosageValue", "dosageUnit",
             "quantityValue", "quantityUnit",
+            "volumeValue", "volumeUnit",
             confidence, source
         ) VALUES %s
         ON CONFLICT ("originalTitle", title) DO UPDATE SET
+            "normalizedName" = COALESCE(EXCLUDED."normalizedName", "ProductStandardization"."normalizedName"),
             "brandName" = COALESCE(EXCLUDED."brandName", "ProductStandardization"."brandName"),
             "productForm" = COALESCE(EXCLUDED."productForm", "ProductStandardization"."productForm"),
             "dosageValue" = COALESCE(EXCLUDED."dosageValue", "ProductStandardization"."dosageValue"),
             "dosageUnit" = COALESCE(EXCLUDED."dosageUnit", "ProductStandardization"."dosageUnit"),
             "quantityValue" = COALESCE(EXCLUDED."quantityValue", "ProductStandardization"."quantityValue"),
             "quantityUnit" = COALESCE(EXCLUDED."quantityUnit", "ProductStandardization"."quantityUnit"),
+            "volumeValue" = COALESCE(EXCLUDED."volumeValue", "ProductStandardization"."volumeValue"),
+            "volumeUnit" = COALESCE(EXCLUDED."volumeUnit", "ProductStandardization"."volumeUnit"),
             confidence = GREATEST(EXCLUDED.confidence, "ProductStandardization".confidence),
             "updatedAt" = CURRENT_TIMESTAMP
         RETURNING "originalTitle"
@@ -713,8 +826,9 @@ def process_products(nlp, conn, limit: int = 0, update_all: bool = False,
     else:
         cur.execute('''SELECT COUNT(*) FROM "Product"
                        WHERE title IS NOT NULL AND LENGTH(title) > 5
-                       AND ("extractedBrand" IS NULL OR form IS NULL
-                            OR "dosageValue" IS NULL OR "quantityValue" IS NULL)''')
+                       AND ("processedAt" IS NULL
+                            OR "normalizedName" IS NULL OR "coreProductIdentity" IS NULL
+                            OR "searchTokens" IS NULL OR "keywordTags" IS NULL)''')
     total_to_process = cur.fetchone()[0]
     cur.close()
     logger.info(f"Total products to process: {total_to_process}")
@@ -743,12 +857,12 @@ def process_products(nlp, conn, limit: int = 0, update_all: bool = False,
         titles = [product["title"] for product in products]
         standardizations = get_standardizations_for_titles(conn, titles)
 
-        ml_indexes: List[int] = []
-        ml_titles: List[str] = []
+        inference_indexes: List[int] = []
+        inference_titles: List[str] = []
         standardization_missing_by_index: Dict[int, bool] = {}
 
         for idx, product in enumerate(products):
-            standardization = standardizations.get(product["title"])
+            standardization = standardizations.get(product["title"]) or standardizations.get(product["title"].lower())
             standardization_missing = False
             if standardization:
                 total_from_standardization += 1
@@ -761,22 +875,32 @@ def process_products(nlp, conn, limit: int = 0, update_all: bool = False,
                         "dosage_unit",
                         "quantity_value",
                         "quantity_unit",
+                        "volume_value",
+                        "volume_unit",
                     ]
                 )
             standardization_missing_by_index[idx] = standardization_missing
 
             if not standardization or standardization_missing:
-                ml_indexes.append(idx)
-                ml_titles.append(product["title"])
+                inference_indexes.append(idx)
+                inference_titles.append(product["title"])
 
-        ml_extracted_by_index: Dict[int, Dict[str, Any]] = {}
-        if ml_titles:
-            ml_pipe = nlp.pipe(ml_titles, batch_size=128)
-            for i, doc in enumerate(tqdm(ml_pipe, total=len(ml_titles), desc="Extracting entities")):
-                ml_extracted_by_index[ml_indexes[i]] = extract_entities_from_doc(doc)
+        inferred_by_index: Dict[int, Dict[str, Any]] = {}
+        if inference_titles:
+            if nlp is not None:
+                docs = nlp.pipe(inference_titles, batch_size=128)
+                for i, doc in enumerate(
+                    tqdm(docs, total=len(inference_titles), desc="Extracting entities")
+                ):
+                    inferred_by_index[inference_indexes[i]] = extract_entities_from_doc(doc)
+            else:
+                for i, title in enumerate(
+                    tqdm(inference_titles, total=len(inference_titles), desc="Extracting entities (rules)")
+                ):
+                    inferred_by_index[inference_indexes[i]] = extract_entities_rule_based(title)
 
         for idx, product in enumerate(products):
-            standardization = standardizations.get(product["title"])
+            standardization = standardizations.get(product["title"]) or standardizations.get(product["title"].lower())
             extracted = None
 
             if standardization and not standardization_missing_by_index[idx]:
@@ -788,34 +912,53 @@ def process_products(nlp, conn, limit: int = 0, update_all: bool = False,
                     "dosage_text": None,
                     "quantity_value": standardization["quantity_value"],
                     "quantity_unit": standardization["quantity_unit"],
+                    "volume_value": standardization.get("volume_value"),
+                    "volume_unit": standardization.get("volume_unit"),
                 }
             else:
-                ml_extracted = ml_extracted_by_index.get(idx) or extract_entities(nlp, product["title"])
+                inferred = inferred_by_index.get(idx) or extract_entities(product["title"], nlp)
                 if standardization:
                     extracted = {
-                        "brand": standardization["brand"] or ml_extracted["brand"],
-                        "form": standardization["form"] or ml_extracted["form"],
-                        "dosage_value": standardization["dosage_value"] or ml_extracted["dosage_value"],
-                        "dosage_unit": standardization["dosage_unit"] or ml_extracted["dosage_unit"],
-                        "dosage_text": ml_extracted["dosage_text"],
-                        "quantity_value": standardization["quantity_value"] or ml_extracted["quantity_value"],
-                        "quantity_unit": standardization["quantity_unit"] or ml_extracted["quantity_unit"],
+                        "brand": standardization["brand"] or inferred["brand"],
+                        "form": standardization["form"] or inferred["form"],
+                        "dosage_value": standardization["dosage_value"] or inferred["dosage_value"],
+                        "dosage_unit": standardization["dosage_unit"] or inferred["dosage_unit"],
+                        "dosage_text": inferred["dosage_text"],
+                        "quantity_value": standardization["quantity_value"] or inferred["quantity_value"],
+                        "quantity_unit": standardization["quantity_unit"] or inferred["quantity_unit"],
+                        "volume_value": standardization.get("volume_value") or inferred.get("volume_value"),
+                        "volume_unit": standardization.get("volume_unit") or inferred.get("volume_unit"),
                     }
                 else:
-                    extracted = ml_extracted
+                    extracted = inferred
 
             # Post-process: fix misclassified dosage (ml→volume, find real pharma dosage)
             extracted = post_process_extraction(extracted, product["title"])
 
+            normalized_form = normalize_form(extracted.get("form")) or extracted.get("form")
+            extracted["form"] = normalized_form
+
             # Generate normalized name and core identity
             norm_name = generate_normalized_name(extracted, product["title"])
             core_identity = _extract_core_ingredient(product["title"], extracted.get("brand"))
+            search_tokens, keyword_tags = build_search_metadata({
+                "title": product["title"],
+                "brand": extracted.get("brand"),
+                "core_product_identity": core_identity,
+                "normalized_name": norm_name,
+                "dosage_value": extracted.get("dosage_value"),
+                "dosage_unit": extracted.get("dosage_unit"),
+                "volume_value": extracted.get("volume_value"),
+                "volume_unit": extracted.get("volume_unit"),
+                "quantity_value": extracted.get("quantity_value"),
+                "form": normalized_form,
+            })
 
             update_record = {
                 "id": product["id"],
                 "title": product["title"],
                 "brand": extracted["brand"],
-                "form": extracted["form"],
+                "form": normalized_form,
                 "dosage_value": extracted["dosage_value"],
                 "dosage_unit": extracted["dosage_unit"],
                 "dosage_text": extracted.get("dosage_text"),
@@ -825,6 +968,9 @@ def process_products(nlp, conn, limit: int = 0, update_all: bool = False,
                 "volume_unit": extracted.get("volume_unit"),
                 "normalized_name": norm_name,
                 "core_product_identity": core_identity,
+                "search_tokens": search_tokens,
+                "keyword_tags": keyword_tags,
+                "pipeline_source": "ml_pipeline" if nlp is not None and idx in inferred_by_index else "rules_pipeline",
             }
 
             updates.append(update_record)
@@ -852,22 +998,14 @@ def process_products(nlp, conn, limit: int = 0, update_all: bool = False,
 
         total_processed += len(products)
 
-        # Update last_id for pagination (when update_all is True)
-        if update_all and products:
+        # Advance pagination cursor for both modes so each row is handled once per run.
+        if products:
             last_id = products[-1]["id"]
 
         # Check limit
         if limit > 0 and total_processed >= limit:
             logger.info(f"Reached limit of {limit} products")
             break
-
-        # If update_all is False and we're getting the same products, break
-        if not update_all:
-            # Get next batch to check if we're making progress
-            next_products = get_products_missing_data(conn, 1, update_all, last_id)
-            if next_products and next_products[0]["id"] == products[0]["id"]:
-                logger.info("No more products with missing data")
-                break
 
     return {
         "total_processed": total_processed,
@@ -881,7 +1019,7 @@ def process_products(nlp, conn, limit: int = 0, update_all: bool = False,
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Populate missing product data using NER model"
+        description="Populate missing product data using standardization, deterministic rules, and optional NER"
     )
     parser.add_argument(
         "--limit", type=int, default=0,
@@ -899,6 +1037,10 @@ def main():
         "--dry-run", action="store_true",
         help="Show what would be done without making changes"
     )
+    parser.add_argument(
+        "--rules-only", action="store_true",
+        help="Skip spaCy model loading and use deterministic extraction rules only"
+    )
 
     args = parser.parse_args()
 
@@ -906,13 +1048,17 @@ def main():
     logger.info("Populate Missing Product Data")
     logger.info("=" * 60)
 
-    # Setup GPU
-    gpu_available, gpu_type = setup_gpu()
-    logger.info(f"Compute device: {gpu_type}")
+    # Optional model support
+    if args.rules_only:
+        nlp = None
+        logger.info("Skipping spaCy model load because --rules-only was provided")
+    else:
+        nlp = load_model()
 
-    # Load model
-    nlp = load_model()
-    logger.info(f"Model loaded with {len(nlp.pipe_names)} pipes: {nlp.pipe_names}")
+    if nlp is not None:
+        logger.info(f"Optional model enabled with pipes: {nlp.pipe_names}")
+    else:
+        logger.info("Using standardization lookups and deterministic extraction rules only")
 
     # Connect to database
     logger.info("Connecting to database...")
@@ -957,7 +1103,7 @@ def main():
         """)
         for row in cur.fetchall():
             title = row[0]
-            extracted = extract_entities(nlp, title)
+            extracted = extract_entities(title, nlp)
             logger.info(f"\n  Title: {title}")
             for ent in extracted["entities_found"]:
                 logger.info(f"    {ent['label']}: {ent['text']}")

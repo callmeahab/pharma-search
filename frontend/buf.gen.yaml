@@ -1,11 +1,11 @@
 version: v2
 plugins:
-  - local: ./node_modules/.bin/protoc-gen-es
+  - local: ./scripts/protoc-gen-es.sh
     out: lib/gen
     opt:
       - target=ts
       - import_extension=none
-  - local: ./node_modules/.bin/protoc-gen-connect-es
+  - local: ./scripts/protoc-gen-connect-es.sh
     out: lib/gen
     opt:
       - target=ts

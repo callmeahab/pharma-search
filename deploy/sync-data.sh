@@ -8,7 +8,7 @@ set -e
 
 # Configuration
 SERVER="${1:-pharma}"
-LOCAL_DB_URL="${DATABASE_URL:-postgres://postgres:docker@localhost:5432/pharmagician}"
+LOCAL_DB_URL="${DATABASE_URL:-postgres://postgres:docker@localhost:5432/pharma_search}"
 REMOTE_DB="pharma_search"
 REMOTE_DB_USER="root"
 REMOTE_DB_PASS="pharma_secure_password_2025"

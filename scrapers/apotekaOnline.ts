@@ -113,22 +113,10 @@ async function scrapePage(page: Page, url: string): Promise<Product[]> {
   const category = categoryWithSuffix.replace(/-\d+$/, '');
 
   try {
-    try {
-      await page.goto(url, {
-        waitUntil: 'networkidle2',
-        timeout: 30000,
-      });
-    } catch (navigationError: unknown) {
-      if (navigationError instanceof Error) {
-        console.log(`Navigation error for ${url}: ${navigationError.message}`);
-      }
-      await page.goto(url, {
-        waitUntil: 'domcontentloaded',
-        timeout: 30000,
-      });
-    }
-
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    await ScraperUtils.goto(page, url, {
+      settleMs: 500,
+      timeout: 30000,
+    });
 
     if (!page.isClosed()) {
       await page

@@ -6,25 +6,26 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"net/http"
 	"net/smtp"
 	"os"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"connectrpc.com/connect"
-	_ "github.com/lib/pq"
+	"github.com/lib/pq"
 	"github.com/rs/cors"
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/h2c"
 	"google.golang.org/protobuf/types/known/structpb"
 
-	"github.com/callmeahab/pharma-search/gen/pbconnect"
 	pb "github.com/callmeahab/pharma-search/gen"
+	"github.com/callmeahab/pharma-search/gen/pbconnect"
+	"github.com/callmeahab/pharma-search/internal/matching"
 )
 
 type server struct {
@@ -32,8 +33,8 @@ type server struct {
 	featuredCache   []FeaturedGroup
 	featuredCacheAt time.Time
 	// Search results cache for scroll-based pagination
-	searchCache     map[string]*cachedSearchResult
-	searchCacheMu   sync.RWMutex
+	searchCache   map[string]*cachedSearchResult
+	searchCacheMu sync.RWMutex
 }
 
 type cachedSearchResult struct {
@@ -46,7 +47,7 @@ type cachedSearchResult struct {
 func connectDB() (*sql.DB, error) {
 	dbURL := os.Getenv("DATABASE_URL")
 	if dbURL == "" {
-		dbURL = "postgres://postgres:docker@localhost:5432/pharmagician?sslmode=disable"
+		dbURL = "postgres://postgres:docker@localhost:5432/pharma_search?sslmode=disable"
 	}
 	return sql.Open("postgres", dbURL)
 }
@@ -61,11 +62,27 @@ func searchProductsDB(db *sql.DB, query string, limit int) ([]map[string]interfa
 		limit = 5000
 	}
 
-	// Escape LIKE special characters in user input
-	escapedQuery := strings.NewReplacer("%", "\\%", "_", "\\_").Replace(query)
-	likePattern := "%" + escapedQuery + "%"
+	rawQuery := strings.TrimSpace(query)
+	normalizedQuery := matching.NormalizeText(rawQuery)
+	if normalizedQuery == "" {
+		normalizedQuery = strings.ToLower(rawQuery)
+	}
+
+	rawLikePattern := "%" + escapeLikePattern(rawQuery) + "%"
+	normalizedLikePattern := "%" + escapeLikePattern(normalizedQuery) + "%"
+	queryVariants := matching.ExpandQueryVariants(rawQuery)
+	queryTokens := matching.Tokenize(rawQuery)
 
 	rows, err := db.Query(`
+		WITH query_input AS (
+			SELECT
+				$1::text AS raw_like,
+				$2::text AS raw_query,
+				$3::text AS normalized_like,
+				$4::text AS normalized_query,
+				$5::text[] AS variants,
+				$6::text[] AS tokens
+		)
 		SELECT
 			p.id,
 			p.title,
@@ -85,17 +102,46 @@ func searchProductsDB(db *sql.DB, query string, limit int) ([]map[string]interfa
 			p."quantityValue"
 		FROM "Product" p
 		JOIN "Vendor" v ON v.id = p."vendorId"
-		WHERE p.title ILIKE $1
-		   OR p."normalizedName" ILIKE $1
-		   OR p.title % $2
+		CROSS JOIN query_input q
+		WHERE p.price > 0
+		  AND (
+			p.title ILIKE q.raw_like
+			OR COALESCE(p."normalizedName", '') ILIKE q.raw_like
+			OR COALESCE(p."normalizedName", '') ILIKE q.normalized_like
+			OR COALESCE(p."coreProductIdentity", '') ILIKE q.normalized_like
+			OR COALESCE(p."extractedBrand", '') ILIKE q.raw_like
+			OR (cardinality(q.tokens) > 0 AND COALESCE(p."searchTokens", ARRAY[]::text[]) && q.tokens)
+			OR EXISTS (
+				SELECT 1
+				FROM unnest(q.variants) AS variant
+				WHERE p.title ILIKE ('%' || variant || '%')
+				   OR COALESCE(p."normalizedName", '') ILIKE ('%' || variant || '%')
+				   OR COALESCE(p."coreProductIdentity", '') ILIKE ('%' || variant || '%')
+				   OR COALESCE(p."extractedBrand", '') ILIKE ('%' || variant || '%')
+			)
+			OR p.title % q.raw_query
+			OR COALESCE(p."normalizedName", '') % q.raw_query
+			OR COALESCE(p."coreProductIdentity", '') % q.normalized_query
+		  )
 		ORDER BY
-			CASE WHEN p.title ILIKE $1 OR COALESCE(p."normalizedName", '') ILIKE $1 THEN 0 ELSE 1 END,
+			CASE
+				WHEN lower(COALESCE(p."coreProductIdentity", '')) = q.normalized_query THEN 0
+				WHEN cardinality(q.tokens) > 0 AND COALESCE(p."searchTokens", ARRAY[]::text[]) @> q.tokens THEN 1
+				WHEN COALESCE(p."normalizedName", '') ILIKE q.raw_like THEN 2
+				WHEN COALESCE(p."coreProductIdentity", '') ILIKE q.normalized_like THEN 3
+				WHEN p.title ILIKE q.raw_like THEN 4
+				ELSE 5
+			END,
 			GREATEST(
-				similarity(p.title, $2),
-				similarity(COALESCE(p."normalizedName", ''), $2)
+				similarity(p.title, q.raw_query),
+				similarity(COALESCE(p."normalizedName", ''), q.raw_query),
+				similarity(COALESCE(p."coreProductIdentity", ''), q.normalized_query),
+				similarity(COALESCE(p."extractedBrand", ''), q.raw_query)
 			) DESC
-		LIMIT $3
-	`, likePattern, query, limit)
+			,
+			p.price ASC
+		LIMIT $7
+	`, rawLikePattern, rawQuery, normalizedLikePattern, normalizedQuery, pq.Array(queryVariants), pq.Array(queryTokens), limit)
 	if err != nil {
 		return nil, fmt.Errorf("search query error: %w", err)
 	}
@@ -120,22 +166,22 @@ func searchProductsDB(db *sql.DB, query string, limit int) ([]map[string]interfa
 		}
 
 		result := map[string]interface{}{
-			"id":              id,
-			"title":           title,
-			"price":           priceVal, // DB stores price in RSD directly
-			"vendorId":        vendorId,
-			"vendorName":      vendorName,
-			"link":            link,
-			"thumbnail":       thumbnail,
-			"brand":           brand,
-			"normalizedName":  normalizedName,
+			"id":                  id,
+			"title":               title,
+			"price":               priceVal, // DB stores price in RSD directly
+			"vendorId":            vendorId,
+			"vendorName":          vendorName,
+			"link":                link,
+			"thumbnail":           thumbnail,
+			"brand":               brand,
+			"normalizedName":      normalizedName,
 			"coreProductIdentity": coreProductIdentity,
-			"dosageValue":     dosageValue.Float64,
-			"dosageUnit":      dosageUnit,
-			"volumeValue":     volumeValue.Float64,
-			"volumeUnit":      volumeUnit,
-			"form":            form,
-			"quantityValue":   float64(quantityValue.Int64),
+			"dosageValue":         dosageValue.Float64,
+			"dosageUnit":          dosageUnit,
+			"volumeValue":         volumeValue.Float64,
+			"volumeUnit":          volumeUnit,
+			"form":                form,
+			"quantityValue":       float64(quantityValue.Int64),
 		}
 		results = append(results, result)
 	}
@@ -156,22 +202,60 @@ func autocompleteDB(db *sql.DB, query string, limit int) ([]*pb.AutocompleteSugg
 		limit = 8
 	}
 
-	escapedQuery := strings.NewReplacer("%", "\\%", "_", "\\_").Replace(query)
-	likePattern := "%" + escapedQuery + "%"
+	rawQuery := strings.TrimSpace(query)
+	normalizedQuery := matching.NormalizeText(rawQuery)
+	if normalizedQuery == "" {
+		normalizedQuery = strings.ToLower(rawQuery)
+	}
+
+	rawLikePattern := "%" + escapeLikePattern(rawQuery) + "%"
+	normalizedLikePattern := "%" + escapeLikePattern(normalizedQuery) + "%"
+	queryVariants := matching.ExpandQueryVariants(rawQuery)
+	queryTokens := matching.Tokenize(rawQuery)
 
 	rows, err := db.Query(`
+		WITH query_input AS (
+			SELECT
+				$1::text AS raw_like,
+				$2::text AS raw_query,
+				$3::text AS normalized_like,
+				$4::text AS normalized_query,
+				$5::text[] AS variants,
+				$6::text[] AS tokens
+		)
 		SELECT * FROM (
 			SELECT DISTINCT ON (lower(p.title))
 				p.id, p.title, p.price, v.name as vendor_name,
-				similarity(p.title, $2) as sim
+				GREATEST(
+					similarity(p.title, q.raw_query),
+					similarity(COALESCE(p."normalizedName", ''), q.raw_query),
+					similarity(COALESCE(p."coreProductIdentity", ''), q.normalized_query)
+				) as sim
 			FROM "Product" p
 			JOIN "Vendor" v ON v.id = p."vendorId"
-			WHERE p.title ILIKE $1 OR p.title % $2
-			ORDER BY lower(p.title), similarity(p.title, $2) DESC
+			CROSS JOIN query_input q
+			WHERE p.price > 0
+			  AND (
+				p.title ILIKE q.raw_like
+				OR COALESCE(p."normalizedName", '') ILIKE q.raw_like
+				OR COALESCE(p."coreProductIdentity", '') ILIKE q.normalized_like
+				OR (cardinality(q.tokens) > 0 AND COALESCE(p."searchTokens", ARRAY[]::text[]) && q.tokens)
+				OR EXISTS (
+					SELECT 1
+					FROM unnest(q.variants) AS variant
+					WHERE p.title ILIKE ('%' || variant || '%')
+					   OR COALESCE(p."normalizedName", '') ILIKE ('%' || variant || '%')
+					   OR COALESCE(p."coreProductIdentity", '') ILIKE ('%' || variant || '%')
+				)
+				OR p.title % q.raw_query
+				OR COALESCE(p."normalizedName", '') % q.raw_query
+				OR COALESCE(p."coreProductIdentity", '') % q.normalized_query
+			  )
+			ORDER BY lower(p.title), sim DESC
 		) sub
 		ORDER BY sub.sim DESC
-		LIMIT $3
-	`, likePattern, query, limit)
+		LIMIT $7
+	`, rawLikePattern, rawQuery, normalizedLikePattern, normalizedQuery, pq.Array(queryVariants), pq.Array(queryTokens), limit)
 	if err != nil {
 		return nil, err
 	}
@@ -212,6 +296,15 @@ func getString(m map[string]interface{}, key string) string {
 	return ""
 }
 
+func getStringAny(m map[string]interface{}, keys ...string) string {
+	for _, key := range keys {
+		if value := getString(m, key); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
 func getFloat(m map[string]interface{}, key string) float64 {
 	if v, ok := m[key]; ok {
 		switch t := v.(type) {
@@ -223,6 +316,26 @@ func getFloat(m map[string]interface{}, key string) float64 {
 			return float64(t)
 		case int64:
 			return float64(t)
+		}
+	}
+	return 0
+}
+
+func getFloatAny(m map[string]interface{}, keys ...string) float64 {
+	for _, key := range keys {
+		if value, ok := m[key]; ok {
+			switch t := value.(type) {
+			case float64:
+				return t
+			case float32:
+				return float64(t)
+			case int:
+				return float64(t)
+			case int32:
+				return float64(t)
+			case int64:
+				return float64(t)
+			}
 		}
 	}
 	return 0
@@ -241,6 +354,10 @@ func uniqueStrings(values []string) []string {
 	return out
 }
 
+func escapeLikePattern(value string) string {
+	return strings.NewReplacer("%", "\\%", "_", "\\_").Replace(value)
+}
+
 // Regex patterns for extracting dosage - pharma dosage vs volume
 // Pharma dosage: mg, mcg, iu and variants (the actual drug dosage)
 var pharmaDosagePattern = regexp.MustCompile(`(?i)\b(\d+(?:[.,]\d+)?)\s*(mg|mcg|μg|µg|iu|i\.u\.|i\.j\.|ij)\b`)
@@ -253,16 +370,7 @@ var gramPattern = regexp.MustCompile(`(?i)\b(\d+(?:[.,]\d+)?)\s*(g|gr|gram|grama
 
 // normalizeUnit normalizes dosage unit strings to canonical forms
 func normalizeUnit(unit string) string {
-	switch unit {
-	case "i.u.", "i.j.", "ij":
-		return "iu"
-	case "μg", "µg":
-		return "mcg"
-	case "gr", "gram", "grama":
-		return "g"
-	default:
-		return unit
-	}
+	return matching.NormalizeUnit(unit)
 }
 
 // Regex pattern for extracting quantity (count of tablets/capsules)
@@ -273,151 +381,7 @@ var quantitySuffixPattern = regexp.MustCompile(`\b[ax](\d+)\b`)
 // extractGroupKey extracts a grouping key from a product title
 // Format: "ingredient dosage quantity" e.g., "vitamin d3 2000 iu 30", "omega 3 1000 mg 60"
 func extractGroupKey(title string) string {
-	t := strings.ToLower(title)
-
-	// Clean up common noise - including hyphens and dashes
-	noise := []string{"®", "™", "©", ",", "(", ")", "[", "]", "/", "\\", "_", "-", "–", "—"}
-	for _, n := range noise {
-		t = strings.ReplaceAll(t, n, " ")
-	}
-	t = strings.Join(strings.Fields(t), " ")
-
-	// Extract dosage: prefer pharma dosage (mg/mcg/iu) over volume (ml/l)
-	dosage := ""
-	dosageMatch := ""
-	if match := pharmaDosagePattern.FindStringSubmatch(t); len(match) >= 3 {
-		// Found a real pharma dosage (mg, mcg, iu)
-		amount := match[1]
-		unit := normalizeUnit(strings.ToLower(match[2]))
-		dosageMatch = match[0]
-		dosage = amount + " " + unit
-	} else if match := gramPattern.FindStringSubmatch(t); len(match) >= 3 {
-		// Gram is ambiguous: small values (<=5g) are likely dosage, larger are weight
-		amount := match[1]
-		val, _ := strconv.ParseFloat(strings.Replace(amount, ",", ".", 1), 64)
-		if val <= 5.0 {
-			dosageMatch = match[0]
-			dosage = amount + " g"
-		}
-		// else: treat as weight, don't use as dosage
-	}
-	// Note: volume (ml/l) is intentionally NOT used as dosage
-
-	// Extract quantity (e.g., "30 tableta", "a60", "60 caps")
-	quantity := ""
-	quantityMatch := ""
-	if match := quantityPattern.FindStringSubmatch(t); len(match) >= 2 {
-		quantity = match[1] // Just the number
-		quantityMatch = match[0]
-	} else if match := quantitySuffixPattern.FindStringSubmatch(t); len(match) >= 2 {
-		// Fallback for "a30", "x60" suffix format
-		quantity = match[1]
-		quantityMatch = match[0]
-	}
-
-	// Remove dosage and quantity from title for cleaner ingredient extraction
-	ingredientPart := t
-	if dosageMatch != "" {
-		ingredientPart = strings.Replace(ingredientPart, dosageMatch, " ", 1)
-	}
-	if quantityMatch != "" {
-		ingredientPart = strings.Replace(ingredientPart, quantityMatch, " ", 1)
-	}
-	ingredientPart = strings.Join(strings.Fields(ingredientPart), " ")
-
-	// Words to skip when extracting ingredient
-	skipWords := map[string]bool{
-		"a": true, "za": true, "i": true, "sa": true, "od": true, "u": true,
-		"the": true, "of": true, "with": true, "and": true, "for": true,
-		"kapsule": true, "kapsula": true, "tablete": true, "tableta": true,
-		"mikrotablete": true, "mikrotableta": true, "mikrokapsule": true,
-		"softgel": true, "soft": true, "gel": true, "caps": true, "tab": true, "tbl": true,
-		"iu": true, "mg": true, "ml": true, "mcg": true, "g": true,
-		"sprej": true, "oral": true, "kapi": true, "sirup": true,
-	}
-
-	// Brand names to skip (they come before ingredient)
-	brandWords := map[string]bool{
-		"esi": true, "now": true, "vitabiotics": true, "terranova": true,
-		"bivits": true, "activa": true, "masterteh": true, "multi": true,
-		"essence": true, "food": true, "ultra": true, "plus": true,
-		"detrical": true, "videtril": true, "nutrition": true,
-	}
-
-	words := strings.Fields(ingredientPart)
-	coreWords := make([]string, 0, 4)
-	alphaNumPattern := regexp.MustCompile(`^\d+[a-z]+$|^[a-z]+\d+$`)
-
-	for _, w := range words {
-		// Skip filler and form words
-		if skipWords[w] {
-			continue
-		}
-		// Skip brand words but continue looking
-		if brandWords[w] {
-			continue
-		}
-
-		// Check if previous coreWord is "vitamin" or "omega"
-		isAfterVitaminOrOmega := len(coreWords) > 0 &&
-			(coreWords[len(coreWords)-1] == "vitamin" || coreWords[len(coreWords)-1] == "omega")
-
-		// Skip pure numbers unless after vitamin/omega (to keep "omega 3", "vitamin b12")
-		if _, err := strconv.Atoi(w); err == nil {
-			if isAfterVitaminOrOmega {
-				// Keep it - omega 3, omega 6
-			} else {
-				continue
-			}
-		}
-
-		// Skip numbers with letters like "a30", "30tbl" unless it's like "d3", "b12"
-		if alphaNumPattern.MatchString(w) {
-			if isAfterVitaminOrOmega && len(w) <= 3 {
-				// Keep it - vitamin d3, vitamin b12
-			} else {
-				continue
-			}
-		}
-
-		// Skip single letters unless after vitamin/omega (e.g., vitamin d, vitamin b)
-		if len(w) < 2 {
-			if isAfterVitaminOrOmega {
-				// Keep it - vitamin d, vitamin b
-			} else {
-				continue
-			}
-		}
-
-		coreWords = append(coreWords, w)
-		if len(coreWords) >= 3 {
-			break
-		}
-	}
-
-	ingredient := strings.Join(coreWords, " ")
-
-	// Combine ingredient + dosage + quantity for group key
-	parts := []string{}
-	if ingredient != "" {
-		parts = append(parts, ingredient)
-	}
-	if dosage != "" {
-		parts = append(parts, dosage)
-	}
-	if quantity != "" {
-		parts = append(parts, "x"+quantity)
-	}
-
-	if len(parts) > 0 {
-		return strings.Join(parts, " ")
-	}
-
-	// Last fallback: first 30 chars of normalized title
-	if len(t) > 30 {
-		return t[:30]
-	}
-	return t
+	return matching.ExtractGroupKey(title)
 }
 
 func computeGroupKey(normalizedName, title string) string {
@@ -429,19 +393,7 @@ func computeGroupKey(normalizedName, title string) string {
 
 // buildGroupId constructs a group ID from component fields: "ingredient::dosage::unit"
 func buildGroupId(coreIdentity string, dosageValue float64, dosageUnit string) string {
-	if coreIdentity == "" {
-		return ""
-	}
-	parts := []string{strings.TrimSpace(coreIdentity)}
-	if dosageValue > 0 && dosageUnit != "" {
-		if dosageValue == float64(int(dosageValue)) {
-			parts = append(parts, fmt.Sprintf("%d", int(dosageValue)))
-		} else {
-			parts = append(parts, fmt.Sprintf("%g", dosageValue))
-		}
-		parts = append(parts, strings.ToLower(dosageUnit))
-	}
-	return strings.Join(parts, "::")
+	return matching.BuildGroupID(coreIdentity, dosageValue, dosageUnit)
 }
 
 func enrichProductsWithGroupKey(hits []map[string]interface{}) []map[string]interface{} {
@@ -450,31 +402,31 @@ func enrichProductsWithGroupKey(hits []map[string]interface{}) []map[string]inte
 	for rank, h := range hits {
 		title := getString(h, "title")
 		normalizedName := getString(h, "normalizedName")
-
-		// group_key = specific key for strict mode (includes quantity/form)
-		// computed_group_id = broad key for normal mode (ingredient + dosage only)
-		var groupKey string
-		if normalizedName != "" {
-			groupKey = extractGroupKey(normalizedName)
-		} else {
-			groupKey = extractGroupKey(title)
-		}
-		// Append quantity to make strict key more specific
-		qtyVal := getFloat(h, "quantityValue")
-		form := getString(h, "form")
-		if qtyVal > 0 {
-			groupKey += fmt.Sprintf(" x%d", int(qtyVal))
-		}
-		if form != "" {
-			groupKey += " " + strings.ToLower(form)
-		}
-
-		// Get dosage info from DB (pre-computed from Product table)
+		coreIdentity := getString(h, "coreProductIdentity")
 		dosageValue := getFloat(h, "dosageValue")
 		dosageUnit := getString(h, "dosageUnit")
+		volumeValue := getFloat(h, "volumeValue")
+		volumeUnit := getString(h, "volumeUnit")
+		qtyVal := getFloat(h, "quantityValue")
+		form := getString(h, "form")
 
-		// Build computed_group_id from component fields (coreProductIdentity + dosage)
-		coreIdentity := strings.ToLower(getString(h, "coreProductIdentity"))
+		groupKey := matching.BuildComparableGroupID(
+			coreIdentity,
+			dosageValue,
+			dosageUnit,
+			volumeValue,
+			volumeUnit,
+			qtyVal,
+			form,
+		)
+		if groupKey == "" {
+			if normalizedName != "" {
+				groupKey = extractGroupKey(normalizedName)
+			} else {
+				groupKey = extractGroupKey(title)
+			}
+		}
+
 		computedGroupId := buildGroupId(coreIdentity, dosageValue, dosageUnit)
 
 		// DB stores price in RSD directly (not cents like Meilisearch did)
@@ -482,24 +434,25 @@ func enrichProductsWithGroupKey(hits []map[string]interface{}) []map[string]inte
 		pid := strings.ReplaceAll(getString(h, "id"), "product_", "")
 
 		product := map[string]interface{}{
-			"id":               pid,
-			"title":            title,
-			"price":            price,
-			"vendor_id":        getString(h, "vendorId"),
-			"vendor_name":      getString(h, "vendorName"),
-			"link":             getString(h, "link"),
-			"thumbnail":        getString(h, "thumbnail"),
-			"brand_name":       getString(h, "brand"),
-			"group_key":        groupKey,
-			"normalized_name":  normalizedName,
-			"computed_group_id": computedGroupId,
-			"dosage_value":     dosageValue,
-			"dosage_unit":      dosageUnit,
-			"volume_value":     getFloat(h, "volumeValue"),
-			"volume_unit":      getString(h, "volumeUnit"),
-			"form":             getString(h, "form"),
-			"quantity":         getFloat(h, "quantityValue"),
-			"rank":             rank,
+			"id":                    pid,
+			"title":                 title,
+			"price":                 price,
+			"vendor_id":             getString(h, "vendorId"),
+			"vendor_name":           getString(h, "vendorName"),
+			"link":                  getString(h, "link"),
+			"thumbnail":             getString(h, "thumbnail"),
+			"brand_name":            getString(h, "brand"),
+			"group_key":             groupKey,
+			"normalized_name":       normalizedName,
+			"core_product_identity": coreIdentity,
+			"computed_group_id":     computedGroupId,
+			"dosage_value":          dosageValue,
+			"dosage_unit":           dosageUnit,
+			"volume_value":          volumeValue,
+			"volume_unit":           volumeUnit,
+			"form":                  form,
+			"quantity":              qtyVal,
+			"rank":                  rank,
 		}
 
 		products = append(products, product)
@@ -508,25 +461,210 @@ func enrichProductsWithGroupKey(hits []map[string]interface{}) []map[string]inte
 	return products
 }
 
-// groupQueryScore scores how well a group ID matches the search query.
-// Returns 2 if the group ID contains the full query as a substring,
-// 1 if all query words appear in the group ID, 0 otherwise.
-func groupQueryScore(groupID, query string) int {
-	gid := strings.ToLower(strings.ReplaceAll(groupID, "::", " "))
-	q := strings.ToLower(strings.TrimSpace(query))
-	if q == "" {
+func candidateQueryScore(candidate, normalizedQuery string, queryTokens, queryVariants []string) int {
+	candidate = matching.NormalizeText(candidate)
+	if candidate == "" || normalizedQuery == "" {
 		return 0
 	}
-	if strings.Contains(gid, q) {
-		return 2
-	}
-	words := strings.Fields(q)
-	for _, w := range words {
-		if !strings.Contains(gid, w) {
+
+	termScore := func(term string) int {
+		if term == "" {
+			return 0
+		}
+		switch {
+		case candidate == term:
+			return 1200
+		case strings.HasPrefix(candidate, term+" "):
+			return 1050
+		case strings.Contains(candidate, " "+term+" "):
+			return 980
+		case strings.Contains(candidate, term):
+			return 900
+		default:
 			return 0
 		}
 	}
-	return 1
+
+	best := termScore(normalizedQuery)
+	for _, variant := range queryVariants {
+		best = max(best, termScore(variant))
+	}
+
+	if len(queryTokens) == 0 {
+		return best
+	}
+
+	tokenHits := 0
+	for _, token := range queryTokens {
+		if strings.Contains(candidate, token) {
+			tokenHits++
+		}
+	}
+
+	if tokenHits == 0 {
+		return best
+	}
+
+	best = max(best, tokenHits*120)
+	if tokenHits == len(queryTokens) {
+		best = max(best, 700+tokenHits*40)
+	}
+
+	return best
+}
+
+func groupQueryScore(group map[string]interface{}, query string) int {
+	normalizedQuery := matching.NormalizeText(query)
+	if normalizedQuery == "" {
+		return 0
+	}
+
+	queryTokens := matching.Tokenize(query)
+	queryVariants := matching.ExpandQueryVariants(query)
+	best := 0
+
+	scoreCandidate := func(candidate string, boost int) {
+		score := candidateQueryScore(candidate, normalizedQuery, queryTokens, queryVariants)
+		if score > 0 {
+			best = max(best, score+boost)
+		}
+	}
+
+	scoreCandidate(getString(group, "normalized_name"), 80)
+	scoreCandidate(getString(group, "id"), 30)
+
+	products := getSlice(group, "products")
+	for idx, item := range products {
+		product, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		positionBoost := max(0, 40-(idx*10))
+		scoreCandidate(getString(product, "title"), 70+positionBoost)
+		scoreCandidate(getString(product, "brand_name"), 55+positionBoost)
+		scoreCandidate(getString(product, "normalized_name"), 65+positionBoost)
+		scoreCandidate(getString(product, "core_product_identity"), 50+positionBoost)
+
+		if idx >= 2 {
+			break
+		}
+	}
+
+	return best
+}
+
+func buildGroupDisplayName(products []map[string]interface{}) string {
+	if len(products) == 0 {
+		return ""
+	}
+
+	first := products[0]
+	coreIdentity := getString(first, "core_product_identity")
+	dosageValue := getFloat(first, "dosage_value")
+	dosageUnit := getString(first, "dosage_unit")
+	volumeValue := getFloat(first, "volume_value")
+	volumeUnit := getString(first, "volume_unit")
+	quantity := getFloat(first, "quantity")
+	form := getString(first, "form")
+
+	if displayName := matching.BuildDisplayName(coreIdentity, dosageValue, dosageUnit, volumeValue, volumeUnit, quantity, form); displayName != "" {
+		return displayName
+	}
+
+	bestNormalized := ""
+	for _, product := range products {
+		normalized := strings.TrimSpace(getString(product, "normalized_name"))
+		if normalized == "" {
+			continue
+		}
+		if bestNormalized == "" || len(normalized) < len(bestNormalized) {
+			bestNormalized = normalized
+		}
+	}
+	if bestNormalized != "" {
+		return bestNormalized
+	}
+
+	return getString(first, "title")
+}
+
+func compareProductsForVendor(a, b map[string]interface{}) bool {
+	aPrice := getFloat(a, "price")
+	bPrice := getFloat(b, "price")
+	if aPrice != bPrice {
+		return aPrice < bPrice
+	}
+
+	aRank := getFloat(a, "rank")
+	bRank := getFloat(b, "rank")
+	if aRank != bRank {
+		return aRank < bRank
+	}
+
+	return getString(a, "id") < getString(b, "id")
+}
+
+func dedupeProductsByVendor(products []map[string]interface{}) ([]map[string]interface{}, int) {
+	if len(products) <= 1 {
+		return products, 0
+	}
+
+	byVendor := make(map[string]map[string]interface{}, len(products))
+	for _, product := range products {
+		vendorID := getString(product, "vendor_id")
+		if vendorID == "" {
+			vendorID = getString(product, "id")
+		}
+
+		existing, ok := byVendor[vendorID]
+		if !ok || compareProductsForVendor(product, existing) {
+			byVendor[vendorID] = product
+		}
+	}
+
+	deduped := make([]map[string]interface{}, 0, len(byVendor))
+	for _, product := range byVendor {
+		deduped = append(deduped, product)
+	}
+
+	sort.Slice(deduped, func(i, j int) bool {
+		return compareProductsForVendor(deduped[i], deduped[j])
+	})
+
+	return deduped, len(products) - len(deduped)
+}
+
+func flattenGroupProducts(groups []map[string]interface{}) []map[string]interface{} {
+	products := make([]map[string]interface{}, 0)
+	for _, group := range groups {
+		for _, item := range getSlice(group, "products") {
+			product, ok := item.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			products = append(products, product)
+		}
+	}
+	return products
+}
+
+func countVisibleProducts(groups []map[string]interface{}) int {
+	total := 0
+	for _, group := range groups {
+		total += len(getSlice(group, "products"))
+	}
+	return total
+}
+
+func formatQuantityFacetValue(quantity float64) string {
+	if quantity <= 0 {
+		return ""
+	}
+	if quantity == math.Trunc(quantity) {
+		return fmt.Sprintf("%.0f", quantity)
+	}
+	return strings.TrimRight(strings.TrimRight(fmt.Sprintf("%.2f", quantity), "0"), ".")
 }
 
 func convertHitsToGroups(hits []map[string]interface{}, query string, db *sql.DB) []map[string]interface{} {
@@ -544,11 +682,10 @@ func convertHitsToGroups(hits []map[string]interface{}, query string, db *sql.DB
 	groupOrder := make([]string, 0)
 
 	for _, p := range products {
-		// Group by computed_group_id (broad, ML-computed) for backend grouping
-		// Frontend re-groups by group_key (strict) or computed_group_id (normal)
-		gid := getString(p, "computed_group_id")
+		// Group by strict comparable key first, then fall back to broader identity.
+		gid := getString(p, "group_key")
 		if gid == "" {
-			gid = getString(p, "group_key")
+			gid = getString(p, "computed_group_id")
 		}
 		rank := int(getFloat(p, "rank"))
 
@@ -567,60 +704,75 @@ func convertHitsToGroups(hits []map[string]interface{}, query string, db *sql.DB
 
 	for _, gid := range groupOrder {
 		gd := groupMap[gid]
-		prods := gd.products
-
-		sort.Slice(prods, func(i, j int) bool {
-			return getFloat(prods[i], "price") < getFloat(prods[j], "price")
-		})
+		rawProductCount := len(gd.products)
+		prods, hiddenOfferCount := dedupeProductsByVendor(gd.products)
 
 		prices := make([]float64, 0, len(prods))
-		vendors := make([]string, 0, len(prods))
 		for _, p := range prods {
 			prices = append(prices, getFloat(p, "price"))
-			vendors = append(vendors, getString(p, "vendor_id"))
 		}
 
-		minP, maxP := 0.0, 0.0
+		minP, maxP, avgP := 0.0, 0.0, 0.0
 		if len(prices) > 0 {
 			minP, maxP = prices[0], prices[len(prices)-1]
+			total := 0.0
+			for _, price := range prices {
+				total += price
+			}
+			avgP = total / float64(len(prices))
 		}
 
-		displayName := gid
-		if len(prods) > 0 {
-			displayName = getString(prods[0], "title")
+		displayName := buildGroupDisplayName(prods)
+		if displayName == "" {
+			displayName = gid
 		}
 
 		group := map[string]interface{}{
 			"id":              gid,
 			"normalized_name": displayName,
 			"products":        prods,
-			"price_range":     map[string]interface{}{"min": minP, "max": maxP},
-			"vendor_count":    len(uniqueStrings(vendors)),
-			"product_count":   len(prods),
+			"price_range":     map[string]interface{}{"min": minP, "max": maxP, "avg": avgP},
+			"vendor_count":    len(prods),
+			"product_count":   rawProductCount,
 			"dosage_value":    getFloat(prods[0], "dosage_value"),
 			"dosage_unit":     getString(prods[0], "dosage_unit"),
 			"relevance_rank":  gd.firstRank,
+			"hidden_offers":   hiddenOfferCount,
 		}
+		group["match_score"] = groupQueryScore(group, query)
 
 		groups = append(groups, group)
 	}
 
-	// Sort: multi-product groups first, then by query match quality, then by relevance rank
+	// Sort by relevance first, then use coverage and price spread as tie-breakers.
 	sort.SliceStable(groups, func(i, j int) bool {
-		ci := getFloat(groups[i], "product_count")
-		cj := getFloat(groups[j], "product_count")
-		// Multi-product groups before single-product groups
-		if (ci > 1) != (cj > 1) {
-			return ci > 1
-		}
-		// Groups whose ID matches the query sort first
-		si := groupQueryScore(getString(groups[i], "id"), query)
-		sj := groupQueryScore(getString(groups[j], "id"), query)
+		si := getFloat(groups[i], "match_score")
+		sj := getFloat(groups[j], "match_score")
 		if si != sj {
 			return si > sj
 		}
-		// Within the same tier, sort by relevance rank
-		return getFloat(groups[i], "relevance_rank") < getFloat(groups[j], "relevance_rank")
+
+		ri := getFloat(groups[i], "relevance_rank")
+		rj := getFloat(groups[j], "relevance_rank")
+		if ri != rj {
+			return ri < rj
+		}
+
+		ci := getFloat(groups[i], "vendor_count")
+		cj := getFloat(groups[j], "vendor_count")
+		if ci != cj {
+			return ci > cj
+		}
+
+		iPriceRange := getMap(groups[i], "price_range")
+		jPriceRange := getMap(groups[j], "price_range")
+		iSpread := getFloat(iPriceRange, "max") - getFloat(iPriceRange, "min")
+		jSpread := getFloat(jPriceRange, "max") - getFloat(jPriceRange, "min")
+		if iSpread != jSpread {
+			return iSpread > jSpread
+		}
+
+		return getString(groups[i], "id") < getString(groups[j], "id")
 	})
 	return groups
 }
@@ -755,7 +907,10 @@ func (s *server) SearchGroupsStream(ctx context.Context, req *connect.Request[pb
 	}
 
 	// Check cache first
-	cacheKey := strings.ToLower(query)
+	cacheKey := matching.NormalizeText(query)
+	if cacheKey == "" {
+		cacheKey = strings.ToLower(query)
+	}
 	cached := s.getSearchCache(cacheKey)
 
 	if cached == nil {
@@ -766,12 +921,12 @@ func (s *server) SearchGroupsStream(ctx context.Context, req *connect.Request[pb
 		}
 
 		allGroups := convertHitsToGroups(hits, query, s.db)
-		facets := buildFacetsFromHits(hits)
+		facets := buildFacetsFromHits(flattenGroupProducts(allGroups))
 
 		cached = &cachedSearchResult{
 			groups:    allGroups,
 			facets:    facets,
-			totalHits: len(hits),
+			totalHits: countVisibleProducts(allGroups),
 			cachedAt:  time.Now(),
 		}
 		s.setSearchCache(cacheKey, cached)
@@ -899,28 +1054,39 @@ func buildFacetsFromHits(hits []map[string]interface{}) map[string]*pb.FacetValu
 	facetCounts := make(map[string]map[string]int)
 
 	for _, hit := range hits {
-		// Count vendor names
-		if vendor := getString(hit, "vendorName"); vendor != "" {
+		if vendor := strings.TrimSpace(getStringAny(hit, "vendorName", "vendor_name")); vendor != "" {
 			if facetCounts["vendorName"] == nil {
 				facetCounts["vendorName"] = make(map[string]int)
 			}
 			facetCounts["vendorName"][vendor]++
 		}
 
-		// Count brands
-		if brand := getString(hit, "brand"); brand != "" {
+		if brand := strings.TrimSpace(getStringAny(hit, "brand", "brand_name")); brand != "" {
 			if facetCounts["brand"] == nil {
 				facetCounts["brand"] = make(map[string]int)
 			}
 			facetCounts["brand"][brand]++
 		}
 
-		// Count dosage units
-		if unit := getString(hit, "dosageUnit"); unit != "" {
+		if unit := strings.TrimSpace(getStringAny(hit, "dosageUnit", "dosage_unit")); unit != "" {
 			if facetCounts["dosageUnit"] == nil {
 				facetCounts["dosageUnit"] = make(map[string]int)
 			}
 			facetCounts["dosageUnit"][unit]++
+		}
+
+		if form := strings.TrimSpace(getString(hit, "form")); form != "" {
+			if facetCounts["form"] == nil {
+				facetCounts["form"] = make(map[string]int)
+			}
+			facetCounts["form"][form]++
+		}
+
+		if quantity := formatQuantityFacetValue(getFloatAny(hit, "quantityValue", "quantity")); quantity != "" {
+			if facetCounts["quantity"] == nil {
+				facetCounts["quantity"] = make(map[string]int)
+			}
+			facetCounts["quantity"][quantity]++
 		}
 	}
 

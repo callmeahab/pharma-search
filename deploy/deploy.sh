@@ -19,13 +19,6 @@ echo "Server: $SERVER"
 echo "Local:  $LOCAL_DIR"
 echo ""
 
-# Check if server is provided
-if [[ -z "$1" ]]; then
-    echo "Usage: ./deploy.sh user@server"
-    echo "Example: ./deploy.sh root@aposteka.rs"
-    exit 1
-fi
-
 # ============================================
 # SYNC CODE
 # ============================================
@@ -37,6 +30,10 @@ ssh "$SERVER" "mkdir -p $APP_DIR"
 rsync -avz --delete \
     --exclude '.git' \
     --exclude '.DS_Store' \
+    --exclude '.gocache' \
+    --exclude '.gomodcache' \
+    --exclude '.pycache' \
+    --exclude '__pycache__' \
     --exclude 'node_modules' \
     --exclude '.next' \
     --exclude 'ml' \
@@ -45,10 +42,14 @@ rsync -avz --delete \
     --exclude '.devcontainer' \
     --exclude '.claude' \
     --exclude '*.log' \
+    --exclude '*.pyc' \
     --exclude '.env' \
     --exclude '.env.local' \
+    --exclude 'importcsv' \
+    --exclude 'migrate' \
     --exclude 'pharma-search' \
     --exclude 'pharma-server' \
+    --exclude 'frontend/tsconfig.tsbuildinfo' \
     --exclude 'frontend/.env' \
     "$LOCAL_DIR/" "$SERVER:$APP_DIR/"
 

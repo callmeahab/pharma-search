@@ -23,7 +23,7 @@ export const ResultsToolbar: React.FC<ResultsToolbarProps> = ({
 }) => {
   return (
     <div className={cn(
-      "flex items-center gap-2 sm:gap-3 p-2 sm:p-3 bg-gray-50 dark:bg-gray-800/50 rounded-lg border border-gray-200 dark:border-gray-700",
+      "flex flex-wrap items-center gap-2 sm:gap-3 p-2 sm:p-3 bg-gray-50 dark:bg-gray-800/50 rounded-lg border border-gray-200 dark:border-gray-700",
       className
     )}>
       {/* Group toggle - icon only on mobile */}
@@ -60,6 +60,12 @@ export const ResultsToolbar: React.FC<ResultsToolbarProps> = ({
         ) : (
           <span>{totalProducts} proizvoda</span>
         )}
+      </div>
+
+      <div className="basis-full text-xs text-gray-500 dark:text-gray-400 sm:basis-auto sm:ml-2">
+        {groupSimilar
+          ? "Spajamo isti proizvod po dozi i pakovanju i prikazujemo najnižu cenu po apoteci."
+          : "Svaka ponuda je zasebna, ali i dalje zadržava kontekst svoje grupe za poređenje."}
       </div>
     </div>
   );

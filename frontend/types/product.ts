@@ -8,6 +8,17 @@ export interface Price {
   diff_from_avg?: number;
 }
 
+export interface ComparisonContext {
+  vendorCount: number;
+  offerCount: number;
+  lowestPrice: number;
+  highestPrice: number;
+  averagePrice: number;
+  bestVendorName?: string;
+  hiddenOfferCount: number;
+  isBestOffer?: boolean;
+}
+
 export interface Product {
   id: string;
   name: string;
@@ -17,6 +28,9 @@ export interface Product {
   prices: Price[];
   vendorCount?: number;
   productCount?: number;
+  displayMode?: "group" | "offer";
+  primaryOffer?: Price;
+  comparisonContext?: ComparisonContext;
 }
 
 export interface BackendProduct {
@@ -73,83 +87,133 @@ export interface SearchResult {
   facets?: Record<string, Record<string, number>>;
 }
 
-import { humanizeTitle } from "@/lib/utils";
+import { formatPrice, humanizeTitle, pluralizeSr } from "@/lib/utils";
 
-// Serbian pluralization helper
-function pluralize(count: number, one: string, few: string, many: string): string {
-  const absCount = Math.abs(count);
-  const lastTwo = absCount % 100;
-  const lastOne = absCount % 10;
-
-  // Special case for 11-14 (always "many" form)
-  if (lastTwo >= 11 && lastTwo <= 14) {
-    return `${count} ${many}`;
-  }
-
-  if (lastOne === 1) {
-    return `${count} ${one}`;
-  }
-
-  if (lastOne >= 2 && lastOne <= 4) {
-    return `${count} ${few}`;
-  }
-
-  return `${count} ${many}`;
+function toPrices(group: ProductGroup): Price[] {
+  return group.products.map((product) => ({
+    store: product.vendor_name,
+    price: product.price,
+    inStock: true,
+    link: product.link,
+    title: product.title,
+  }));
 }
 
-function formatProductDescription(productCount: number, vendorCount: number): string {
-  const products = pluralize(productCount, "proizvod", "proizvoda", "proizvoda");
-  const vendors = pluralize(vendorCount, "apoteci", "apoteke", "apoteka");
-  return `${products} u ${vendors}`;
+function buildComparisonContext(
+  group: ProductGroup,
+  currentProduct?: BackendProduct
+): ComparisonContext {
+  const prices = toPrices(group);
+  const lowestOffer = group.products[0];
+  const visibleOfferCount = group.products.length;
+  const vendorCount = group.vendor_count || visibleOfferCount;
+  const rawProductCount = group.product_count || visibleOfferCount;
+  const fallbackLowest =
+    prices.length > 0 ? Math.min(...prices.map((price) => price.price)) : 0;
+  const fallbackHighest =
+    prices.length > 0 ? Math.max(...prices.map((price) => price.price)) : 0;
+  const lowestPrice =
+    group.price_range?.min || fallbackLowest;
+  const highestPrice =
+    group.price_range?.max || fallbackHighest;
+  const averagePrice =
+    group.price_range?.avg ||
+    prices.reduce((sum, price) => sum + price.price, 0) / Math.max(prices.length, 1);
+
+  return {
+    vendorCount,
+    offerCount: visibleOfferCount,
+    lowestPrice,
+    highestPrice,
+    averagePrice,
+    bestVendorName: lowestOffer?.vendor_name,
+    hiddenOfferCount: Math.max(0, rawProductCount - visibleOfferCount),
+    isBestOffer: currentProduct
+      ? currentProduct.id === lowestOffer?.id ||
+        (currentProduct.price === lowestPrice &&
+          currentProduct.vendor_name === lowestOffer?.vendor_name)
+      : undefined,
+  };
+}
+
+function formatGroupedDescription(comparison: ComparisonContext): string {
+  const vendorWord = pluralizeSr(
+    comparison.vendorCount,
+    "apoteci",
+    "apoteke",
+    "apoteka"
+  );
+
+  if (comparison.hiddenOfferCount > 0) {
+    return `${comparison.vendorCount} ${vendorWord}, prikazana najniža cena po apoteci`;
+  }
+
+  return `${comparison.offerCount} ponuda u ${comparison.vendorCount} ${vendorWord}`;
+}
+
+function formatOfferDescription(comparison: ComparisonContext): string {
+  if (comparison.vendorCount <= 1) {
+    return "Jedina dostupna ponuda za ovaj proizvod";
+  }
+
+  if (comparison.isBestOffer) {
+    return `Najpovoljnija ponuda među ${comparison.vendorCount} apoteka`;
+  }
+
+  return `Najbolja cena je ${formatPrice(comparison.lowestPrice)} u ${comparison.bestVendorName || "drugoj apoteci"}`;
 }
 
 export function convertBackendProductToProduct(
   backendProduct: BackendProduct,
   group: ProductGroup
 ): Product {
+  const prices = toPrices(group);
+  const comparisonContext = buildComparisonContext(group, backendProduct);
+  const primaryOffer: Price = {
+    store: backendProduct.vendor_name,
+    price: backendProduct.price,
+    inStock: true,
+    link: backendProduct.link,
+    title: backendProduct.title,
+  };
+
   return {
     id: backendProduct.id,
-    name: humanizeTitle(backendProduct.title),
-    description: formatProductDescription(group.product_count || 0, group.vendor_count),
+    name: humanizeTitle(group.normalized_name || backendProduct.title),
+    description: formatOfferDescription(comparisonContext),
     category: "", // No category since we removed badges
     image: backendProduct.thumbnail || "/medicine-placeholder.svg",
-    prices: [
-      {
-        store: backendProduct.vendor_name,
-        price: backendProduct.price,
-        inStock: true,
-        link: backendProduct.link,
-        title: backendProduct.title, // Include individual product title
-      },
-    ],
+    prices,
     vendorCount: group.vendor_count,
     productCount: group.product_count,
+    displayMode: "offer",
+    primaryOffer,
+    comparisonContext,
   };
 }
 
 export function convertProductGroupToProducts(group: ProductGroup): Product[] {
   const firstProduct = group.products[0];
-  const productTitle = firstProduct?.title
-    ? humanizeTitle(firstProduct.title)
-    : "Nepoznat proizvod";
+  const prices = toPrices(group);
+  const comparisonContext = buildComparisonContext(group);
+  const productTitle = group.normalized_name
+    ? humanizeTitle(group.normalized_name)
+    : firstProduct?.title
+      ? humanizeTitle(firstProduct.title)
+      : "Nepoznat proizvod";
 
   const mainProduct: Product = {
     id: group.id,
     name: productTitle,
-    description: formatProductDescription(group.product_count || 0, group.vendor_count),
+    description: formatGroupedDescription(comparisonContext),
     category: "",
     image: firstProduct?.thumbnail || "/medicine-placeholder.svg",
-    prices: group.products.map((p) => ({
-      store: p.vendor_name,
-      price: p.price,
-      inStock: true,
-      link: p.link,
-      title: p.title,
-    })),
+    prices,
     vendorCount: group.vendor_count,
     productCount: group.product_count,
+    displayMode: "group",
+    comparisonContext,
   };
 
   return [mainProduct];
 }
-

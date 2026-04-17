@@ -100,6 +100,13 @@ export const FilterChips: React.FC<FilterChipsProps> = ({
     });
   });
 
+  filters.forms.forEach((form) => {
+    activeChips.push({
+      label: form,
+      onRemove: () => removeFilter("forms", form),
+    });
+  });
+
   filters.dosages.forEach((dosage) => {
     activeChips.push({
       label: dosage,

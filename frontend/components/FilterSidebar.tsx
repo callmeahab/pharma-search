@@ -29,6 +29,8 @@ export interface Facets {
   brand?: Record<string, number>;
   normalizedName?: Record<string, number>;
   dosageUnit?: Record<string, number>;
+  form?: Record<string, number>;
+  quantity?: Record<string, number>;
 }
 
 interface FilterSidebarProps {
@@ -163,7 +165,23 @@ export const FilterSidebar: React.FC<FilterSidebarProps> = ({
         .filter(([key]) => key && key.trim() !== "")
         .sort((a, b) => b[1] - a[1])
         .slice(0, 10)
-        .map(([key]) => key)
+        .map(([key, count]) => ({ name: key, count }))
+    : [];
+
+  const formOptions = facets?.form
+    ? Object.entries(facets.form)
+        .filter(([key]) => key && key.trim() !== "")
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 12)
+        .map(([key, count]) => ({ name: key, count }))
+    : [];
+
+  const quantityOptions = facets?.quantity
+    ? Object.entries(facets.quantity)
+        .filter(([key]) => key && key.trim() !== "")
+        .sort((a, b) => Number(a[0]) - Number(b[0]))
+        .slice(0, 12)
+        .map(([key, count]) => ({ name: key, count }))
     : [];
 
   // Extract brands from facets
@@ -240,17 +258,54 @@ export const FilterSidebar: React.FC<FilterSidebarProps> = ({
           </div>
         </FilterSection>
 
-        {/* Dosage/Form */}
+        {/* Dosage */}
         {dosageOptions.length > 0 && (
-          <FilterSection title="Oblik/Doza" defaultOpen={false}>
+          <FilterSection title="Doza" defaultOpen={false}>
             <div className="max-h-40 overflow-y-auto space-y-2">
-              {dosageOptions.map((dosage) => (
+              {dosageOptions.map(({ name, count }) => (
                 <CheckboxItem
-                  key={dosage}
-                  id={`dosage-${dosage}`}
-                  label={dosage}
-                  checked={filters.dosages.includes(dosage)}
-                  onChange={() => toggleArrayFilter("dosages", dosage)}
+                  key={name}
+                  id={`dosage-${name}`}
+                  label={name}
+                  count={count}
+                  checked={filters.dosages.includes(name)}
+                  onChange={() => toggleArrayFilter("dosages", name)}
+                />
+              ))}
+            </div>
+          </FilterSection>
+        )}
+
+        {/* Form */}
+        {formOptions.length > 0 && (
+          <FilterSection title="Oblik" defaultOpen={false}>
+            <div className="max-h-40 overflow-y-auto space-y-2">
+              {formOptions.map(({ name, count }) => (
+                <CheckboxItem
+                  key={name}
+                  id={`form-${name}`}
+                  label={name}
+                  count={count}
+                  checked={filters.forms.includes(name)}
+                  onChange={() => toggleArrayFilter("forms", name)}
+                />
+              ))}
+            </div>
+          </FilterSection>
+        )}
+
+        {/* Quantity */}
+        {quantityOptions.length > 0 && (
+          <FilterSection title="Pakovanje" defaultOpen={false}>
+            <div className="max-h-40 overflow-y-auto space-y-2">
+              {quantityOptions.map(({ name, count }) => (
+                <CheckboxItem
+                  key={name}
+                  id={`quantity-${name}`}
+                  label={`${name} kom`}
+                  count={count}
+                  checked={filters.quantities.includes(name)}
+                  onChange={() => toggleArrayFilter("quantities", name)}
                 />
               ))}
             </div>

@@ -5,7 +5,7 @@ import Navbar from "@/components/Navbar";
 import HeroSection from "@/components/HeroSection";
 import ProductList from "@/components/ProductList";
 import { searchGroupsStreaming, fetchGroupsPage, getFeaturedProducts, SearchResult, StreamingSearchResult } from "@/lib/api";
-import { convertProductGroupToProducts, ProductGroup } from "@/types/product";
+import { convertBackendProductToProduct, convertProductGroupToProducts, ProductGroup } from "@/types/product";
 import { Spinner } from "@/components/ui/spinner";
 import Footer from "@/components/Footer";
 import { FilterSidebar, FilterState, defaultFilters, Facets } from "@/components/FilterSidebar";
@@ -146,9 +146,10 @@ export default function HomePage() {
       );
 
       if (result.groups.length > 0) {
+        const nextOffset = currentOffset + result.groups.length;
         setAccumulatedGroups(prev => [...prev, ...result.groups]);
-        setCurrentOffset(prev => prev + result.groups.length);
-        setHasMore(currentOffset + result.groups.length < result.totalGroups);
+        setCurrentOffset(nextOffset);
+        setHasMore(nextOffset < result.totalGroups);
 
         // Update facets if not already set
         if (!facets && result.facets) {
@@ -257,32 +258,49 @@ export default function HomePage() {
       );
     }
 
+    if (filters.forms.length > 0) {
+      groups = groups.filter(group =>
+        group.products.some(p => filters.forms.includes((p.form || "").trim()))
+      );
+    }
+
+    if (filters.quantities.length > 0) {
+      groups = groups.filter(group =>
+        group.products.some((p) => {
+          const quantity = p.quantity ? String(p.quantity) : "";
+          return filters.quantities.includes(quantity);
+        })
+      );
+    }
+
     return groups;
   }, [accumulatedGroups, filters, priceRange]);
 
-  const displayGroups = filters.groupSimilar
-    ? filteredGroups
-    : filteredGroups.flatMap((g, groupIdx) =>
-        g.products.map((p, productIdx) => ({
-          ...g,
-          // Use combination of indices and vendor to guarantee uniqueness
-          id: `${p.id}-${p.vendor_id}-${groupIdx}-${productIdx}`,
-          products: [p],
-          vendor_count: 1,
-          product_count: 1,
-          price_range: { min: p.price, max: p.price, avg: p.price }
-        } as ProductGroup))
-      );
+  const displayProducts = useMemo(() => {
+    if (filters.groupSimilar) {
+      return filteredGroups.flatMap((group) => convertProductGroupToProducts(group));
+    }
 
-  // Count actual products within all groups, not the converted display products
-  const totalProductsShown = displayGroups.reduce((sum, group) => sum + group.products.length, 0);
+    return filteredGroups.flatMap((group) =>
+      group.products.map((product) => convertBackendProductToProduct(product, group))
+    );
+  }, [filteredGroups, filters.groupSimilar]);
 
   const hasActiveFilters = filters.minPrice > priceRange.min ||
     filters.maxPrice < priceRange.max ||
     filters.brands.length > 0 ||
     filters.vendors.length > 0 ||
     filters.dosages.length > 0 ||
-    filters.quantities.length > 0;
+    filters.quantities.length > 0 ||
+    filters.forms.length > 0;
+
+  const activeFilterCount =
+    filters.brands.length +
+    filters.vendors.length +
+    filters.dosages.length +
+    filters.quantities.length +
+    filters.forms.length +
+    (filters.minPrice > priceRange.min || filters.maxPrice < priceRange.max ? 1 : 0);
 
   return (
     <div className="min-h-screen flex flex-col bg-health-gray dark:bg-gray-900 transition-colors duration-200">
@@ -307,8 +325,7 @@ export default function HomePage() {
                 Filteri
                 {hasActiveFilters && (
                   <span className="ml-2 bg-health-primary text-white text-xs px-1.5 py-0.5 rounded-full">
-                    {filters.brands.length + filters.vendors.length + filters.dosages.length +
-                     (filters.minPrice > 0 || filters.maxPrice < 50000 ? 1 : 0)}
+                    {activeFilterCount}
                   </span>
                 )}
               </Button>
@@ -360,11 +377,9 @@ export default function HomePage() {
                     <p className="text-lg text-red-600">Greška pri pretraživanju</p>
                     <p className="text-sm text-red-500 mt-2">{searchError}</p>
                   </div>
-                ) : displayGroups.length > 0 ? (
+                ) : displayProducts.length > 0 ? (
                   <>
-                    <ProductList
-                      products={displayGroups.flatMap(group => convertProductGroupToProducts(group))}
-                    />
+                    <ProductList products={displayProducts} />
                     {/* Infinite scroll trigger */}
                     <div ref={loadMoreRef} className="h-10" />
                     {isLoadingMore && (
@@ -375,7 +390,7 @@ export default function HomePage() {
                     )}
                     {!hasMore && accumulatedGroups.length > 0 && (
                       <div className="text-center py-6 text-gray-500 dark:text-gray-400">
-                        Prikazano svih {totalGroups} grupa proizvoda
+                        Prikazano {displayProducts.length} {filters.groupSimilar ? "grupa" : "ponuda"}
                       </div>
                     )}
                   </>

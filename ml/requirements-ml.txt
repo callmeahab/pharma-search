@@ -1,0 +1,6 @@
+-r requirements.txt
+spacy>=3.8.11
+
+# Optional GPU support:
+# macOS (Apple Silicon): pip install 'spacy[apple]'
+# Windows/Linux (NVIDIA): pip install 'spacy[cuda12x]'

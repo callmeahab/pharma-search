@@ -23,10 +23,7 @@ async function scrapePage(
   const allProducts: Product[] = [];
 
   try {
-    await Promise.all([
-      page.goto(url, { waitUntil: 'domcontentloaded' }),
-      page.waitForNavigation({ waitUntil: 'networkidle2' }).catch(() => { }),
-    ]);
+    await ScraperUtils.goto(page, url);
 
     // Check for empty message first
     const emptyMessage = await page.$('.message.info.empty');
@@ -41,7 +38,7 @@ async function scrapePage(
       })
       .catch(() => console.log('No products found on page'));
 
-    await new Promise((resolve) => setTimeout(resolve, 1000));
+    await ScraperUtils.delay(250);
 
     const products = await page.$$eval('.product-item-info', (elements) => {
       return elements

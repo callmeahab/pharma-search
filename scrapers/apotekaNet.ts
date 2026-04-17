@@ -13,18 +13,12 @@ async function scrapePage(page: Page, url: string): Promise<Product[]> {
   const allProducts: Product[] = [];
 
   try {
-    await Promise.all([
-      page.goto(url, { waitUntil: 'domcontentloaded' }),
-      page.waitForNavigation({ waitUntil: 'networkidle2' }).catch(() => {}),
-    ]);
+    await ScraperUtils.gotoAndWaitForSelector(page, url, '.product-thumb', {
+      noResultsMessage: 'No products found on page',
+      selectorTimeout: 5000,
+    });
 
-    await page
-      .waitForSelector('.product-thumb', {
-        timeout: 5000,
-      })
-      .catch(() => console.log('No products found on page'));
-
-    await new Promise((resolve) => setTimeout(resolve, 1000));
+    await ScraperUtils.delay(250);
 
     const products = await page.$$eval('.product-thumb', (elements) => {
       return elements

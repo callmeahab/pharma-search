@@ -42,7 +42,7 @@ function convertPbProductToBackend(p: PbProduct): BackendProduct {
 function convertPbGroupToProductGroup(g: PbProductGroup, index: number): ProductGroup {
   const products = g.products.map(convertPbProductToBackend);
   return {
-    id: `${g.id}-${index}`,
+    id: g.id || `group-${index}`,
     normalized_name: g.normalizedName,
     products,
     price_range: {

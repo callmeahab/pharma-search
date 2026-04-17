@@ -1,16 +1,13 @@
-import { Pool } from 'pg';
-import * as dotenv from 'dotenv';
+import { assertCoreSchema, createDbPool } from './helpers/db';
 
-dotenv.config();
-
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-});
+const pool = createDbPool();
 
 async function deleteZeroPriceProducts() {
   let dbDeleted = 0;
 
   try {
+    await assertCoreSchema(pool);
+
     // Delete all zero-price products
     const deleteQuery = `
       DELETE FROM "Product" 

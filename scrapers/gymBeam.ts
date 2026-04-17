@@ -20,8 +20,8 @@ async function scrapePage(
   baseUrl: string,
 ): Promise<Product[]> {
   try {
-    await page.goto(url, {
-      waitUntil: 'domcontentloaded',
+    await ScraperUtils.goto(page, url, {
+      settleMs: 250,
       timeout: 30000,
     });
 
@@ -34,14 +34,14 @@ async function scrapePage(
       visible: true,
       timeout: 20000,
     });
-    await new Promise(resolve => setTimeout(resolve, 5000));
+    await ScraperUtils.delay(1500);
     // Scroll to bottom to trigger lazy loading
     await page.evaluate(async () => {
       window.scrollTo(0, document.body.scrollHeight);
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      await new Promise(resolve => setTimeout(resolve, 750));
     });
 
-    await ScraperUtils.delay(2000);
+    await ScraperUtils.delay(750);
 
     if (await page.$('.captcha-container')) {
       const solved = await ScraperUtils.solveImageCaptcha(page);
@@ -139,8 +139,8 @@ async function scrapeMultipleBaseUrls(): Promise<Product[]> {
       console.log(`Scraping category: ${baseUrl}`);
 
       // Navigate to the base URL
-      await page.goto(baseUrl, {
-        waitUntil: 'domcontentloaded',
+      await ScraperUtils.goto(page, baseUrl, {
+        settleMs: 250,
         timeout: 30000,
       });
 
@@ -167,11 +167,11 @@ async function scrapeMultipleBaseUrls(): Promise<Product[]> {
         visible: true,
         timeout: 20000,
       });
-      await new Promise(resolve => setTimeout(resolve, 5000));
+      await ScraperUtils.delay(1500);
       // Scroll to bottom to trigger lazy loading
       await page.evaluate(async () => {
         window.scrollTo(0, document.body.scrollHeight);
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        await new Promise(resolve => setTimeout(resolve, 750));
       });
 
       let previousProductCount = 0;
@@ -259,7 +259,7 @@ async function scrapeMultipleBaseUrls(): Promise<Product[]> {
 
         // Click the button and wait for new products to load
         await loadMoreButton.click();
-        await ScraperUtils.delay(2000); // Wait for animation/loading
+        await ScraperUtils.delay(750);
 
         // Wait for new products to appear
         try {

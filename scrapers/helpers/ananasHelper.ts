@@ -73,8 +73,8 @@ export async function scrapePage(
   let result: any;
 
   try {
-    await page.goto(url, {
-      waitUntil: 'networkidle2',
+    await ScraperUtils.goto(page, url, {
+      settleMs: 250,
       timeout: 60000,
     });
 

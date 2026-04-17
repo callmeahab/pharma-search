@@ -5,6 +5,9 @@
   "type": "module",
   "scripts": {
     "start": "bun run-scrapers-worker.ts",
+    "import": "bun import-csv.ts",
+    "postprocess": "bun deleteItemsWithoutPrice.ts && bun deleteDuplicateProducts.ts",
+    "pipeline": "bun run-scrapers-worker.ts && bun import-csv.ts && bun run postprocess",
     "cleanup": "bun deleteItemsWithoutPrice.ts",
     "dedupe": "bun deleteDuplicateProducts.ts"
   },

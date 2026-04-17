@@ -1,4 +1,4 @@
-.PHONY: help update-mappings test-grouping update-and-test clean
+.PHONY: help update-mappings test-grouping update-and-test clean server migrate import-csv
 
 # Default target
 help:
@@ -7,6 +7,9 @@ help:
 	@echo "  make update-mappings    - Update mappings from products.csv"
 	@echo "  make test-grouping      - Test the grouping system"
 	@echo "  make update-and-test    - Update mappings and test (recommended)"
+	@echo "  make server             - Start the Go backend"
+	@echo "  make migrate            - Apply PostgreSQL schema migrations via Go wrapper"
+	@echo "  make import-csv         - Import scraped CSVs into PostgreSQL via Go wrapper"
 	@echo "  make clean              - Remove temporary files"
 	@echo ""
 	@echo "After scraping new products, run:"
@@ -33,6 +36,14 @@ update-and-test: update-mappings test-grouping
 	@echo "  2. If good, commit: git add comprehensive_mappings.go && git commit -m 'Update mappings'"
 	@echo "  3. Deploy your changes"
 
+migrate:
+	@echo "🗄️ Applying database migrations..."
+	@go run ./cmd/migrate
+
+server:
+	@echo "🚀 Starting backend..."
+	@go run .
+
 # Clean temporary files
 clean:
 	@echo "🧹 Cleaning temporary files..."
@@ -41,6 +52,10 @@ clean:
 	rm -f /tmp/analyze_products.py
 	rm -f pharma-search
 	@echo "✅ Clean complete!"
+
+import-csv:
+	@echo "📥 Importing scraper CSVs..."
+	@go run ./cmd/importcsv
 
 # Development helpers
 dev-test:

@@ -5,8 +5,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { Pool } from 'pg';
-import 'dotenv/config';
+import { createDbPool, loadVendors } from './helpers/db';
 
 const OUTPUT_DIR = path.join(process.cwd(), 'output');
 
@@ -81,8 +80,7 @@ function parseCSV(content: string): ProductRow[] {
 }
 
 async function importCSVFiles() {
-  const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
+  const pool = createDbPool({
     max: 20,
     idleTimeoutMillis: 30000,
   });
@@ -101,48 +99,46 @@ async function importCSVFiles() {
     let totalImported = 0;
     let totalErrors = 0;
 
+    const vendorIdByName = await loadVendors(pool);
+
     for (const file of files) {
       const filePath = path.join(OUTPUT_DIR, file);
       console.log(`\nProcessing: ${file}`);
 
       const content = fs.readFileSync(filePath, 'utf-8');
-      const products = parseCSV(content);
-      console.log(`  Found ${products.length} products`);
+      const parsedProducts = parseCSV(content);
+      console.log(`  Found ${parsedProducts.length} products`);
 
-      if (products.length === 0) continue;
+      if (parsedProducts.length === 0) continue;
 
       // Get vendor name from first product
-      const vendorName = products[0].vendor;
+      const vendorName = parsedProducts[0].vendor;
+      const vendorId = vendorIdByName.get(vendorName);
 
-      // Find vendor in database
-      const vendorResult = await pool.query(
-        'SELECT id, name FROM "Vendor" WHERE name = $1 LIMIT 1',
-        [vendorName]
-      );
-
-      if (vendorResult.rows.length === 0) {
+      if (!vendorId) {
         console.log(`  Vendor "${vendorName}" not found, skipping file`);
         continue;
       }
 
-      const vendorId = vendorResult.rows[0].id;
       let fileImported = 0;
       let fileErrors = 0;
       let fileDuplicates = 0;
 
-      // Process in batches with upsert
-      const BATCH_SIZE = 1000;
-      for (let i = 0; i < products.length; i += BATCH_SIZE) {
-        const batch = products.slice(i, i + BATCH_SIZE);
-        const dedupedBatchMap = new Map<string, ProductRow>();
-        for (const product of batch) {
-          if (dedupedBatchMap.has(product.title)) {
+      const dedupedProducts = Array.from(
+        parsedProducts.reduce((map, product) => {
+          const existing = map.get(product.title);
+          if (existing) {
             fileDuplicates++;
-            continue;
           }
-          dedupedBatchMap.set(product.title, product);
-        }
-        const dedupedBatch = Array.from(dedupedBatchMap.values());
+          map.set(product.title, product);
+          return map;
+        }, new Map<string, ProductRow>()).values(),
+      );
+
+      // Process in batches with upsert
+      const BATCH_SIZE = 2000;
+      for (let i = 0; i < dedupedProducts.length; i += BATCH_SIZE) {
+        const dedupedBatch = dedupedProducts.slice(i, i + BATCH_SIZE);
 
         if (dedupedBatch.length === 0) {
           continue;
@@ -183,11 +179,6 @@ async function importCSVFiles() {
         } catch (error) {
           console.error(`  Error importing batch starting with "${dedupedBatch[0]?.title ?? 'unknown'}":`, error);
           fileErrors += dedupedBatch.length;
-        }
-
-        // Small delay between batches
-        if (i + BATCH_SIZE < products.length) {
-          await new Promise(resolve => setTimeout(resolve, 100));
         }
       }
 

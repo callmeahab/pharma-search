@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-Import standardized product names from Excel into ProductStandardization table.
+Import reviewed product standardization rows from Excel into ProductStandardization.
 
 Usage:
     python scripts/import_standardization.py [--excel-path PATH] [--batch-size SIZE]
 
 This script:
-1. Reads the Aposteka_processed.xlsx file
+1. Reads a reviewed Excel workbook
 2. Batch inserts rows into ProductStandardization table
 3. Handles duplicates with ON CONFLICT
 4. Reports progress and statistics
@@ -25,6 +25,12 @@ import tempfile
 import zipfile
 import xml.etree.ElementTree as ET
 
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from matching_utils import normalize_lookup_text
+
 
 def get_db_connection():
     """Get database connection from environment or defaults."""
@@ -36,7 +42,7 @@ def get_db_connection():
     return psycopg2.connect(
         host=os.getenv('DB_HOST', 'localhost'),
         port=int(os.getenv('DB_PORT', '5432')),
-        database=os.getenv('DB_NAME', 'pharmagician'),
+        database=os.getenv('DB_NAME', 'pharma_search'),
         user=os.getenv('DB_USER', 'postgres'),
         password=os.getenv('DB_PASSWORD', 'docker')
     )
@@ -273,6 +279,10 @@ def prepare_row(values: dict) -> tuple | None:
     if not title or not normalized_name:
         return None
 
+    normalized_name = normalize_lookup_text(normalized_name)
+    if not normalized_name:
+        return None
+
     # Parse dosage
     dosage_value = None
     dosage_unit = None
@@ -401,7 +411,7 @@ def main():
     parser.add_argument(
         '--excel-path',
         default='Aposteka_processed.xlsx',
-        help='Path to Excel file (default: Aposteka_processed.xlsx)'
+        help='Path to the reviewed Excel file (default: Aposteka_processed.xlsx)'
     )
     parser.add_argument(
         '--batch-size',

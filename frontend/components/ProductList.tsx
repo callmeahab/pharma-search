@@ -10,7 +10,9 @@ const ProductList: React.FC<ProductListProps> = ({ products }) => {
   if (products.length === 0) {
     return (
       <div className="text-center py-12">
-        <p className="text-lg text-gray-600">No products found. Try a different search term.</p>
+        <p className="text-lg text-gray-600 dark:text-gray-400">
+          Nema proizvoda za prikaz. Probajte drugačiju pretragu ili manje filtera.
+        </p>
       </div>
     );
   }

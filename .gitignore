@@ -1,6 +1,7 @@
 # Cache directories
 backend/cache/
 cache/
+.gocache
 
 # Python
 __pycache__/
