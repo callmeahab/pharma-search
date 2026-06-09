@@ -90,6 +90,8 @@ export async function scrapePage(
       const allElements = Array.from(
         document.querySelectorAll('.ais-Hits-item'),
       );
+
+      // Skip out-of-stock items (no specific class found in the new HTML)
       const skippedElements = allElements.filter((element) =>
         element.querySelector('.sc-492kdg-11'),
       );
@@ -99,32 +101,42 @@ export async function scrapePage(
       );
 
       const products = keptElements.map((element) => {
+        // Title from h3 tag
         const title = element.querySelector('h3')?.textContent?.trim() || '';
-        const spans = element.querySelectorAll('span');
-        const priceElement = spans[1];
-        const price = priceElement?.textContent?.trim() || '';
-        const link = element.querySelector('a')?.getAttribute('href') || '';
 
-        const imgElement = element.querySelector('img');
+        // Price from span with class sc-1arj7wv-2 (current price, not the old price)
+        const priceElement = element.querySelector('.sc-1arj7wv-2');
+        const price = priceElement?.textContent?.trim() || '';
+
+        // Link from anchor tag
+        const link = element.querySelector('a.sc-v9wo15-0')?.getAttribute('href') || '';
+
+        // Image - get all img tags and find the one with proper srcset
+        const imgElements = element.querySelectorAll('img');
         let imgSrc = '';
 
-        const possibleSources = [
-          imgElement?.getAttribute('src'),
-          imgElement?.getAttribute('data-src'),
-          imgElement?.getAttribute('data-lazy'),
-          (() => {
-            const ss = imgElement?.getAttribute('srcset');
-            if (!ss) return undefined;
-            const parts = ss.split(',').map(p => p.trim().split(' ')[0]).filter(Boolean);
-            return parts[parts.length - 1];
-          })(),
-        ];
+        for (const imgElement of Array.from(imgElements)) {
+          const possibleSources = [
+            (() => {
+              const ss = imgElement.getAttribute('srcset');
+              if (!ss) return undefined;
+              // Get the highest quality image from srcset
+              const parts = ss.split(',').map(p => p.trim().split(' ')[0]).filter(Boolean);
+              return parts[parts.length - 1];
+            })(),
+            imgElement.getAttribute('src'),
+            imgElement.getAttribute('data-src'),
+            imgElement.getAttribute('data-lazy'),
+          ];
 
-        for (const src of possibleSources) {
-          if (src && !src.includes('data:image/gif;base64') && !src.includes('data:image/svg+xml')) {
-            imgSrc = src;
-            break;
+          for (const src of possibleSources) {
+            if (src && !src.includes('data:image/gif;base64') && !src.includes('data:image/svg+xml') && !src.includes('/_next/static/media/')) {
+              imgSrc = src;
+              break;
+            }
           }
+
+          if (imgSrc) break;
         }
 
         return {
@@ -136,7 +148,7 @@ export async function scrapePage(
       });
 
       return {
-        products: products.filter((p) => p.img),
+        products: products.filter((p) => p.img && p.title && p.price),
         skipped: skippedElements.length,
         totalFound: allElements.length,
       };
