@@ -58,6 +58,11 @@ var formAliases = map[string]string{
 	"rastvor": "rastvor", "solution": "rastvor", "suspenzija": "suspenzija",
 	"kesica": "kesice", "kesice": "kesice", "ampula": "ampule", "ampule": "ampule",
 	"prah": "prah", "powder": "prah",
+	// gummy / jelly vitamins -> one "bombone" form
+	"bombone": "bombone", "bombona": "bombone", "gumene": "bombone", "gumeni": "bombone",
+	"gumenih": "bombone", "gumena": "bombone", "gumedica": "bombone", "gumedice": "bombone",
+	"pektinske": "bombone", "pektinska": "bombone", "pektinski": "bombone",
+	"gummy": "bombone", "gummies": "bombone",
 }
 
 // NormalizeText lowercases, transliterates Serbian/Cyrillic, and reduces to
@@ -281,6 +286,7 @@ func BuildGroupKey(in GroupKeyInput) GroupKey {
 		(NormalizeUnit(in.VolumeUnit) == "g" && in.VolumeValue >= powderMinGrams)
 	topical := !isPowder && (IsTopicalForm(in.Form) ||
 		HasTopicalToken(in.Title) ||
+		IsCosmeticBrand(in.Brand) ||
 		(in.Form == "" && in.VolumeValue > 0 && mlUnit(in.VolumeUnit) && in.DosageValue <= 0))
 
 	suppl := SupplementIngredients(core)

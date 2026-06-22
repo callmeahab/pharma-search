@@ -84,6 +84,22 @@ class QuantityAndBareIUTest(unittest.TestCase):
         self.assertIsNone(e["dosage_value"])
 
 
+class GummyVitaminTest(unittest.TestCase):
+    def test_gummy_brand_defaults_to_bombone_form(self):
+        e = extract("GUMEDIĆI SA VITAMINOM C A60")
+        self.assertEqual(e["brand"], "Gumedici")
+        self.assertEqual(p.normalize_form(e["form"]), "bombone")
+
+    def test_gummy_words_normalize_to_bombone(self):
+        for t in ["Gumedići Vitamin C gumene bombone 60 kom",
+                  "Gumedići Vitamin C pektinske bombone za decu"]:
+            self.assertEqual(p.normalize_form(extract(t)["form"]), "bombone", t)
+
+    def test_vitamini_minerali_is_multivitamin(self):
+        import dictionaries as d
+        self.assertEqual(d.supplement_ingredients("Gumedići sa vitaminima i mineralima"), ["multivitamin"])
+
+
 class CoreIdentityTest(unittest.TestCase):
     def test_strips_pack_unit_noise(self):
         self.assertEqual(extract("Vitamin D3, 90kap")["core"], "Vitamin D3")

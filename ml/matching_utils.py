@@ -65,6 +65,20 @@ FORM_ALIASES = {
     "kesice": "kesice",
     "ampula": "ampule",
     "ampule": "ampule",
+    # gummy / jelly vitamins -> one "bombone" form
+    "bombone": "bombone",
+    "bombona": "bombone",
+    "gumene": "bombone",
+    "gumeni": "bombone",
+    "gumenih": "bombone",
+    "gumena": "bombone",
+    "gumedica": "bombone",
+    "gumedice": "bombone",
+    "pektinske": "bombone",
+    "pektinska": "bombone",
+    "pektinski": "bombone",
+    "gummy": "bombone",
+    "gummies": "bombone",
 }
 
 

@@ -623,6 +623,61 @@ func attachSizelessToLines(products []map[string]interface{}) {
 	}
 }
 
+// attachFormlessToDominantForm folds a form-UNKNOWN ingredient group
+// (ing:<ingredient>::<strength>) into the most-stocked form variant of the same
+// ingredient+strength (ing:<ingredient>::<strength>::form:<F>). Form is only ~41%
+// extracted, so the same product otherwise splits into "with form" and "without
+// form" groups (e.g. "Vitamin C 1000 MG" vs "Vitamin C 1000 MG Tablete"). Distinct
+// forms (tablete vs kapsule) remain separate; only the unknown-form bucket attaches.
+func attachFormlessToDominantForm(products []map[string]interface{}) {
+	const sep = "::form:"
+	// base (ingredient+strength) -> form key -> distinct vendors
+	baseForms := map[string]map[string]map[string]struct{}{}
+	for _, p := range products {
+		if getString(p, "group_method") != "ingredient" {
+			continue
+		}
+		k := getString(p, "group_key")
+		idx := strings.Index(k, sep)
+		if idx < 0 {
+			continue // formless — counted as a target only, not a form variant
+		}
+		base := k[:idx]
+		if baseForms[base] == nil {
+			baseForms[base] = map[string]map[string]struct{}{}
+		}
+		if baseForms[base][k] == nil {
+			baseForms[base][k] = map[string]struct{}{}
+		}
+		baseForms[base][k][getString(p, "vendor_id")] = struct{}{}
+	}
+	if len(baseForms) == 0 {
+		return
+	}
+	dominant := make(map[string]string, len(baseForms))
+	for base, forms := range baseForms {
+		bestKey, bestN := "", -1
+		for fk, vendors := range forms {
+			if n := len(vendors); n > bestN || (n == bestN && fk < bestKey) {
+				bestN, bestKey = n, fk
+			}
+		}
+		dominant[base] = bestKey
+	}
+	for _, p := range products {
+		if getString(p, "group_method") != "ingredient" {
+			continue
+		}
+		k := getString(p, "group_key")
+		if strings.Contains(k, sep) {
+			continue // already has a form
+		}
+		if dk, ok := dominant[k]; ok {
+			p["group_key"] = dk
+		}
+	}
+}
+
 func convertHitsToGroups(hits []map[string]interface{}, query string, db *sql.DB) []map[string]interface{} {
 	if len(hits) == 0 {
 		return []map[string]interface{}{}
@@ -630,6 +685,7 @@ func convertHitsToGroups(hits []map[string]interface{}, query string, db *sql.DB
 
 	products := enrichProductsWithGroupKey(hits)
 	attachSizelessToLines(products)
+	attachFormlessToDominantForm(products)
 
 	type groupData struct {
 		firstRank int

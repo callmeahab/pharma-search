@@ -43,10 +43,11 @@ var (
 	canonicalAliases = map[string][]string{}
 	maxAliasTokens   = 1
 
-	brandStrip = map[string]bool{}
-	brandKeep  = map[string]bool{}
-	noiseWords = map[string]bool{}
-	formWords  = map[string]bool{}
+	brandStrip     = map[string]bool{}
+	brandKeep      = map[string]bool{}
+	cosmeticBrands = map[string]bool{}
+	noiseWords     = map[string]bool{}
+	formWords      = map[string]bool{}
 
 	// Alias phrases (len>=5) for typo-tolerant resolution. fuzzyTokenAliases are
 	// single-token (e.g. "magnezijum"); fuzzyPhraseAliases include multi-word
@@ -123,8 +124,9 @@ func loadDictionaries() {
 	}
 
 	var brandDoc struct {
-		Strip []string `json:"strip"`
-		Keep  []string `json:"keep"`
+		Strip    []string `json:"strip"`
+		Keep     []string `json:"keep"`
+		Cosmetic []string `json:"cosmetic"`
 	}
 	if err := json.Unmarshal(brandsJSON, &brandDoc); err != nil {
 		log.Printf("matching: failed to parse brands.json: %v", err)
@@ -137,6 +139,11 @@ func loadDictionaries() {
 	for _, b := range brandDoc.Keep {
 		if n := NormalizeText(b); n != "" {
 			brandKeep[n] = true
+		}
+	}
+	for _, b := range brandDoc.Cosmetic {
+		if n := NormalizeText(b); n != "" {
+			cosmeticBrands[n] = true
 		}
 	}
 
@@ -237,6 +244,12 @@ func AliasesFor(canonical string) []string {
 // (non-ingestible) form.
 func IsTopicalForm(form string) bool {
 	return topicalForms[NormalizeText(form)]
+}
+
+// IsCosmeticBrand reports whether the brand is a known pure-cosmetic manufacturer
+// (so its products are cosmetics, not supplements, even without a form word).
+func IsCosmeticBrand(brand string) bool {
+	return cosmeticBrands[NormalizeText(brand)]
 }
 
 // HasTopicalToken reports whether any token in the text is a topical/cosmetic

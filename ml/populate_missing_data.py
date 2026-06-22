@@ -79,7 +79,8 @@ QUANTITY_UNIT_PATTERN = (
 FORM_PATTERN = re.compile(
     r"\b(tablete|tableta|tabl|tab|kapsule|kapsula|kaps|capsules|capsule|caps|softgel|softgels|cps|"
     r"sirup|sprej|spray|kapi|drops|gel|gela|krema|krem|cream|mast|losion|lotion|serum|"
-    r"rastvor|solution|suspenzija|kesice|kesica|ampule|ampula)\b",
+    r"rastvor|solution|suspenzija|kesice|kesica|ampule|ampula|"
+    r"bombone|bombona|gumene|gumeni|gumenih|gumena|gumedica|gumedice|pektinske|pektinska|pektinski|gummy|gummies)\b",
     re.IGNORECASE,
 )
 QUANTITY_WITH_UNIT_RE = re.compile(
@@ -157,6 +158,11 @@ def _parse_num(raw: str) -> float:
 # Pack counts above this are implausible for tablets/capsules; such a "number +
 # form" match is really a dosage (e.g. "2000 tablete" = 2000 IU), not a count.
 MAX_PACK_COUNT = 500
+
+# Brands whose entire catalog is gummy/jelly vitamins — default their form to
+# "bombone" when the title omits a delivery word, so they don't fall into the
+# tablet/capsule groups.
+GUMMY_BRANDS = {"gumedici", "gumedicic", "ivybears"}
 
 # Cosmetic/topical forms (mirror of Go matching.topicalForms); used to drop
 # flavor-derived false-positive forms on weight-based powders.
@@ -534,6 +540,10 @@ def extract_entities_rule_based(title: str) -> Dict[str, Any]:
     _vu, _vv = result.get("volume_unit"), result.get("volume_value") or 0
     if (_vu == "kg" or (_vu == "g" and _vv >= 400)) and normalize_form(result.get("form")) in _TOPICAL_FORMS:
         result["form"] = None
+
+    # Gummy-only brands: default to the gummy form when no delivery word was found.
+    if not result.get("form") and dictionaries.normalize(result.get("brand")) in GUMMY_BRANDS:
+        result["form"] = "bombone"
 
     return result
 

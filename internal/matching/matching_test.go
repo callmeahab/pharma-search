@@ -125,6 +125,15 @@ func TestBuildGroupKeyCosmeticDoesNotMergeAcrossBrands(t *testing.T) {
 	}
 }
 
+func TestBuildGroupKeyCosmeticBrandNotInIngredientTrack(t *testing.T) {
+	// A cosmetic brand's product is a cosmetic even with an ingredient in the
+	// title and no parsed form/volume.
+	gk := BuildGroupKey(GroupKeyInput{Core: "Vitamin C", Brand: "Balea", Title: "Balea Koncentrat za lice sa vitaminom C", ProductID: "1"})
+	if strings.HasPrefix(gk.Key, "ing:") {
+		t.Fatalf("cosmetic-brand product must not be in the ingredient track, got %q", gk.Key)
+	}
+}
+
 func TestSearchConceptsCanonicalizesIngredients(t *testing.T) {
 	req, _ := SearchConcepts("vitamin c")
 	if !contains(req, "vitaminc") {

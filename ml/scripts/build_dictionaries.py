@@ -128,6 +128,23 @@ CURATED_BRANDS = [
     "ultimate", "weider", "prozis", "maximalium", "nutriversum", "qnt", "olympic",
     "olimp", "dymatize", "dy nutrition", "the nutrition", "applied nutrition",
     "muscletech", "bsn", "rule 1", "gaspari", "ronnie coleman", "insane labz",
+    "gumedici", "gumedicic", "ivybears",
+]
+
+# Pure skincare / makeup / personal-care brands. A product from one of these is a
+# cosmetic, so even with an ingredient in the title (Vitamin C, Q10) and no parsed
+# form/volume it must NOT enter the supplement ingredient track. (Excludes
+# dual-use brands that also sell supplements.)
+COSMETIC_BRANDS = [
+    "balea", "nivea", "nivea men", "eucerin", "garnier", "loreal", "l oreal",
+    "l oreal paris", "vichy", "bioderma", "avene", "la roche posay", "uriage",
+    "mustela", "sebamed", "becutan", "cerave", "neutrogena", "mixa", "ziaja",
+    "nuxe", "lierac", "svr", "isdin", "klorane", "ducray", "kerastase", "cetaphil",
+    "maybelline", "catrice", "essence", "golden rose", "revlon", "rimmel",
+    "max factor", "bourjois", "afrodita", "eveline", "labello", "dove", "rexona",
+    "loccitane", "oriflame", "avon", "nivea baby", "johnsons", "palmolive",
+    "head shoulders", "schwarzkopf", "syoss", "gliss", "wella", "pantene",
+    "dr theiss", "apivita", "korres", "weleda baby", "bepanthen", "sudocrem",
 ]
 
 # Salt / chemical-form qualifiers that are NOT a separate identity under aggressive
@@ -149,7 +166,20 @@ ALIAS_ADD = {
     "omega 3": ["omega"],
     "cink": ["zn"],
     "gvozdje": ["fe"],
+    "multivitamin": [
+        "vitamini i minerali", "vitamini minerali", "vitamina i minerala",
+        "vitamina minerala", "vitaminima i mineralima", "vitaminima mineralima",
+        "multivit", "multivit minerali", "multivitaminski mineralni",
+    ],
 }
+
+# Gummy / jelly delivery form words (normalized to "bombone" elsewhere) — kept out
+# of the residual so gummy vitamins don't fragment on these descriptors.
+CURATED_FORMS = [
+    "bombone", "bombona", "gumene", "gumeni", "gumenih", "gumena", "gumedica",
+    "gumedice", "pektinske", "pektinska", "pektinski", "gummy", "gummies",
+    "zvakace", "zvakaca", "drazeje", "drazeja",
+]
 
 
 def build_ingredients(intel):
@@ -176,7 +206,8 @@ def build_brands(intel, ingredient_aliases):
     keep_set = set(keep) | ingredient_aliases
     # never strip something that is a real ingredient identity
     strip = [b for b in strip if b not in keep_set and len(b) >= 2]
-    return {"strip": strip, "keep": keep}
+    cosmetic = norm_list(COSMETIC_BRANDS)
+    return {"strip": strip, "keep": keep, "cosmetic": cosmetic}
 
 
 # Current hardcoded lists in the existing pipeline (union them in so nothing regresses).
@@ -200,7 +231,7 @@ EXISTING_FORMS = [
 
 def build_stopwords(intel, ingredient_aliases):
     noise = norm_list(EXISTING_NOISE + intel["noise"]["noiseWords"] + SALT_FORMS + CURATED_NOISE)
-    forms = norm_list(EXISTING_FORMS + intel["noise"]["formWords"])
+    forms = norm_list(EXISTING_FORMS + intel["noise"]["formWords"] + CURATED_FORMS)
     # never let a stopword shadow a real ingredient identity, or a product-line word
     noise = [w for w in noise if w not in ingredient_aliases and w not in NOISE_REMOVE]
     forms = [w for w in forms if w not in NOISE_REMOVE]

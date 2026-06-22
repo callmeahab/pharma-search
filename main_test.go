@@ -85,6 +85,30 @@ func TestConvertHitsToGroupsDedupesVendorsAndRecalculatesPriceRange(t *testing.T
 	}
 }
 
+func TestConvertHitsToGroupsFoldsFormlessIntoDominantForm(t *testing.T) {
+	mk := func(id, vendor, form string) map[string]interface{} {
+		return map[string]interface{}{
+			"id": id, "title": "Vitamin C 1000", "price": 100.0,
+			"vendorId": vendor, "vendorName": vendor, "link": "", "thumbnail": "",
+			"brand": "", "normalizedName": "vitamin c 1000",
+			"coreProductIdentity": "vitamin c", "dosageValue": 1000.0, "dosageUnit": "mg",
+			"form": form,
+		}
+	}
+	hits := []map[string]interface{}{
+		mk("p1", "vendor-a", "tablete"),
+		mk("p2", "vendor-b", "tablete"),
+		mk("p3", "vendor-c", ""), // form unknown -> should fold into tablete
+	}
+	groups := convertHitsToGroups(hits, "vitamin c", nil)
+	if len(groups) != 1 {
+		t.Fatalf("expected formless to fold into the dominant form -> 1 group, got %d", len(groups))
+	}
+	if got := int(getFloat(groups[0], "vendor_count")); got != 3 {
+		t.Fatalf("expected 3 vendors in the merged group, got %d", got)
+	}
+}
+
 func TestBuildFacetsFromHitsSupportsGroupedProductKeys(t *testing.T) {
 	hits := []map[string]interface{}{
 		{
