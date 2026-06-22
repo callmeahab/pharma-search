@@ -1448,6 +1448,9 @@ func (s *server) ProcessingAnalysis(ctx context.Context, req *connect.Request[pb
 }
 
 func main() {
+	// Load .env (SMTP_*, MAIL_FROM, APP_URL, ...) without overriding real env vars.
+	loadDotEnv(".env")
+
 	// Handle CLI commands or start ConnectRPC server
 	if len(os.Args) >= 2 {
 		switch os.Args[1] {

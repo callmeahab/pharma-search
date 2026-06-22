@@ -10,7 +10,9 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"mime"
 	"net/http"
+	"net/mail"
 	"net/smtp"
 	"net/url"
 	"os"
@@ -74,8 +76,34 @@ func validEmail(email string) bool {
 	return at > 0 && at < len(email)-1 && !strings.ContainsAny(email, " \t\n")
 }
 
-// sendMail sends an email via SMTP; if SMTP isn't configured it logs the message
-// (so magic-link/reset flows work in development by surfacing the link in logs).
+// mailFrom returns the From header (display name + address) and the bare envelope
+// address. It prefers MAIL_FROM (a real address at the verified sending domain —
+// required for providers like Resend/SES whose SMTP username is an API key, not an
+// email); otherwise it falls back to the SMTP user if that looks like an email
+// (legacy Gmail), else no-reply@<app domain>.
+func mailFrom() (header, envelope string) {
+	raw := strings.TrimSpace(os.Getenv("MAIL_FROM"))
+	if raw == "" {
+		if user := os.Getenv("SMTP_USER"); strings.Contains(user, "@") {
+			raw = "Apošteka <" + user + ">"
+		} else {
+			domain := strings.TrimPrefix(strings.TrimPrefix(appURL(), "https://"), "http://")
+			raw = "Apošteka <no-reply@" + domain + ">"
+		}
+	}
+	if a, err := mail.ParseAddress(raw); err == nil {
+		if a.Name != "" {
+			return mime.QEncoding.Encode("UTF-8", a.Name) + " <" + a.Address + ">", a.Address
+		}
+		return a.Address, a.Address
+	}
+	return raw, raw // best effort if unparseable
+}
+
+// sendMail sends an HTML email via SMTP; if SMTP isn't configured it logs the
+// message (so magic-link/reset flows work in development by surfacing the link in
+// logs). Subject and the sender display name are RFC 2047-encoded so Serbian
+// characters render correctly.
 func sendMail(to, subject, body string) error {
 	host, port := os.Getenv("SMTP_HOST"), os.Getenv("SMTP_PORT")
 	user, pass := os.Getenv("SMTP_USER"), os.Getenv("SMTP_PASS")
@@ -83,11 +111,11 @@ func sendMail(to, subject, body string) error {
 		log.Printf("[email mock] to=%s subject=%q\n%s", to, subject, body)
 		return nil
 	}
-	from := "Apoteka <" + user + ">"
+	fromHeader, envelope := mailFrom()
 	msg := fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: %s\r\nMIME-Version: 1.0\r\nContent-Type: text/html; charset=UTF-8\r\n\r\n%s",
-		from, to, subject, body)
+		fromHeader, to, mime.QEncoding.Encode("UTF-8", subject), body)
 	auth := smtp.PlainAuth("", user, pass, host)
-	return smtp.SendMail(host+":"+port, auth, user, []string{to}, []byte(msg))
+	return smtp.SendMail(host+":"+port, auth, envelope, []string{to}, []byte(msg))
 }
 
 // ---- sessions ----

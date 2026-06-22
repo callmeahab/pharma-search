@@ -69,10 +69,15 @@ if [ ! -f .env ]; then
     cat << EOF > .env
 DATABASE_URL="postgresql://root:pharma_secure_password_2025@localhost:5432/pharma_search"
 NODE_ENV="production"
-SMTP_HOST="smtp.gmail.com"
+APP_URL="https://aposteka.rs"
+# Email (Resend) — SMTP_USER is the literal "resend"; SMTP_PASS is a Resend API key (re_...).
+# MAIL_FROM must be an address at the domain verified in Resend. Leave SMTP_PASS empty
+# to keep emails mock-logged (see pm2 logs pharma-backend) instead of sent.
+SMTP_HOST="smtp.resend.com"
 SMTP_PORT="587"
-SMTP_USER=""
+SMTP_USER="resend"
 SMTP_PASS=""
+MAIL_FROM="Apošteka <alerts@aposteka.rs>"
 EOF
 fi
 
