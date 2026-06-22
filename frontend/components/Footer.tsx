@@ -32,6 +32,14 @@ const Footer = () => {
               </li>
               <li>
                 <Link
+                  href="/apoteke"
+                  className="hover:text-health-primary dark:hover:text-health-accent"
+                >
+                  Apoteke i prodavnice
+                </Link>
+              </li>
+              <li>
+                <Link
                   href="/privatnost"
                   className="hover:text-health-primary dark:hover:text-health-accent"
                 >

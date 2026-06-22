@@ -1440,17 +1440,33 @@ func main() {
 		case "test-search":
 			runTestSearch()
 			return
+		case "pricewatch":
+			runPriceWatchCLI()
+			return
 		case "help":
 			fmt.Println("Usage: pharma-search [command]")
 			fmt.Println("")
 			fmt.Println("Commands:")
 			fmt.Println("  (no args)      Start the ConnectRPC server")
 			fmt.Println("  test-search    Test search with query: pharma-search test-search \"query\"")
+			fmt.Println("  pricewatch     Run the price-watch job once (refresh prices + send alerts)")
 			fmt.Println("  help           Show this help message")
 			return
 		}
 	}
 	runConnectServer()
+}
+
+func runPriceWatchCLI() {
+	db, err := connectDB()
+	if err != nil {
+		log.Fatalf("Failed to connect to database: %v", err)
+	}
+	defer db.Close()
+	srv := &server{db: db}
+	if err := srv.runPriceWatch(); err != nil {
+		log.Fatalf("pricewatch failed: %v", err)
+	}
 }
 
 func runTestSearch() {
@@ -1564,11 +1580,21 @@ func runConnectServer() {
 	// Start cache cleanup goroutine
 	go srv.cleanupSearchCache()
 
+	// Start the background price-watch job (refresh watched prices + email alerts).
+	if db != nil {
+		go srv.startPriceWatchLoop()
+	}
+
 	path, handler := pbconnect.NewPharmaAPIHandler(srv)
 
 	// Create HTTP mux
 	mux := http.NewServeMux()
 	mux.Handle(path, handler)
+
+	// Account / auth JSON endpoints (separate from the ConnectRPC search API).
+	srv.registerAuthRoutes(mux)
+	srv.registerWatchRoutes(mux)
+	srv.registerVendorRoutes(mux)
 
 	// Add CORS middleware
 	corsHandler := cors.New(cors.Options{

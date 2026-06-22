@@ -3,6 +3,7 @@ import { Toaster as Sonner } from "../components/ui/sonner";
 import { TooltipProvider } from "../components/ui/tooltip";
 import { ThemeProvider } from "../contexts/ThemeContext";
 import { WishlistProvider } from "../contexts/WishlistContext";
+import { AuthProvider } from "../contexts/AuthContext";
 import CookieConsent from "../components/CookieConsent";
 import { Analytics } from "../components/Analytics";
 import { Providers } from "../components/Providers";
@@ -34,15 +35,17 @@ export default function RootLayout({
       <body className="min-h-screen flex flex-col dark:bg-gray-900 dark:text-gray-100 transition-colors duration-200">
         <Providers>
           <ThemeProvider>
-            <WishlistProvider>
-              <TooltipProvider>
-                <Analytics />
-                {children}
-                <Toaster />
-                <Sonner />
-                <CookieConsent />
-              </TooltipProvider>
-            </WishlistProvider>
+            <AuthProvider>
+              <WishlistProvider>
+                <TooltipProvider>
+                  <Analytics />
+                  {children}
+                  <Toaster />
+                  <Sonner />
+                  <CookieConsent />
+                </TooltipProvider>
+              </WishlistProvider>
+            </AuthProvider>
           </ThemeProvider>
         </Providers>
       </body>

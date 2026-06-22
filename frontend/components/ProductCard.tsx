@@ -5,7 +5,7 @@ import { ArrowLeftRight, ExternalLink, Heart, Store, TrendingDown } from "lucide
 import { Product } from "@/types/product";
 import ProductDetailModal from "./ProductDetailModal";
 import { trackProductClick, trackStoreClick } from "@/utils/analytics";
-import { useWishlist } from "@/contexts/WishlistContext";
+import { useAuth } from "@/contexts/AuthContext";
 import { formatPrice, pluralizeSr } from "@/lib/utils";
 
 interface ProductCardProps {
@@ -16,7 +16,7 @@ const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
   const [showModal, setShowModal] = useState(false);
   const [showPriceComparison, setShowPriceComparison] = useState(false);
   const [imageError, setImageError] = useState(false);
-  const { isInWishlist, toggleWishlist } = useWishlist();
+  const { isWatched, toggleWatch } = useAuth();
 
   const isOfferView = product.displayMode === "offer";
   const primaryOffer = product.primaryOffer ?? product.prices[0];
@@ -35,7 +35,7 @@ const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
   const canCompare = vendorCount > 1 && product.prices.length > 1;
   const showGroupedSummary =
     !isOfferView && (canCompare || hiddenOfferCount > 0 || (product.productCount || 0) > 1);
-  const isWishlisted = isInWishlist(product.id);
+  const isWishlisted = isWatched(product.id);
   const vendorWord = pluralizeSr(vendorCount, "apoteka", "apoteke", "apoteka");
 
   const openTarget = (store: string, link?: string) => {
@@ -78,7 +78,13 @@ const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
 
   const handleWishClick = (e: React.MouseEvent) => {
     e.stopPropagation();
-    toggleWishlist(product);
+    toggleWatch({
+      groupKey: product.id,
+      displayName: product.name,
+      thumbnail: product.image,
+      price: lowestPrice,
+      vendor: bestVendorName,
+    });
   };
 
   return (
@@ -104,6 +110,8 @@ const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
             className="absolute top-2 left-2 p-2 bg-white/80 dark:bg-gray-800/80 rounded-full hover:bg-white dark:hover:bg-gray-800 transition-colors"
             onClick={handleWishClick}
             type="button"
+            title={isWishlisted ? "Prestani da pratiš cenu" : "Prati cenu"}
+            aria-label={isWishlisted ? "Prestani da pratiš cenu" : "Prati cenu"}
           >
             <Heart
               size={20}

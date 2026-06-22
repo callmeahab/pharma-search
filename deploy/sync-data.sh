@@ -64,17 +64,19 @@ if [[ "$SKIP_SCHEMA" == false ]]; then
     ssh "$SERVER" << 'ENDSSH'
 set -e
 
-# Drop all tables
-echo "  Dropping existing tables..."
-sudo -u postgres psql -d pharma_search -c "
-DROP SCHEMA public CASCADE;
-CREATE SCHEMA public;
-GRANT ALL ON SCHEMA public TO postgres;
-GRANT ALL ON SCHEMA public TO public;
-" 2>/dev/null || true
+# Drop ONLY the catalog tables. The account/watchlist tables (User, Session,
+# AuthToken, Watch, GroupPriceHistory, AlertEvent — migration 009) have NO FK into
+# the catalog, so they survive a data reload. NEVER drop the whole schema here:
+# that would wipe every registered user, watchlist and price-history record.
+echo "  Dropping catalog tables (preserving accounts/watchlists)..."
+sudo -u postgres psql -d pharma_search -c '
+DROP TABLE IF EXISTS "ProductStandardization" CASCADE;
+DROP TABLE IF EXISTS "Product" CASCADE;
+DROP TABLE IF EXISTS "Vendor" CASCADE;
+' 2>/dev/null || true
 
-# Re-create extensions (dropped with schema)
-echo "  Re-creating extensions..."
+# Ensure required extensions exist (idempotent).
+echo "  Ensuring extensions..."
 sudo -u postgres psql -d pharma_search -c "
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 CREATE EXTENSION IF NOT EXISTS unaccent;

@@ -8,21 +8,22 @@ import { usePathname, useRouter } from "next/navigation";
 import { trackSearch } from "@/utils/analytics";
 import { User } from "lucide-react";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { useAuth } from "@/contexts/AuthContext";
 import Link from "next/link";
 
 const Navbar = () => {
   const pathname = usePathname();
   const router = useRouter();
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const { user } = useAuth();
+  const isLoggedIn = !!user;
   const [urlSearchTerm, setUrlSearchTerm] = useState("");
   const isMobile = useIsMobile();
 
-  // Hydrate state from localStorage/URL after mount (legitimate external store sync)
+  // Hydrate search term from URL after mount (legitimate external store sync)
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- syncing with localStorage
-    setIsLoggedIn(localStorage.getItem("isLoggedIn") === "true");
     try {
       const params = new URLSearchParams(window.location.search);
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- syncing with URL
       setUrlSearchTerm(params.get("q") || "");
     } catch {
       // ignore
@@ -42,17 +43,6 @@ const Navbar = () => {
 
     window.addEventListener("popstate", updateFromUrl);
     return () => window.removeEventListener("popstate", updateFromUrl);
-  }, []);
-
-  // Listen for login status changes
-  useEffect(() => {
-    const handleStorageChange = () => {
-      const userLoggedIn = localStorage.getItem("isLoggedIn") === "true";
-      setIsLoggedIn(userLoggedIn);
-    };
-
-    window.addEventListener("storage", handleStorageChange);
-    return () => window.removeEventListener("storage", handleStorageChange);
   }, []);
 
 
