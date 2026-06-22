@@ -117,6 +117,13 @@ func searchProductsDB(db *sql.DB, query string, limit int) ([]map[string]interfa
 			-- (short) identity, not the whole title
 			OR (q.allow_fuzzy AND COALESCE(p."coreProductIdentity", '') % q.norm_query)
 			OR (q.allow_fuzzy AND p.title % q.norm_query)
+			-- typo tolerance for a brand/word inside a long title: word_similarity
+			-- (<%) compares the query to the best-matching word in the text, so a
+			-- one-char brand typo ("paradontax"->"parodontax") still matches where
+			-- whole-string similarity() fails. Threshold set per-DB to 0.5
+			-- (migration 010). GIN-indexable via the trgm indexes.
+			OR (q.allow_fuzzy AND q.norm_query <% p.title)
+			OR (q.allow_fuzzy AND q.norm_query <% COALESCE(p."normalizedName", ''))
 		  )
 		ORDER BY
 			CASE
@@ -130,7 +137,9 @@ func searchProductsDB(db *sql.DB, query string, limit int) ([]map[string]interfa
 			GREATEST(
 				similarity(p.title, q.norm_query),
 				similarity(COALESCE(p."normalizedName", ''), q.norm_query),
-				similarity(COALESCE(p."coreProductIdentity", ''), q.norm_query)
+				similarity(COALESCE(p."coreProductIdentity", ''), q.norm_query),
+				-- so typo'd brand matches order by how close the matched word is
+				word_similarity(q.norm_query, p.title)
 			) DESC
 			,
 			p.price ASC
@@ -220,7 +229,8 @@ func autocompleteDB(db *sql.DB, query string, limit int) ([]*pb.AutocompleteSugg
 				GREATEST(
 					similarity(p.title, q.norm_query),
 					similarity(COALESCE(p."normalizedName", ''), q.norm_query),
-					similarity(COALESCE(p."coreProductIdentity", ''), q.norm_query)
+					similarity(COALESCE(p."coreProductIdentity", ''), q.norm_query),
+					word_similarity(q.norm_query, p.title)
 				) as sim
 			FROM "Product" p
 			JOIN "Vendor" v ON v.id = p."vendorId"
@@ -233,6 +243,10 @@ func autocompleteDB(db *sql.DB, query string, limit int) ([]*pb.AutocompleteSugg
 				OR COALESCE(p."coreProductIdentity", '') ILIKE q.raw_like
 				OR (q.allow_fuzzy AND COALESCE(p."coreProductIdentity", '') % q.norm_query)
 				OR (q.allow_fuzzy AND p.title % q.norm_query)
+				-- typo tolerance: word_similarity vs the best word in the title
+				-- (catches one-char brand typos). See migration 010.
+				OR (q.allow_fuzzy AND q.norm_query <% p.title)
+				OR (q.allow_fuzzy AND q.norm_query <% COALESCE(p."normalizedName", ''))
 			  )
 			ORDER BY lower(p.title), sim DESC
 		) sub

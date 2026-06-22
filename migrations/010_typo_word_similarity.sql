@@ -1,0 +1,15 @@
+-- Migration: 010_typo_word_similarity
+-- Improve typo tolerance for single-concept (e.g. brand) queries. The search adds
+-- a pg_trgm word_similarity (`<%`) branch that matches the query against the best
+-- word inside a long title — so a one-character brand typo ("paradontax" →
+-- "parodontax") still matches, which whole-string similarity() misses because a
+-- short query diluted against a long title scores near zero.
+--
+-- word_similarity uses pg_trgm.word_similarity_threshold (default 0.6), which clips
+-- single-char typos in ~10-char words (they score ~0.57-0.64). Lower it to 0.5: at
+-- 0.5 a one-char typo in a brand resolves fully while random garbage still matches
+-- nothing; 0.45 was too loose (pulled in unrelated products). This GUC only affects
+-- the `<%`/`%>` operators (NOT `%`, which uses similarity_threshold), so it changes
+-- nothing outside the new typo branch. The `<%` operator is GIN-indexable via the
+-- existing idx_product_title_trgm / idx_product_normalized_trgm.
+ALTER DATABASE pharma_search SET pg_trgm.word_similarity_threshold = 0.5;
