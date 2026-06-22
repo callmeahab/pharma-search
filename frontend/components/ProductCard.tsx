@@ -33,6 +33,8 @@ const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
   const hiddenOfferCount = comparison?.hiddenOfferCount || 0;
   const bestVendorName = comparison?.bestVendorName || product.prices[0]?.store;
   const canCompare = vendorCount > 1 && product.prices.length > 1;
+  const showGroupedSummary =
+    !isOfferView && (canCompare || hiddenOfferCount > 0 || (product.productCount || 0) > 1);
   const isWishlisted = isInWishlist(product.id);
   const vendorWord = pluralizeSr(vendorCount, "apoteka", "apoteke", "apoteka");
 
@@ -179,19 +181,21 @@ const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
                 </div>
               </div>
 
-              <div className="rounded-xl border border-gray-200 dark:border-gray-700 p-3 bg-white/60 dark:bg-gray-800/40 space-y-1">
-                <p className="text-sm font-medium text-gray-800 dark:text-gray-100">
-                  Najpovoljnije trenutno: {bestVendorName}
-                </p>
-                <p className="text-sm text-gray-600 dark:text-gray-300">
-                  +{formatPrice(priceDifference)} do najskuplje ponude
-                </p>
-                {hiddenOfferCount > 0 && (
-                  <p className="text-xs text-gray-500 dark:text-gray-400">
-                    Prikazana je najniža cena po apoteci, bez duplih listinga.
+              {showGroupedSummary && (
+                <div className="rounded-xl border border-gray-200 dark:border-gray-700 p-3 bg-white/60 dark:bg-gray-800/40 space-y-1">
+                  <p className="text-sm font-medium text-gray-800 dark:text-gray-100">
+                    Najpovoljnije trenutno: {bestVendorName}
                   </p>
-                )}
-              </div>
+                  <p className="text-sm text-gray-600 dark:text-gray-300">
+                    +{formatPrice(priceDifference)} do najskuplje ponude
+                  </p>
+                  {hiddenOfferCount > 0 && (
+                    <p className="text-xs text-gray-500 dark:text-gray-400">
+                      Prikazana je najniža cena po apoteci, bez duplih listinga.
+                    </p>
+                  )}
+                </div>
+              )}
             </>
           )}
         </CardContent>

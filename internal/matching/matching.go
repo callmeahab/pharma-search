@@ -10,168 +10,63 @@ import (
 	"unicode"
 )
 
-var (
-	serbianTextReplacer = strings.NewReplacer(
-		"đ", "dj",
-		"Đ", "dj",
-		"č", "c",
-		"Č", "c",
-		"ć", "c",
-		"Ć", "c",
-		"š", "s",
-		"Š", "s",
-		"ž", "z",
-		"Ž", "z",
-		"љ", "lj",
-		"Љ", "lj",
-		"њ", "nj",
-		"Њ", "nj",
-		"џ", "dz",
-		"Џ", "dz",
-		"ђ", "dj",
-		"Ђ", "dj",
-		"ј", "j",
-		"Ј", "j",
-		"ч", "c",
-		"Ч", "c",
-		"ћ", "c",
-		"Ћ", "c",
-		"ш", "s",
-		"Ш", "s",
-		"ж", "z",
-		"Ж", "z",
-		"а", "a",
-		"А", "a",
-		"б", "b",
-		"Б", "b",
-		"в", "v",
-		"В", "v",
-		"г", "g",
-		"Г", "g",
-		"д", "d",
-		"Д", "d",
-		"е", "e",
-		"Е", "e",
-		"з", "z",
-		"З", "z",
-		"и", "i",
-		"И", "i",
-		"к", "k",
-		"К", "k",
-		"л", "l",
-		"Л", "l",
-		"м", "m",
-		"М", "m",
-		"н", "n",
-		"Н", "n",
-		"о", "o",
-		"О", "o",
-		"п", "p",
-		"П", "p",
-		"р", "r",
-		"Р", "r",
-		"с", "s",
-		"С", "s",
-		"т", "t",
-		"Т", "t",
-		"у", "u",
-		"У", "u",
-		"ф", "f",
-		"Ф", "f",
-		"х", "h",
-		"Х", "h",
-		"ц", "c",
-		"Ц", "c",
-	)
-
-	pharmaDosagePattern   = regexp.MustCompile(`(?i)\b(\d+(?:[.,]\d+)?)\s*(mg|mcg|μg|µg|iu|i\.u\.|i\.j\.|ij)\b`)
-	gramPattern           = regexp.MustCompile(`(?i)\b(\d+(?:[.,]\d+)?)\s*(g|gr|gram|grama)\b`)
-	quantityPattern       = regexp.MustCompile(`\b[ax]?(\d+)\s*(mikrotablet|mikrokapsul|tab|tabl|tableta|tablete|kaps|kapsula|kapsule|caps|capsule|softgel|gel|komada|kom)\w*\b`)
-	quantitySuffixPattern = regexp.MustCompile(`\b[ax](\d+)\b`)
-	alphaNumPattern       = regexp.MustCompile(`^\d+[a-z]+$|^[a-z]+\d+$`)
+var serbianTextReplacer = strings.NewReplacer(
+	"đ", "dj", "Đ", "dj", "č", "c", "Č", "c", "ć", "c", "Ć", "c",
+	"š", "s", "Š", "s", "ž", "z", "Ž", "z",
+	"љ", "lj", "Љ", "lj", "њ", "nj", "Њ", "nj", "џ", "dz", "Џ", "dz",
+	"ђ", "dj", "Ђ", "dj", "ј", "j", "Ј", "j", "ч", "c", "Ч", "c",
+	"ћ", "c", "Ћ", "c", "ш", "s", "Ш", "s", "ж", "z", "Ж", "z",
+	"а", "a", "А", "a", "б", "b", "Б", "b", "в", "v", "В", "v",
+	"г", "g", "Г", "g", "д", "d", "Д", "d", "е", "e", "Е", "e",
+	"з", "z", "З", "z", "и", "i", "И", "i", "к", "k", "К", "k",
+	"л", "l", "Л", "l", "м", "m", "М", "m", "н", "n", "Н", "n",
+	"о", "o", "О", "o", "п", "p", "П", "p", "р", "r", "Р", "r",
+	"с", "s", "С", "s", "т", "t", "Т", "t", "у", "u", "У", "u",
+	"ф", "f", "Ф", "f", "х", "h", "Х", "h", "ц", "c", "Ц", "c",
 )
 
-var queryExpansions = map[string]string{
-	"vitc":   "vitamin c",
-	"vitd":   "vitamin d",
-	"vitb":   "vitamin b",
-	"vit":    "vitamin",
-	"d3":     "vitamin d3",
-	"b12":    "vitamin b12",
-	"k2":     "vitamin k2",
-	"calc":   "calcium",
-	"mag":    "magnesium",
-	"zn":     "zinc",
-	"fe":     "iron",
-	"prob":   "probiotic",
-	"omega3": "omega 3",
-	"coq10":  "coenzyme q10",
-	"bcaa":   "branched chain amino acids",
+var (
+	numberOnlyPattern = regexp.MustCompile(`^\d+(?:[.,]\d+)*$`)
+	alphaNumPattern   = regexp.MustCompile(`^\d+[a-z]+$|^[a-z]+\d+\+?$`)
+)
+
+// powderMinGrams: at/above this gram weight a product is a powder/tub (protein,
+// gainer), not a cosmetic cream — used to keep flavor "cream" words from making
+// it look topical. Cosmetic creams are well below this (30–250 g).
+const powderMinGrams = 400
+
+// queryStopwords are dropped from search/identity token lists ("krema za lice"
+// must not treat "za" as a required token).
+var queryStopwords = map[string]bool{
+	"a": true, "i": true, "u": true, "o": true, "za": true, "sa": true,
+	"od": true, "na": true, "po": true, "iz": true, "do": true, "se": true,
+	"je": true, "ili": true, "the": true, "of": true, "with": true,
+	"and": true, "for": true, "in": true,
 }
+
+// keepShortToken keeps otherwise-too-short tokens that carry meaning.
+var keepShortToken = map[string]bool{"c": true, "d": true, "b": true, "k": true, "e": true, "a": true}
 
 var formAliases = map[string]string{
-	"tab":        "tablete",
-	"tabl":       "tablete",
-	"tableta":    "tablete",
-	"tablete":    "tablete",
-	"kaps":       "kapsule",
-	"kapsula":    "kapsule",
-	"kapsule":    "kapsule",
-	"caps":       "kapsule",
-	"capsule":    "kapsule",
-	"capsules":   "kapsule",
-	"softgel":    "kapsule",
-	"softgels":   "kapsule",
-	"cps":        "kapsule",
-	"sirup":      "sirup",
-	"sprej":      "sprej",
-	"spray":      "sprej",
-	"kapi":       "kapi",
-	"drops":      "kapi",
-	"gel":        "gel",
-	"gela":       "gel",
-	"krema":      "krema",
-	"krem":       "krema",
-	"cream":      "krema",
-	"mast":       "mast",
-	"ointment":   "mast",
-	"losion":     "losion",
-	"lotion":     "losion",
-	"serum":      "serum",
-	"rastvor":    "rastvor",
-	"solution":   "rastvor",
-	"suspenzija": "suspenzija",
-	"kesica":     "kesice",
-	"kesice":     "kesice",
-	"ampula":     "ampule",
-	"ampule":     "ampule",
-	"prah":       "prah",
-	"powder":     "prah",
+	"tab": "tablete", "tabl": "tablete", "tableta": "tablete", "tablete": "tablete",
+	"kap": "kapsule", "kaps": "kapsule", "kapsula": "kapsule", "kapsule": "kapsule", "caps": "kapsule",
+	"capsule": "kapsule", "capsules": "kapsule", "softgel": "kapsule", "softgels": "kapsule",
+	"cps": "kapsule", "sirup": "sirup", "sprej": "sprej", "spray": "sprej",
+	"kapi": "kapi", "drops": "kapi", "gel": "gel", "gela": "gel",
+	"krema": "krema", "krem": "krema", "cream": "krema", "mast": "mast",
+	"ointment": "mast", "losion": "losion", "lotion": "losion", "serum": "serum",
+	"rastvor": "rastvor", "solution": "rastvor", "suspenzija": "suspenzija",
+	"kesica": "kesice", "kesice": "kesice", "ampula": "ampule", "ampule": "ampule",
+	"prah": "prah", "powder": "prah",
 }
 
-var skipWords = map[string]bool{
-	"a": true, "za": true, "i": true, "sa": true, "od": true, "u": true,
-	"the": true, "of": true, "with": true, "and": true, "for": true,
-	"kapsule": true, "kapsula": true, "tablete": true, "tableta": true,
-	"mikrotablete": true, "mikrotableta": true, "mikrokapsule": true,
-	"softgel": true, "soft": true, "gel": true, "caps": true, "tab": true, "tbl": true,
-	"iu": true, "mg": true, "ml": true, "mcg": true, "g": true,
-	"sprej": true, "oral": true, "kapi": true, "sirup": true,
-}
-
-var brandWords = map[string]bool{
-	"esi": true, "now": true, "vitabiotics": true, "terranova": true,
-	"bivits": true, "activa": true, "masterteh": true, "multi": true,
-	"essence": true, "food": true, "ultra": true, "plus": true,
-	"detrical": true, "videtril": true, "nutrition": true,
-}
-
+// NormalizeText lowercases, transliterates Serbian/Cyrillic, and reduces to
+// alphanumeric tokens separated by single spaces.
 func NormalizeText(text string) string {
 	text = strings.TrimSpace(strings.ToLower(text))
 	if text == "" {
 		return ""
 	}
-
 	text = serbianTextReplacer.Replace(text)
 	text = strings.ReplaceAll(text, "-", " ")
 	text = strings.ReplaceAll(text, "_", " ")
@@ -189,20 +84,22 @@ func NormalizeText(text string) string {
 			lastSpace = true
 		}
 	}
-
 	return strings.Join(strings.Fields(b.String()), " ")
 }
 
+// Tokenize returns meaningful, de-duplicated query tokens (stopwords removed).
 func Tokenize(text string) []string {
 	normalized := NormalizeText(text)
 	if normalized == "" {
 		return nil
 	}
-
 	seen := map[string]struct{}{}
 	var tokens []string
 	for _, token := range strings.Fields(normalized) {
-		if len(token) == 1 && token != "d" && token != "b" && token != "c" && token != "k" {
+		if len(token) == 1 && !keepShortToken[token] {
+			continue
+		}
+		if queryStopwords[token] {
 			continue
 		}
 		if _, ok := seen[token]; ok {
@@ -211,71 +108,30 @@ func Tokenize(text string) []string {
 		seen[token] = struct{}{}
 		tokens = append(tokens, token)
 	}
-
 	return tokens
 }
 
-func ExpandQueryVariants(query string) []string {
-	normalized := NormalizeText(query)
-	if normalized == "" {
-		return nil
-	}
-
-	seen := map[string]struct{}{}
-	add := func(value string) {
-		value = NormalizeText(value)
-		if value == "" {
-			return
-		}
-		if _, ok := seen[value]; ok {
-			return
-		}
-		seen[value] = struct{}{}
-	}
-
-	add(normalized)
-	add(strings.ReplaceAll(normalized, " ", ""))
-
-	if expanded, ok := queryExpansions[normalized]; ok {
-		add(expanded)
-	}
-
-	tokens := strings.Fields(normalized)
-	for _, token := range tokens {
-		if expanded, ok := queryExpansions[token]; ok {
-			add(expanded)
-		}
-	}
-
-	if len(tokens) == 2 && (tokens[0] == "vit" || tokens[0] == "vitamin") {
-		add("vitamin " + tokens[1])
-	}
-	if len(tokens) == 2 && tokens[0] == "omega" {
-		add("omega " + tokens[1])
-		add("omega" + tokens[1])
-	}
-
-	var variants []string
-	for variant := range seen {
-		variants = append(variants, variant)
-	}
-	sort.Strings(variants)
-	return variants
-}
-
+// NormalizeUnit canonicalizes dosage/volume unit strings.
 func NormalizeUnit(unit string) string {
 	switch NormalizeText(unit) {
-	case "i u", "i j", "ij", "iu":
+	case "i u", "i j", "ij", "iu", "ije", "jm", "j m", "ie", "me":
 		return "iu"
-	case "μg", "µg", "mcg":
+	case "μg", "µg", "mcg", "ug", "mikrogram", "mikrograma":
 		return "mcg"
 	case "gr", "gram", "grama":
 		return "g"
+	case "kg":
+		return "kg"
+	case "l", "litar", "litra":
+		return "l"
+	case "ml", "mililitar", "mililitra":
+		return "ml"
 	default:
 		return NormalizeText(unit)
 	}
 }
 
+// NormalizeForm canonicalizes a dosage-form word.
 func NormalizeForm(form string) string {
 	normalized := NormalizeText(form)
 	if normalized == "" {
@@ -287,163 +143,433 @@ func NormalizeForm(form string) string {
 	return normalized
 }
 
-func BuildGroupID(coreIdentity string, dosageValue float64, dosageUnit string) string {
-	coreIdentity = NormalizeText(coreIdentity)
-	if coreIdentity == "" {
-		return ""
+// ----------------------------------------------------------------------------
+// Strength canonicalization
+// ----------------------------------------------------------------------------
+
+// canonicalStrength converts an extracted (value, unit) into a canonical key part
+// and a human display string. Mass units collapse to a milligram base so that
+// "5000 mcg" and "5 mg" group together; IU stays distinct. Vitamin D3 in mcg is
+// converted to IU (1 mcg = 40 IU) so the dominant IU offers co-group.
+func canonicalStrength(value float64, unit string, canonicals []string) (key string, display string) {
+	unit = NormalizeUnit(unit)
+	if value <= 0 || unit == "" {
+		return "", ""
 	}
 
-	parts := []string{coreIdentity}
-	if dosageValue > 0 && dosageUnit != "" {
-		parts = append(parts, "dose:"+formatCompactValue(dosageValue)+NormalizeUnit(dosageUnit))
+	// Plausibility: vitamin D3/K2 are dosed in IU/mcg, never mg. A mg reading is a
+	// mis-extraction (e.g. a co-ingredient's strength) — ignore it so the offer
+	// falls into the unspecified-strength group instead of a junk "D3 500 MG" one.
+	if unit == "mg" && (containsCanonical(canonicals, "vitamin d3") || containsCanonical(canonicals, "vitamin k2")) {
+		return "", ""
 	}
 
-	return strings.Join(parts, "::")
-}
-
-func BuildComparableGroupID(coreIdentity string, dosageValue float64, dosageUnit string, volumeValue float64, volumeUnit string, quantityValue float64, form string) string {
-	coreIdentity = NormalizeText(coreIdentity)
-	if coreIdentity == "" {
-		return ""
-	}
-
-	parts := []string{coreIdentity}
-	if dosageValue > 0 && dosageUnit != "" {
-		parts = append(parts, "dose:"+formatCompactValue(dosageValue)+NormalizeUnit(dosageUnit))
-	}
-	if volumeValue > 0 && volumeUnit != "" {
-		parts = append(parts, "vol:"+formatCompactValue(volumeValue)+NormalizeUnit(volumeUnit))
-	}
-	if quantityValue > 0 {
-		parts = append(parts, fmt.Sprintf("qty:%d", int(quantityValue)))
-	}
-	if normalizedForm := NormalizeForm(form); normalizedForm != "" {
-		parts = append(parts, "form:"+normalizedForm)
-	}
-
-	return strings.Join(parts, "::")
-}
-
-func BuildDisplayName(coreIdentity string, dosageValue float64, dosageUnit string, volumeValue float64, volumeUnit string, quantityValue float64, form string) string {
-	coreIdentity = strings.TrimSpace(coreIdentity)
-	if coreIdentity == "" {
-		return ""
-	}
-
-	parts := []string{coreIdentity}
-	if dosageValue > 0 && dosageUnit != "" {
-		parts = append(parts, formatDisplayMeasure(dosageValue, dosageUnit))
-	}
-	if volumeValue > 0 && volumeUnit != "" {
-		parts = append(parts, formatDisplayMeasure(volumeValue, volumeUnit))
-	}
-
-	normalizedForm := NormalizeForm(form)
-	if quantityValue > 0 {
-		if normalizedForm != "" {
-			parts = append(parts, fmt.Sprintf("%d %s", int(quantityValue), normalizedForm))
+	baseVal, baseUnit := value, unit
+	switch unit {
+	case "mcg":
+		if containsCanonical(canonicals, "vitamin d3") {
+			baseVal, baseUnit = value*40, "iu"
 		} else {
-			parts = append(parts, fmt.Sprintf("x%d", int(quantityValue)))
+			baseVal, baseUnit = value/1000.0, "mg"
 		}
-	} else if normalizedForm != "" {
-		parts = append(parts, normalizedForm)
+	case "g":
+		baseVal, baseUnit = value*1000.0, "mg"
+	case "mg", "iu":
+		// already canonical
+	default:
+		// unknown unit (e.g. %): keep as-is
 	}
 
-	return strings.Join(parts, " ")
+	baseVal = roundStrength(baseVal)
+	if baseVal <= 0 {
+		return "", ""
+	}
+	return formatCompactValue(baseVal) + baseUnit, formatDisplayMeasure(baseVal, baseUnit)
 }
 
-func ExtractGroupKey(title string) string {
-	t := strings.ToLower(title)
-
-	noise := []string{"®", "™", "©", ",", "(", ")", "[", "]", "/", "\\", "_", "-", "–", "—"}
-	for _, n := range noise {
-		t = strings.ReplaceAll(t, n, " ")
-	}
-	t = strings.Join(strings.Fields(t), " ")
-
-	dosage := ""
-	dosageMatch := ""
-	if match := pharmaDosagePattern.FindStringSubmatch(t); len(match) >= 3 {
-		amount := match[1]
-		unit := NormalizeUnit(match[2])
-		dosageMatch = match[0]
-		dosage = amount + " " + unit
-	} else if match := gramPattern.FindStringSubmatch(t); len(match) >= 3 {
-		amount := match[1]
-		val, _ := strconv.ParseFloat(strings.Replace(amount, ",", ".", 1), 64)
-		if val <= 5.0 {
-			dosageMatch = match[0]
-			dosage = amount + " g"
+func containsCanonical(canonicals []string, target string) bool {
+	for _, c := range canonicals {
+		if c == target {
+			return true
 		}
 	}
+	return false
+}
 
-	quantity := ""
-	quantityMatch := ""
-	if match := quantityPattern.FindStringSubmatch(t); len(match) >= 2 {
-		quantity = match[1]
-		quantityMatch = match[0]
-	} else if match := quantitySuffixPattern.FindStringSubmatch(t); len(match) >= 2 {
-		quantity = match[1]
-		quantityMatch = match[0]
+func roundStrength(v float64) float64 {
+	return math.Round(v*1e6) / 1e6
+}
+
+func sizeKey(value float64, unit string) string {
+	unit = NormalizeUnit(unit)
+	if value <= 0 || unit == "" {
+		return ""
+	}
+	switch unit {
+	case "l":
+		value, unit = value*1000.0, "ml"
+	case "kg":
+		value, unit = value*1000.0, "g"
+	}
+	// Powder weights are marketed loosely (908g vs 910g = 2lb; 2200g vs 2270g =
+	// 5lb), so bucket grams: nearest 250g for tubs (>=500g), nearest 50g for mid
+	// sizes, raw below 100g. Never bucket down to 0. Volumes (ml) are precise.
+	if unit == "g" {
+		switch {
+		case value >= 500:
+			value = math.Round(value/250.0) * 250.0
+		case value >= 100:
+			value = math.Round(value/50.0) * 50.0
+		}
+	}
+	return formatCompactValue(roundStrength(value)) + unit
+}
+
+// ----------------------------------------------------------------------------
+// Group key engine
+// ----------------------------------------------------------------------------
+
+// GroupKeyInput carries the per-offer fields used to compute its group.
+type GroupKeyInput struct {
+	Core        string
+	Brand       string
+	Title       string
+	ProductID   string
+	DosageValue float64
+	DosageUnit  string
+	VolumeValue float64
+	VolumeUnit  string
+	Quantity    float64
+	Form        string
+}
+
+// GroupKey is the result of grouping a single offer.
+type GroupKey struct {
+	Key         string // offers sharing this string belong to the same group
+	DisplayName string
+	Method      string // "ingredient" | "brand-line" | "brand-sku" | "single"
+	Residual    string // Track-B residual identity (for the sizeless/sized merge pass)
+	HasMeasure  bool   // a dosage or g/kg weight is present
+}
+
+// BuildGroupKey implements the grouping policy:
+//
+//	Track A (merge across brand / pack / form): the offer has a whitelisted
+//	  supplement/OTC ingredient and a non-topical form. Key = ingredient(s) +
+//	  canonical strength. This is the aggressive ingredient+strength merge.
+//	Track B (brand SKU): everything else with an identifiable brand + descriptor.
+//	  Key = brand + residual identity + strength + size + form, so identical SKUs
+//	  merge across vendors but distinct products (and cross-category collisions
+//	  like CoQ10 capsules vs Q10 face cream) never merge.
+//	Singleton: no brand or no descriptor -> per-offer key, never merges.
+func BuildGroupKey(in GroupKeyInput) GroupKey {
+	core := strings.TrimSpace(in.Core)
+	if core == "" {
+		core = ExtractCoreFromTitle(in.Title)
 	}
 
-	ingredientPart := t
-	if dosageMatch != "" {
-		ingredientPart = strings.Replace(ingredientPart, dosageMatch, " ", 1)
-	}
-	if quantityMatch != "" {
-		ingredientPart = strings.Replace(ingredientPart, quantityMatch, " ", 1)
-	}
-	ingredientPart = strings.Join(strings.Fields(ingredientPart), " ")
+	// Decide whether this is a topical/cosmetic product (which must NOT merge into
+	// an ingredient supplement group). The form field is empty for ~58% of rows, so
+	// also scan the title for a topical-form word ("krema", "serum", "maska", ...);
+	// and treat a formless liquid (ml container, no dosage) as topical too. Note:
+	// only ML liquids — a weight (g/kg) is a powder (e.g. a protein tub), not a cream.
+	mlUnit := func(u string) bool { n := NormalizeUnit(u); return n == "ml" || n == "l" }
+	// A large gram weight (or any kg) is a powder/tub (protein, gainer), never a
+	// cosmetic — so a "cream" word from a flavor name ("cookies & cream") must not
+	// flag it as topical.
+	isPowder := NormalizeUnit(in.VolumeUnit) == "kg" ||
+		(NormalizeUnit(in.VolumeUnit) == "g" && in.VolumeValue >= powderMinGrams)
+	topical := !isPowder && (IsTopicalForm(in.Form) ||
+		HasTopicalToken(in.Title) ||
+		(in.Form == "" && in.VolumeValue > 0 && mlUnit(in.VolumeUnit) && in.DosageValue <= 0))
 
-	words := strings.Fields(ingredientPart)
-	coreWords := make([]string, 0, 4)
-	for _, w := range words {
-		if skipWords[w] || brandWords[w] {
+	suppl := SupplementIngredients(core)
+	if len(suppl) > 0 && !topical {
+		canon := strings.Join(suppl, "+")
+		key := "ing:" + canon
+		display := displayIngredient(suppl)
+		// Strength is only well-defined for a single ingredient. For combos the one
+		// extracted dosage is ambiguous (which ingredient?), so group by the
+		// ingredient set alone rather than attaching an arbitrary strength.
+		if len(suppl) == 1 {
+			if sKey, sDisp := canonicalStrength(in.DosageValue, in.DosageUnit, suppl); sKey != "" {
+				key += "::" + sKey
+				display += " " + sDisp
+			}
+		}
+		// Form is part of the identity: tablets / capsules / spray / drops of the
+		// same ingredient+strength are distinct products.
+		if nf := NormalizeForm(in.Form); nf != "" {
+			key += "::form:" + nf
+			display += " " + nf
+		}
+		return GroupKey{Key: key, DisplayName: display, Method: "ingredient"}
+	}
+
+	// Track B. Build the attribute suffix (strength / size / form) once.
+	residual := residualCore(core)
+	suffix := func() []string {
+		var parts []string
+		if sKey, _ := canonicalStrength(in.DosageValue, in.DosageUnit, nil); sKey != "" {
+			parts = append(parts, sKey)
+		}
+		if size := sizeKey(in.VolumeValue, in.VolumeUnit); size != "" {
+			parts = append(parts, size)
+		}
+		if form := NormalizeForm(in.Form); form != "" {
+			parts = append(parts, "form:"+form)
+		}
+		return parts
+	}
+
+	// Brand-INDEPENDENT line merge applies ONLY to measurable supplement/sports
+	// products — a pharma dosage or a powder weight (g/kg). These are titled
+	// inconsistently across vendors ("Iso Sensation 93" vs "Ultimate Nutrition Whey
+	// Protein Iso Sensation"), so brand can't be in the key. A distinctive (>=2-token)
+	// residual prevents generic words from merging. Devices / baby & personal care /
+	// makeup have no such measure and fall through to the brand-keyed path below, so
+	// different brands (breast pumps, toothbrushes, pads) never merge together.
+	unit := NormalizeUnit(in.VolumeUnit)
+	hasMeasure := in.DosageValue > 0 || unit == "g" || unit == "kg"
+	if !topical && hasMeasure && len(strings.Fields(residual)) >= 2 {
+		parts := append([]string{"prod", residual}, suffix()...)
+		return GroupKey{Key: strings.Join(parts, "::"), DisplayName: buildSKUDisplay(in, residual), Method: "brand-line", Residual: residual, HasMeasure: true}
+	}
+
+	// Brand-keyed SKU: cosmetics + branded goods (devices, baby care, makeup).
+	// Different brands stay separate; identical brand+line+size+form merges across
+	// vendors.
+	if brand := NormalizeText(in.Brand); brand != "" && residual != "" {
+		parts := append([]string{"sku", brand, residual}, suffix()...)
+		return GroupKey{Key: strings.Join(parts, "::"), DisplayName: buildSKUDisplay(in, residual), Method: "brand-sku", Residual: residual, HasMeasure: hasMeasure}
+	}
+
+	display := titleCaseWords(residual)
+	if display == "" {
+		display = titleCaseWords(core)
+	}
+	if display == "" {
+		display = strings.TrimSpace(in.Title)
+	}
+	// Per-offer key: never merges. Guard against an empty ProductID collapsing all
+	// such offers into one bucket.
+	offerID := in.ProductID
+	if offerID == "" {
+		offerID = NormalizeText(in.Title)
+	}
+	return GroupKey{Key: "offer:" + offerID, DisplayName: display, Method: "single", Residual: residual, HasMeasure: hasMeasure}
+}
+
+// residualSynonyms collapses spelling variants of non-whitelisted line words so
+// the same product line doesn't split (e.g. casein / caseine / kazein).
+var residualSynonyms = map[string]string{
+	"caseine": "casein", "kazein": "casein", "kazeina": "casein",
+	"micelarni": "micellar", "micelarna": "micellar",
+}
+
+// residualCore reduces a core identity to its meaningful descriptor tokens
+// (brand / noise / form / pack tokens removed), used for the Track-B SKU key.
+func residualCore(core string) string {
+	tokens := strings.Fields(NormalizeText(core))
+	tokens = stripBrandTokens(tokens)
+	out := make([]string, 0, len(tokens))
+	for _, t := range tokens {
+		if syn, ok := residualSynonyms[t]; ok {
+			t = syn
+		}
+		if isNoiseWord(t) || isFormWord(t) {
 			continue
 		}
-
-		isAfterVitaminOrOmega := len(coreWords) > 0 &&
-			(coreWords[len(coreWords)-1] == "vitamin" || coreWords[len(coreWords)-1] == "omega")
-
-		if _, err := strconv.Atoi(w); err == nil && !isAfterVitaminOrOmega {
+		if numberOnlyPattern.MatchString(t) {
 			continue
 		}
-
-		if alphaNumPattern.MatchString(w) && !(isAfterVitaminOrOmega && len(w) <= 3) {
+		if alphaNumPattern.MatchString(t) {
 			continue
 		}
-
-		if len(w) < 2 && !isAfterVitaminOrOmega {
+		if len(t) < 2 && !keepShortToken[t] {
 			continue
 		}
-
-		coreWords = append(coreWords, w)
-		if len(coreWords) >= 3 {
+		out = append(out, t)
+		if len(out) >= 4 {
 			break
 		}
 	}
+	return strings.Join(out, " ")
+}
 
-	ingredient := strings.Join(coreWords, " ")
+func displayIngredient(canonicals []string) string {
+	parts := make([]string, 0, len(canonicals))
+	for _, c := range canonicals {
+		parts = append(parts, titleCaseWords(c))
+	}
+	return strings.Join(parts, " + ")
+}
 
-	var parts []string
-	if ingredient != "" {
-		parts = append(parts, ingredient)
+func buildSKUDisplay(in GroupKeyInput, residual string) string {
+	parts := []string{}
+	if b := strings.TrimSpace(in.Brand); b != "" {
+		parts = append(parts, titleCaseWords(b))
 	}
-	if dosage != "" {
-		parts = append(parts, dosage)
+	if residual != "" {
+		parts = append(parts, titleCaseWords(residual))
 	}
-	if quantity != "" {
-		parts = append(parts, "x"+quantity)
+	if _, sDisp := canonicalStrength(in.DosageValue, in.DosageUnit, nil); sDisp != "" {
+		parts = append(parts, sDisp)
+	}
+	if in.VolumeValue > 0 && in.VolumeUnit != "" {
+		parts = append(parts, formatDisplayMeasure(in.VolumeValue, NormalizeUnit(in.VolumeUnit)))
+	}
+	if form := NormalizeForm(in.Form); form != "" {
+		parts = append(parts, form)
+	}
+	if len(parts) == 0 {
+		return strings.TrimSpace(in.Title)
+	}
+	return strings.Join(parts, " ")
+}
+
+// titleCaseWords capitalizes words for display, upper-casing alphanumeric codes
+// (d3, b12, q10, mk7) and pure numbers, leaving the rest Title Cased.
+func titleCaseWords(text string) string {
+	fields := strings.Fields(text)
+	out := make([]string, 0, len(fields))
+	for _, w := range fields {
+		hasDigit := strings.IndexFunc(w, unicode.IsDigit) >= 0
+		hasLetter := strings.IndexFunc(w, unicode.IsLetter) >= 0
+		switch {
+		case hasDigit && hasLetter:
+			out = append(out, strings.ToUpper(w))
+		case hasDigit:
+			out = append(out, w)
+		default:
+			out = append(out, strings.ToUpper(w[:1])+w[1:])
+		}
+	}
+	return strings.Join(out, " ")
+}
+
+// ----------------------------------------------------------------------------
+// Search query expansion
+// ----------------------------------------------------------------------------
+
+// SearchConcepts turns a raw query into:
+//
+//	required: the set of "concept tokens" a product must contain (AND semantics).
+//	          Ingredient mentions become a compact canonical token (e.g. "vitaminc",
+//	          "magnezijum") so Serbian/English/abbreviation spellings unify.
+//	variants: alias phrases for substring (ILIKE) recall on core/normalized name.
+func SearchConcepts(query string) (required []string, variants []string) {
+	canon, leftover := analyzeWithFuzzy(query)
+
+	reqSet := map[string]struct{}{}
+	varSet := map[string]struct{}{}
+	add := func(set map[string]struct{}, v string) {
+		if v != "" {
+			set[v] = struct{}{}
+		}
 	}
 
-	if len(parts) > 0 {
-		return strings.Join(parts, " ")
+	for _, c := range canon {
+		add(reqSet, strings.ReplaceAll(c, " ", ""))
+		add(varSet, c)
+		for _, a := range AliasesFor(c) {
+			add(varSet, a)
+		}
 	}
-	if len(t) > 30 {
-		return t[:30]
+	for _, t := range leftover {
+		if queryStopwords[t] {
+			continue
+		}
+		if len(t) == 1 && !keepShortToken[t] {
+			continue
+		}
+		add(reqSet, t)
 	}
-	return t
+
+	for k := range reqSet {
+		required = append(required, k)
+	}
+	for k := range varSet {
+		variants = append(variants, k)
+	}
+	sort.Strings(required)
+	sort.Strings(variants)
+	return required, variants
+}
+
+// ExpandQueryVariants returns alias/spelling variants of a query for scoring and
+// loose matching.
+func ExpandQueryVariants(query string) []string {
+	normalized := NormalizeText(query)
+	if normalized == "" {
+		return nil
+	}
+	seen := map[string]struct{}{}
+	add := func(v string) {
+		if v = NormalizeText(v); v != "" {
+			seen[v] = struct{}{}
+		}
+	}
+	add(normalized)
+	add(strings.ReplaceAll(normalized, " ", ""))
+
+	canon, _ := analyzeWithFuzzy(normalized)
+	for _, c := range canon {
+		add(c)
+		add(strings.ReplaceAll(c, " ", ""))
+		for _, a := range AliasesFor(c) {
+			add(a)
+		}
+	}
+
+	variants := make([]string, 0, len(seen))
+	for v := range seen {
+		variants = append(variants, v)
+	}
+	sort.Strings(variants)
+	return variants
+}
+
+// ----------------------------------------------------------------------------
+// Fallback core extraction (used when stored core is empty)
+// ----------------------------------------------------------------------------
+
+var (
+	fallbackDosageRE = regexp.MustCompile(`(?i)\b\d+(?:[.,]\d+)?\s*(mg|mcg|ug|μg|µg|iu|ij|i\.?u\.?|i\.?j\.?|ml|l|g|gr|kg|%)\b`)
+	fallbackQtyRE    = regexp.MustCompile(`(?i)\b[axх×]?\d+\s*(mikrotablet\w*|tab\w*|tabl\w*|kaps\w*|caps\w*|softgel\w*|kom\w*|kesic\w*|ampul\w*|kapi)\b`)
+	fallbackPackRE   = regexp.MustCompile(`(?i)\b[axх×]\d+\b|\b\d+[xх×]\b`)
+)
+
+// ExtractCoreFromTitle is a best-effort identity extractor for titles without a
+// precomputed core. It strips dosage/quantity/brand/noise and keeps the first few
+// descriptor tokens.
+func ExtractCoreFromTitle(title string) string {
+	t := strings.ToLower(title)
+	t = fallbackDosageRE.ReplaceAllString(t, " ")
+	t = fallbackQtyRE.ReplaceAllString(t, " ")
+	t = fallbackPackRE.ReplaceAllString(t, " ")
+	norm := NormalizeText(t)
+	if norm == "" {
+		return ""
+	}
+	tokens := stripBrandTokens(strings.Fields(norm))
+	out := make([]string, 0, 4)
+	for _, w := range tokens {
+		if isNoiseWord(w) || isFormWord(w) {
+			continue
+		}
+		if numberOnlyPattern.MatchString(w) || alphaNumPattern.MatchString(w) {
+			continue
+		}
+		if len(w) < 2 && !keepShortToken[w] {
+			continue
+		}
+		out = append(out, w)
+		if len(out) >= 4 {
+			break
+		}
+	}
+	return strings.Join(out, " ")
 }
 
 func formatCompactValue(value float64) string {
@@ -454,8 +580,9 @@ func formatCompactValue(value float64) string {
 }
 
 func formatDisplayMeasure(value float64, unit string) string {
+	display := strings.ToUpper(NormalizeUnit(unit))
 	if value == math.Trunc(value) {
-		return fmt.Sprintf("%d %s", int(value), strings.ToUpper(NormalizeUnit(unit)))
+		return fmt.Sprintf("%d %s", int(value), display)
 	}
-	return fmt.Sprintf("%s %s", formatCompactValue(value), strings.ToUpper(NormalizeUnit(unit)))
+	return fmt.Sprintf("%s %s", formatCompactValue(value), display)
 }

@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"net/smtp"
 	"os"
-	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -69,19 +68,22 @@ func searchProductsDB(db *sql.DB, query string, limit int) ([]map[string]interfa
 	}
 
 	rawLikePattern := "%" + escapeLikePattern(rawQuery) + "%"
-	normalizedLikePattern := "%" + escapeLikePattern(normalizedQuery) + "%"
-	queryVariants := matching.ExpandQueryVariants(rawQuery)
-	queryTokens := matching.Tokenize(rawQuery)
+	// SearchConcepts maps the query to canonical "concept" tokens: ingredient
+	// mentions become a single compact canonical (so spelling/language variants
+	// unify because those tokens were also written into each product's
+	// searchTokens). required uses AND semantics via the indexed @> operator.
+	required, _ := matching.SearchConcepts(rawQuery)
+	// Fuzzy/typo recall only for single-concept queries; multi-concept queries
+	// (brand+ingredient, ingredient+strength) stay precise (AND-only).
+	allowFuzzy := len(required) <= 1
 
 	rows, err := db.Query(`
-		WITH query_input AS (
+		WITH q AS (
 			SELECT
-				$1::text AS raw_like,
-				$2::text AS raw_query,
-				$3::text AS normalized_like,
-				$4::text AS normalized_query,
-				$5::text[] AS variants,
-				$6::text[] AS tokens
+				$1::text   AS raw_like,
+				$2::text   AS norm_query,
+				$3::text[] AS required,
+				$4::bool   AS allow_fuzzy
 		)
 		SELECT
 			p.id,
@@ -102,46 +104,38 @@ func searchProductsDB(db *sql.DB, query string, limit int) ([]map[string]interfa
 			p."quantityValue"
 		FROM "Product" p
 		JOIN "Vendor" v ON v.id = p."vendorId"
-		CROSS JOIN query_input q
+		CROSS JOIN q
 		WHERE p.price > 0
 		  AND (
-			p.title ILIKE q.raw_like
+			-- precise: product contains ALL concept tokens (AND semantics)
+			(cardinality(q.required) > 0 AND COALESCE(p."searchTokens", ARRAY[]::text[]) @> q.required)
+			-- exact phrase substring
+			OR p.title ILIKE q.raw_like
 			OR COALESCE(p."normalizedName", '') ILIKE q.raw_like
-			OR COALESCE(p."normalizedName", '') ILIKE q.normalized_like
-			OR COALESCE(p."coreProductIdentity", '') ILIKE q.normalized_like
-			OR COALESCE(p."extractedBrand", '') ILIKE q.raw_like
-			OR (cardinality(q.tokens) > 0 AND COALESCE(p."searchTokens", ARRAY[]::text[]) && q.tokens)
-			OR EXISTS (
-				SELECT 1
-				FROM unnest(q.variants) AS variant
-				WHERE p.title ILIKE ('%' || variant || '%')
-				   OR COALESCE(p."normalizedName", '') ILIKE ('%' || variant || '%')
-				   OR COALESCE(p."coreProductIdentity", '') ILIKE ('%' || variant || '%')
-				   OR COALESCE(p."extractedBrand", '') ILIKE ('%' || variant || '%')
-			)
-			OR p.title % q.raw_query
-			OR COALESCE(p."normalizedName", '') % q.raw_query
-			OR COALESCE(p."coreProductIdentity", '') % q.normalized_query
+			OR COALESCE(p."coreProductIdentity", '') ILIKE q.raw_like
+			-- typo tolerance (single-concept queries only): trigram on the
+			-- (short) identity, not the whole title
+			OR (q.allow_fuzzy AND COALESCE(p."coreProductIdentity", '') % q.norm_query)
+			OR (q.allow_fuzzy AND p.title % q.norm_query)
 		  )
 		ORDER BY
 			CASE
-				WHEN lower(COALESCE(p."coreProductIdentity", '')) = q.normalized_query THEN 0
-				WHEN cardinality(q.tokens) > 0 AND COALESCE(p."searchTokens", ARRAY[]::text[]) @> q.tokens THEN 1
+				WHEN lower(COALESCE(p."coreProductIdentity", '')) = q.norm_query THEN 0
+				WHEN cardinality(q.required) > 0 AND COALESCE(p."searchTokens", ARRAY[]::text[]) @> q.required THEN 1
 				WHEN COALESCE(p."normalizedName", '') ILIKE q.raw_like THEN 2
-				WHEN COALESCE(p."coreProductIdentity", '') ILIKE q.normalized_like THEN 3
+				WHEN COALESCE(p."coreProductIdentity", '') ILIKE q.raw_like THEN 3
 				WHEN p.title ILIKE q.raw_like THEN 4
 				ELSE 5
 			END,
 			GREATEST(
-				similarity(p.title, q.raw_query),
-				similarity(COALESCE(p."normalizedName", ''), q.raw_query),
-				similarity(COALESCE(p."coreProductIdentity", ''), q.normalized_query),
-				similarity(COALESCE(p."extractedBrand", ''), q.raw_query)
+				similarity(p.title, q.norm_query),
+				similarity(COALESCE(p."normalizedName", ''), q.norm_query),
+				similarity(COALESCE(p."coreProductIdentity", ''), q.norm_query)
 			) DESC
 			,
 			p.price ASC
-		LIMIT $7
-	`, rawLikePattern, rawQuery, normalizedLikePattern, normalizedQuery, pq.Array(queryVariants), pq.Array(queryTokens), limit)
+		LIMIT $5
+	`, rawLikePattern, normalizedQuery, pq.Array(required), allowFuzzy, limit)
 	if err != nil {
 		return nil, fmt.Errorf("search query error: %w", err)
 	}
@@ -209,53 +203,42 @@ func autocompleteDB(db *sql.DB, query string, limit int) ([]*pb.AutocompleteSugg
 	}
 
 	rawLikePattern := "%" + escapeLikePattern(rawQuery) + "%"
-	normalizedLikePattern := "%" + escapeLikePattern(normalizedQuery) + "%"
-	queryVariants := matching.ExpandQueryVariants(rawQuery)
-	queryTokens := matching.Tokenize(rawQuery)
+	required, _ := matching.SearchConcepts(rawQuery)
+	allowFuzzy := len(required) <= 1
 
 	rows, err := db.Query(`
-		WITH query_input AS (
+		WITH q AS (
 			SELECT
-				$1::text AS raw_like,
-				$2::text AS raw_query,
-				$3::text AS normalized_like,
-				$4::text AS normalized_query,
-				$5::text[] AS variants,
-				$6::text[] AS tokens
+				$1::text   AS raw_like,
+				$2::text   AS norm_query,
+				$3::text[] AS required,
+				$4::bool   AS allow_fuzzy
 		)
 		SELECT * FROM (
 			SELECT DISTINCT ON (lower(p.title))
 				p.id, p.title, p.price, v.name as vendor_name,
 				GREATEST(
-					similarity(p.title, q.raw_query),
-					similarity(COALESCE(p."normalizedName", ''), q.raw_query),
-					similarity(COALESCE(p."coreProductIdentity", ''), q.normalized_query)
+					similarity(p.title, q.norm_query),
+					similarity(COALESCE(p."normalizedName", ''), q.norm_query),
+					similarity(COALESCE(p."coreProductIdentity", ''), q.norm_query)
 				) as sim
 			FROM "Product" p
 			JOIN "Vendor" v ON v.id = p."vendorId"
-			CROSS JOIN query_input q
+			CROSS JOIN q
 			WHERE p.price > 0
 			  AND (
-				p.title ILIKE q.raw_like
+				(cardinality(q.required) > 0 AND COALESCE(p."searchTokens", ARRAY[]::text[]) @> q.required)
+				OR p.title ILIKE q.raw_like
 				OR COALESCE(p."normalizedName", '') ILIKE q.raw_like
-				OR COALESCE(p."coreProductIdentity", '') ILIKE q.normalized_like
-				OR (cardinality(q.tokens) > 0 AND COALESCE(p."searchTokens", ARRAY[]::text[]) && q.tokens)
-				OR EXISTS (
-					SELECT 1
-					FROM unnest(q.variants) AS variant
-					WHERE p.title ILIKE ('%' || variant || '%')
-					   OR COALESCE(p."normalizedName", '') ILIKE ('%' || variant || '%')
-					   OR COALESCE(p."coreProductIdentity", '') ILIKE ('%' || variant || '%')
-				)
-				OR p.title % q.raw_query
-				OR COALESCE(p."normalizedName", '') % q.raw_query
-				OR COALESCE(p."coreProductIdentity", '') % q.normalized_query
+				OR COALESCE(p."coreProductIdentity", '') ILIKE q.raw_like
+				OR (q.allow_fuzzy AND COALESCE(p."coreProductIdentity", '') % q.norm_query)
+				OR (q.allow_fuzzy AND p.title % q.norm_query)
 			  )
 			ORDER BY lower(p.title), sim DESC
 		) sub
 		ORDER BY sub.sim DESC
-		LIMIT $7
-	`, rawLikePattern, rawQuery, normalizedLikePattern, normalizedQuery, pq.Array(queryVariants), pq.Array(queryTokens), limit)
+		LIMIT $5
+	`, rawLikePattern, normalizedQuery, pq.Array(required), allowFuzzy, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -341,59 +324,8 @@ func getFloatAny(m map[string]interface{}, keys ...string) float64 {
 	return 0
 }
 
-func uniqueStrings(values []string) []string {
-	set := map[string]struct{}{}
-	for _, v := range values {
-		set[v] = struct{}{}
-	}
-	out := make([]string, 0, len(set))
-	for v := range set {
-		out = append(out, v)
-	}
-	sort.Strings(out)
-	return out
-}
-
 func escapeLikePattern(value string) string {
 	return strings.NewReplacer("%", "\\%", "_", "\\_").Replace(value)
-}
-
-// Regex patterns for extracting dosage - pharma dosage vs volume
-// Pharma dosage: mg, mcg, iu and variants (the actual drug dosage)
-var pharmaDosagePattern = regexp.MustCompile(`(?i)\b(\d+(?:[.,]\d+)?)\s*(mg|mcg|μg|µg|iu|i\.u\.|i\.j\.|ij)\b`)
-
-// Volume: ml, l (container/liquid volume)
-var volumePattern = regexp.MustCompile(`(?i)\b(\d+(?:[.,]\d+)?)\s*(ml|l)\b`)
-
-// Ambiguous: g can be dosage (small values like 0.5g) or weight/volume (large values like 200g)
-var gramPattern = regexp.MustCompile(`(?i)\b(\d+(?:[.,]\d+)?)\s*(g|gr|gram|grama)\b`)
-
-// normalizeUnit normalizes dosage unit strings to canonical forms
-func normalizeUnit(unit string) string {
-	return matching.NormalizeUnit(unit)
-}
-
-// Regex pattern for extracting quantity (count of tablets/capsules)
-// Matches: "30 tableta", "30 mikrotableta", "a30", "x30", "tableta a30"
-var quantityPattern = regexp.MustCompile(`\b[ax]?(\d+)\s*(mikrotablet|mikrokapsul|tab|tabl|tableta|tablete|kaps|kapsula|kapsule|caps|capsule|softgel|gel|komada|kom)\w*\b`)
-var quantitySuffixPattern = regexp.MustCompile(`\b[ax](\d+)\b`)
-
-// extractGroupKey extracts a grouping key from a product title
-// Format: "ingredient dosage quantity" e.g., "vitamin d3 2000 iu 30", "omega 3 1000 mg 60"
-func extractGroupKey(title string) string {
-	return matching.ExtractGroupKey(title)
-}
-
-func computeGroupKey(normalizedName, title string) string {
-	if normalizedName != "" {
-		return extractGroupKey(normalizedName)
-	}
-	return extractGroupKey(title)
-}
-
-// buildGroupId constructs a group ID from component fields: "ingredient::dosage::unit"
-func buildGroupId(coreIdentity string, dosageValue float64, dosageUnit string) string {
-	return matching.BuildGroupID(coreIdentity, dosageValue, dosageUnit)
 }
 
 func enrichProductsWithGroupKey(hits []map[string]interface{}) []map[string]interface{} {
@@ -403,6 +335,7 @@ func enrichProductsWithGroupKey(hits []map[string]interface{}) []map[string]inte
 		title := getString(h, "title")
 		normalizedName := getString(h, "normalizedName")
 		coreIdentity := getString(h, "coreProductIdentity")
+		brand := getString(h, "brand")
 		dosageValue := getFloat(h, "dosageValue")
 		dosageUnit := getString(h, "dosageUnit")
 		volumeValue := getFloat(h, "volumeValue")
@@ -410,28 +343,22 @@ func enrichProductsWithGroupKey(hits []map[string]interface{}) []map[string]inte
 		qtyVal := getFloat(h, "quantityValue")
 		form := getString(h, "form")
 
-		groupKey := matching.BuildComparableGroupID(
-			coreIdentity,
-			dosageValue,
-			dosageUnit,
-			volumeValue,
-			volumeUnit,
-			qtyVal,
-			form,
-		)
-		if groupKey == "" {
-			if normalizedName != "" {
-				groupKey = extractGroupKey(normalizedName)
-			} else {
-				groupKey = extractGroupKey(title)
-			}
-		}
-
-		computedGroupId := buildGroupId(coreIdentity, dosageValue, dosageUnit)
-
 		// DB stores price in RSD directly (not cents like Meilisearch did)
 		price := getFloat(h, "price")
 		pid := strings.ReplaceAll(getString(h, "id"), "product_", "")
+
+		gk := matching.BuildGroupKey(matching.GroupKeyInput{
+			Core:        coreIdentity,
+			Brand:       brand,
+			Title:       title,
+			ProductID:   pid,
+			DosageValue: dosageValue,
+			DosageUnit:  dosageUnit,
+			VolumeValue: volumeValue,
+			VolumeUnit:  volumeUnit,
+			Quantity:    qtyVal,
+			Form:        form,
+		})
 
 		product := map[string]interface{}{
 			"id":                    pid,
@@ -441,11 +368,14 @@ func enrichProductsWithGroupKey(hits []map[string]interface{}) []map[string]inte
 			"vendor_name":           getString(h, "vendorName"),
 			"link":                  getString(h, "link"),
 			"thumbnail":             getString(h, "thumbnail"),
-			"brand_name":            getString(h, "brand"),
-			"group_key":             groupKey,
+			"brand_name":            brand,
+			"group_key":             gk.Key,
+			"group_display":         gk.DisplayName,
+			"group_method":          gk.Method,
+			"group_residual":        gk.Residual,
+			"group_has_measure":     gk.HasMeasure,
 			"normalized_name":       normalizedName,
 			"core_product_identity": coreIdentity,
-			"computed_group_id":     computedGroupId,
 			"dosage_value":          dosageValue,
 			"dosage_unit":           dosageUnit,
 			"volume_value":          volumeValue,
@@ -560,15 +490,7 @@ func buildGroupDisplayName(products []map[string]interface{}) string {
 	}
 
 	first := products[0]
-	coreIdentity := getString(first, "core_product_identity")
-	dosageValue := getFloat(first, "dosage_value")
-	dosageUnit := getString(first, "dosage_unit")
-	volumeValue := getFloat(first, "volume_value")
-	volumeUnit := getString(first, "volume_unit")
-	quantity := getFloat(first, "quantity")
-	form := getString(first, "form")
-
-	if displayName := matching.BuildDisplayName(coreIdentity, dosageValue, dosageUnit, volumeValue, volumeUnit, quantity, form); displayName != "" {
+	if displayName := strings.TrimSpace(getString(first, "group_display")); displayName != "" {
 		return displayName
 	}
 
@@ -667,12 +589,47 @@ func formatQuantityFacetValue(quantity float64) string {
 	return strings.TrimRight(strings.TrimRight(fmt.Sprintf("%.2f", quantity), "0"), ".")
 }
 
+// attachSizelessToLines reassigns a measureless brand-keyed/per-offer product to
+// the brand-independent line family (prod::<residual>) when that residual already
+// has a MEASURED line group in this result set. This unifies sizeless variants of
+// a sports/supplement line (e.g. "Ultimate Nutrition Iso Sensation" with no weight)
+// with their sized siblings, without affecting devices/cosmetics (whose residuals
+// never have a measured line sibling).
+func attachSizelessToLines(products []map[string]interface{}) {
+	lineResiduals := map[string]bool{}
+	for _, p := range products {
+		if getString(p, "group_method") == "brand-line" {
+			if r := getString(p, "group_residual"); r != "" {
+				lineResiduals[r] = true
+			}
+		}
+	}
+	if len(lineResiduals) == 0 {
+		return
+	}
+	for _, p := range products {
+		method := getString(p, "group_method")
+		if method != "brand-sku" && method != "single" {
+			continue
+		}
+		if b, ok := p["group_has_measure"].(bool); ok && b {
+			continue // has a size/strength of its own — keep it
+		}
+		residual := getString(p, "group_residual")
+		if residual == "" || !lineResiduals[residual] || len(strings.Fields(residual)) < 2 {
+			continue
+		}
+		p["group_key"] = "prod::" + residual
+	}
+}
+
 func convertHitsToGroups(hits []map[string]interface{}, query string, db *sql.DB) []map[string]interface{} {
 	if len(hits) == 0 {
 		return []map[string]interface{}{}
 	}
 
 	products := enrichProductsWithGroupKey(hits)
+	attachSizelessToLines(products)
 
 	type groupData struct {
 		firstRank int
@@ -682,10 +639,10 @@ func convertHitsToGroups(hits []map[string]interface{}, query string, db *sql.DB
 	groupOrder := make([]string, 0)
 
 	for _, p := range products {
-		// Group by strict comparable key first, then fall back to broader identity.
+		// group_key is always populated by BuildGroupKey (ingredient / brand-sku / per-offer).
 		gid := getString(p, "group_key")
 		if gid == "" {
-			gid = getString(p, "computed_group_id")
+			gid = "offer:" + getString(p, "id")
 		}
 		rank := int(getFloat(p, "rank"))
 
@@ -744,10 +701,29 @@ func convertHitsToGroups(hits []map[string]interface{}, query string, db *sql.DB
 		groups = append(groups, group)
 	}
 
-	// Sort by relevance first, then use coverage and price spread as tie-breakers.
+	// Sort by relevance (match_score) first. Within the same relevance tier prefer
+	// broader coverage — a group offered by many pharmacies is the canonical
+	// product for an ingredient query and should outrank a 1-vendor cosmetic
+	// listing that merely happens to mention the same word. Then fall back to the
+	// search rank and price spread.
 	sort.SliceStable(groups, func(i, j int) bool {
+		// Compare relevance in coarse tiers (buckets of 100) so groups that match
+		// the query about equally well are then ordered by coverage. This stops a
+		// 1-vendor listing that scores a few boost points higher from outranking
+		// the canonical, widely-stocked group for the same ingredient.
 		si := getFloat(groups[i], "match_score")
 		sj := getFloat(groups[j], "match_score")
+		ti, tj := math.Floor(si/100), math.Floor(sj/100)
+		if ti != tj {
+			return ti > tj
+		}
+
+		ci := getFloat(groups[i], "vendor_count")
+		cj := getFloat(groups[j], "vendor_count")
+		if ci != cj {
+			return ci > cj
+		}
+
 		if si != sj {
 			return si > sj
 		}
@@ -756,12 +732,6 @@ func convertHitsToGroups(hits []map[string]interface{}, query string, db *sql.DB
 		rj := getFloat(groups[j], "relevance_rank")
 		if ri != rj {
 			return ri < rj
-		}
-
-		ci := getFloat(groups[i], "vendor_count")
-		cj := getFloat(groups[j], "vendor_count")
-		if ci != cj {
-			return ci > cj
 		}
 
 		iPriceRange := getMap(groups[i], "price_range")
@@ -778,20 +748,19 @@ func convertHitsToGroups(hits []map[string]interface{}, query string, db *sql.DB
 }
 
 func toStructPB(v interface{}) (*structpb.Struct, error) {
-	switch m := v.(type) {
-	case map[string]interface{}:
-		return structpb.NewStruct(m)
-	default:
-		b, err := json.Marshal(v)
-		if err != nil {
-			return nil, err
-		}
-		var mm map[string]interface{}
-		if err := json.Unmarshal(b, &mm); err != nil {
-			return nil, err
-		}
-		return structpb.NewStruct(mm)
+	// Always round-trip through JSON: structpb.NewStruct rejects nested types like
+	// []map[string]interface{} (which our group payloads contain), whereas the JSON
+	// round-trip normalizes every array to []interface{} and every number to
+	// float64, making the result structpb-compatible regardless of caller.
+	b, err := json.Marshal(v)
+	if err != nil {
+		return nil, err
 	}
+	var mm map[string]interface{}
+	if err := json.Unmarshal(b, &mm); err != nil {
+		return nil, err
+	}
+	return structpb.NewStruct(mm)
 }
 
 func (s *server) Health(ctx context.Context, req *connect.Request[pb.HealthRequest]) (*connect.Response[pb.HealthResponse], error) {
@@ -1450,11 +1419,13 @@ func runTestSearch() {
 	fmt.Printf("PostgreSQL returned %d hits for query: %s (in %v)\n", len(hits), query, elapsed)
 	if len(hits) > 0 {
 		fmt.Println("\nFirst 5 products:")
-		for i := 0; i < 5 && i < len(hits); i++ {
-			title := getString(hits[i], "title")
-			normalizedName := getString(hits[i], "normalizedName")
-			groupKey := computeGroupKey(normalizedName, title)
-			fmt.Printf("  %d. %s\n     -> Group: %s (normalized: %s)\n", i+1, title, groupKey, normalizedName)
+		enriched := enrichProductsWithGroupKey(hits)
+		for i := 0; i < 5 && i < len(enriched); i++ {
+			title := getString(enriched[i], "title")
+			fmt.Printf("  %d. %s\n     -> Group: %s [%s] (%s)\n", i+1, title,
+				getString(enriched[i], "group_key"),
+				getString(enriched[i], "group_method"),
+				getString(enriched[i], "group_display"))
 		}
 	}
 

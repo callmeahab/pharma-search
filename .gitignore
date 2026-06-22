@@ -2,6 +2,7 @@
 backend/cache/
 cache/
 .gocache
+.gomodcache
 
 # Python
 __pycache__/
@@ -45,7 +46,7 @@ logs/
 *.sqlite
 
 # Docker
-.dockerignore 
+.dockerignore
 
 scrapers_logs/
 scrapers/output/

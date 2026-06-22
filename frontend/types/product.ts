@@ -137,6 +137,10 @@ function buildComparisonContext(
 }
 
 function formatGroupedDescription(comparison: ComparisonContext): string {
+  if (comparison.vendorCount <= 1 && comparison.offerCount <= 1 && comparison.hiddenOfferCount === 0) {
+    return "Jedina dostupna ponuda za ovaj proizvod";
+  }
+
   const vendorWord = pluralizeSr(
     comparison.vendorCount,
     "apoteci",

@@ -1,0 +1,958 @@
+{
+ "ingredients": [
+  {
+   "canonical": "vitamin d3",
+   "category": "supplement",
+   "aliases": [
+    "vitamin d3",
+    "d3",
+    "d 3",
+    "vit d3",
+    "vitamin d 3",
+    "vitaminom d3",
+    "vit d",
+    "vitamin d",
+    "vitamin fd3",
+    "holekalciferol",
+    "holekalciferola",
+    "cholecalciferol",
+    "kalciferol",
+    "detrical"
+   ]
+  },
+  {
+   "canonical": "vitamin c",
+   "category": "supplement",
+   "aliases": [
+    "vitamin c",
+    "vit c",
+    "vitamin c retard",
+    "vitaminom c",
+    "c vitamin",
+    "vitamin c acerola",
+    "askorbinska kiselina",
+    "askorbinska",
+    "ascorbic acid",
+    "ascorbic",
+    "ester c",
+    "acerola",
+    "liposomalni vitamin c"
+   ]
+  },
+  {
+   "canonical": "vitamin e",
+   "category": "supplement",
+   "aliases": [
+    "vitamin e",
+    "vit e",
+    "vitaminom e",
+    "e vitamin",
+    "tokoferol",
+    "tokoferola",
+    "tocopherol",
+    "alfa tokoferol",
+    "alpha tocopherol"
+   ]
+  },
+  {
+   "canonical": "vitamin a",
+   "category": "supplement",
+   "aliases": [
+    "vitamin a",
+    "vit a",
+    "retinol palmitat",
+    "retinil palmitat"
+   ]
+  },
+  {
+   "canonical": "vitamin k2",
+   "category": "supplement",
+   "aliases": [
+    "vitamin k2",
+    "vit k2",
+    "k2",
+    "mk7",
+    "mk 7",
+    "menakinon",
+    "menaquinone",
+    "menakinon 7"
+   ]
+  },
+  {
+   "canonical": "vitamin b12",
+   "category": "supplement",
+   "aliases": [
+    "vitamin b12",
+    "b12",
+    "b 12",
+    "vit b12",
+    "vitamin b 12",
+    "kobalamin",
+    "cijanokobalamin",
+    "cyanocobalamin",
+    "metilkobalamin",
+    "methylcobalamin"
+   ]
+  },
+  {
+   "canonical": "vitamin b6",
+   "category": "supplement",
+   "aliases": [
+    "vitamin b6",
+    "b6",
+    "b 6",
+    "vit b6",
+    "vitaminom b6",
+    "piridoksin",
+    "pyridoxine"
+   ]
+  },
+  {
+   "canonical": "vitamin b1",
+   "category": "supplement",
+   "aliases": [
+    "vitamin b1",
+    "b1",
+    "b 1",
+    "vit b1",
+    "tiamin",
+    "thiamine",
+    "thiamin"
+   ]
+  },
+  {
+   "canonical": "vitamin b2",
+   "category": "supplement",
+   "aliases": [
+    "vitamin b2",
+    "b2",
+    "riboflavin"
+   ]
+  },
+  {
+   "canonical": "vitamin b3",
+   "category": "supplement",
+   "aliases": [
+    "vitamin b3",
+    "b3",
+    "niacin",
+    "niacinamid",
+    "nikotinamid",
+    "nicotinamide"
+   ]
+  },
+  {
+   "canonical": "vitamin b5",
+   "category": "supplement",
+   "aliases": [
+    "vitamin b5",
+    "b5",
+    "pantotenska kiselina",
+    "pantothenic acid",
+    "kalcijum pantotenat"
+   ]
+  },
+  {
+   "canonical": "folna kiselina",
+   "category": "supplement",
+   "aliases": [
+    "folna kiselina",
+    "folna",
+    "folat",
+    "folati",
+    "folic acid",
+    "vitamin b9",
+    "b9",
+    "metilfolat",
+    "methylfolate",
+    "folna kis"
+   ]
+  },
+  {
+   "canonical": "biotin",
+   "category": "supplement",
+   "aliases": [
+    "biotin",
+    "biotina",
+    "biotinom",
+    "vitamin b7",
+    "b7",
+    "vitamin b8",
+    "vitamin h"
+   ]
+  },
+  {
+   "canonical": "b kompleks",
+   "category": "supplement",
+   "aliases": [
+    "b kompleks",
+    "b complex",
+    "vitamin b complex",
+    "vitamin b kompleks",
+    "b vitamin kompleks",
+    "b vitamini"
+   ]
+  },
+  {
+   "canonical": "multivitamin",
+   "category": "supplement",
+   "aliases": [
+    "multivitamin",
+    "multivitamini",
+    "multivitaminski",
+    "vitamini i minerali",
+    "vitamini minerali",
+    "multivitamin mineral",
+    "multi vitamin"
+   ]
+  },
+  {
+   "canonical": "magnezijum",
+   "category": "supplement",
+   "aliases": [
+    "magnezijum",
+    "magnezijuma",
+    "magnezijumom",
+    "magnesium",
+    "magnezijum citrat",
+    "magnesium citrate",
+    "magnezijum bisglicinat",
+    "magnesium bisglycinate",
+    "magnezijum glicinat",
+    "magnesium glycinate",
+    "magnezijum malat",
+    "magnesium malate",
+    "magnezijum hlorid",
+    "magnesium chloride",
+    "magnezijum oksid",
+    "magnesium oxide",
+    "magnezijum taurat",
+    "magnesium taurate",
+    "magnezijum direkt"
+   ]
+  },
+  {
+   "canonical": "cink",
+   "category": "supplement",
+   "aliases": [
+    "cink",
+    "cinka",
+    "cinkom",
+    "zinc",
+    "zinkum",
+    "zinc picolinate",
+    "cink pikolinat",
+    "cink glukonat",
+    "zinc gluconate",
+    "zn"
+   ]
+  },
+  {
+   "canonical": "kalcijum",
+   "category": "supplement",
+   "aliases": [
+    "kalcijum",
+    "kalcijuma",
+    "kalcijumom",
+    "calcium",
+    "kalcium",
+    "kalcijum karbonat",
+    "calcium carbonate",
+    "kalcijum citrat",
+    "calcium citrate"
+   ]
+  },
+  {
+   "canonical": "gvozdje",
+   "category": "supplement",
+   "aliases": [
+    "gvozdje",
+    "gvozdja",
+    "gvozdjem",
+    "iron",
+    "ferrum",
+    "fero",
+    "ferro",
+    "feroglobin",
+    "ferritin",
+    "ferro sulfat",
+    "ferrous sulfate",
+    "fumarat gvozdja",
+    "fe"
+   ]
+  },
+  {
+   "canonical": "selen",
+   "category": "supplement",
+   "aliases": [
+    "selen",
+    "selena",
+    "selenom",
+    "selenium",
+    "selenomethionin",
+    "selenometionin"
+   ]
+  },
+  {
+   "canonical": "hrom",
+   "category": "supplement",
+   "aliases": [
+    "hrom",
+    "hroma",
+    "chrom",
+    "chromium",
+    "hrom pikolinat",
+    "chromium picolinate"
+   ]
+  },
+  {
+   "canonical": "jod",
+   "category": "supplement",
+   "aliases": [
+    "jod",
+    "jodid",
+    "iodine",
+    "kalijum jodid",
+    "potassium iodide"
+   ]
+  },
+  {
+   "canonical": "kalijum",
+   "category": "supplement",
+   "aliases": [
+    "kalijum",
+    "potassium",
+    "kalium",
+    "kalijum citrat"
+   ]
+  },
+  {
+   "canonical": "bakar",
+   "category": "supplement",
+   "aliases": [
+    "bakar",
+    "copper",
+    "bakra",
+    "cuprum"
+   ]
+  },
+  {
+   "canonical": "mangan",
+   "category": "supplement",
+   "aliases": [
+    "mangan",
+    "manganese",
+    "manganum"
+   ]
+  },
+  {
+   "canonical": "silicijum",
+   "category": "supplement",
+   "aliases": [
+    "silicijum",
+    "silicium",
+    "silicon",
+    "silika",
+    "silica"
+   ]
+  },
+  {
+   "canonical": "omega 3",
+   "category": "supplement",
+   "aliases": [
+    "omega 3",
+    "omega3",
+    "omega 3 6 9",
+    "omega369",
+    "riblje ulje",
+    "fish oil",
+    "epa dha",
+    "omega 3 epa dha",
+    "omega masne kiseline",
+    "omega"
+   ]
+  },
+  {
+   "canonical": "koenzim q10",
+   "category": "supplement",
+   "aliases": [
+    "koenzim q10",
+    "koenzim q 10",
+    "q10",
+    "q 10",
+    "coq10",
+    "co q10",
+    "coenzyme q10",
+    "coenzyme q 10",
+    "ubikinon",
+    "ubiquinone",
+    "ubikinol",
+    "ubiquinol",
+    "koenzim"
+   ]
+  },
+  {
+   "canonical": "kolagen",
+   "category": "supplement",
+   "aliases": [
+    "kolagen",
+    "kolagena",
+    "kolagenom",
+    "kolageni",
+    "collagen",
+    "collagen beauty",
+    "collagen specialist",
+    "hidrolizovani kolagen",
+    "hydrolyzed collagen",
+    "morski kolagen",
+    "marine collagen"
+   ]
+  },
+  {
+   "canonical": "probiotik",
+   "category": "supplement",
+   "aliases": [
+    "probiotik",
+    "probiotika",
+    "probiotikom",
+    "probiotic",
+    "probiotics",
+    "probiotske",
+    "probiotske kulture"
+   ]
+  },
+  {
+   "canonical": "melatonin",
+   "category": "supplement",
+   "aliases": [
+    "melatonin",
+    "melatonina",
+    "melatoninom"
+   ]
+  },
+  {
+   "canonical": "kreatin",
+   "category": "supplement",
+   "aliases": [
+    "kreatin",
+    "kreatina",
+    "kreatinom",
+    "creatine",
+    "kreatin monohidrat",
+    "creatine monohydrate",
+    "kreatin monohydrate"
+   ]
+  },
+  {
+   "canonical": "bcaa",
+   "category": "supplement",
+   "aliases": [
+    "bcaa",
+    "bcaa aminokiseline",
+    "branched chain amino acids",
+    "razgranate aminokiseline"
+   ]
+  },
+  {
+   "canonical": "glutamin",
+   "category": "supplement",
+   "aliases": [
+    "glutamin",
+    "glutamina",
+    "glutamine",
+    "l glutamine",
+    "l glutamin",
+    "glutaminska"
+   ]
+  },
+  {
+   "canonical": "arginin",
+   "category": "supplement",
+   "aliases": [
+    "arginin",
+    "arginina",
+    "argininom",
+    "arginine",
+    "l arginine",
+    "l arginin"
+   ]
+  },
+  {
+   "canonical": "karnitin",
+   "category": "supplement",
+   "aliases": [
+    "karnitin",
+    "karnitina",
+    "karnitinom",
+    "carnitine",
+    "l carnitine",
+    "l karnitin",
+    "acetil l karnitin",
+    "acetyl l carnitine"
+   ]
+  },
+  {
+   "canonical": "msm",
+   "category": "supplement",
+   "aliases": [
+    "msm",
+    "metilsulfonilmetan",
+    "methylsulfonylmethane"
+   ]
+  },
+  {
+   "canonical": "5 htp",
+   "category": "supplement",
+   "aliases": [
+    "5 htp",
+    "htp",
+    "5 hidroksitriptofan",
+    "5 hydroxytryptophan"
+   ]
+  },
+  {
+   "canonical": "spirulina",
+   "category": "supplement",
+   "aliases": [
+    "spirulina",
+    "spirulin"
+   ]
+  },
+  {
+   "canonical": "hlorela",
+   "category": "supplement",
+   "aliases": [
+    "hlorela",
+    "chlorella",
+    "klorela"
+   ]
+  },
+  {
+   "canonical": "propolis",
+   "category": "supplement",
+   "aliases": [
+    "propolis",
+    "propolisa",
+    "propolisom"
+   ]
+  },
+  {
+   "canonical": "kurkuma",
+   "category": "supplement",
+   "aliases": [
+    "kurkuma",
+    "kurkume",
+    "kurkumom",
+    "curcuma",
+    "curcumin",
+    "kurkumin",
+    "turmeric"
+   ]
+  },
+  {
+   "canonical": "ashwagandha",
+   "category": "supplement",
+   "aliases": [
+    "ashwagandha",
+    "ashwaganda",
+    "asvaganda",
+    "asvagandha",
+    "withania"
+   ]
+  },
+  {
+   "canonical": "maca",
+   "category": "supplement",
+   "aliases": [
+    "maca",
+    "maka",
+    "zlatna maka",
+    "maca koren"
+   ]
+  },
+  {
+   "canonical": "ginko biloba",
+   "category": "supplement",
+   "aliases": [
+    "ginko biloba",
+    "ginko",
+    "ginkgo",
+    "ginkgo biloba",
+    "ginkobiloba"
+   ]
+  },
+  {
+   "canonical": "kantarion",
+   "category": "supplement",
+   "aliases": [
+    "kantarion",
+    "kantariona",
+    "kantarionom",
+    "kantarionovo ulje",
+    "hypericum",
+    "kantarion ulje"
+   ]
+  },
+  {
+   "canonical": "neven",
+   "category": "supplement",
+   "aliases": [
+    "neven",
+    "nevena",
+    "nevenom",
+    "neven ulje",
+    "calendula",
+    "kalendula"
+   ]
+  },
+  {
+   "canonical": "gavez",
+   "category": "supplement",
+   "aliases": [
+    "gavez",
+    "gaveza",
+    "gavezom",
+    "beinwell",
+    "symphytum",
+    "gavez melem"
+   ]
+  },
+  {
+   "canonical": "aloe vera",
+   "category": "supplement",
+   "aliases": [
+    "aloe vera",
+    "aloe",
+    "aloa vera",
+    "aloe vera gel"
+   ]
+  },
+  {
+   "canonical": "resveratrol",
+   "category": "supplement",
+   "aliases": [
+    "resveratrol",
+    "resveratrola"
+   ]
+  },
+  {
+   "canonical": "kvercetin",
+   "category": "supplement",
+   "aliases": [
+    "kvercetin",
+    "quercetin",
+    "kvercetina"
+   ]
+  },
+  {
+   "canonical": "lutein",
+   "category": "supplement",
+   "aliases": [
+    "lutein",
+    "luteina"
+   ]
+  },
+  {
+   "canonical": "likopen",
+   "category": "supplement",
+   "aliases": [
+    "likopen",
+    "lycopene"
+   ]
+  },
+  {
+   "canonical": "beta glukan",
+   "category": "supplement",
+   "aliases": [
+    "beta glukan",
+    "betaglukan",
+    "beta glucan"
+   ]
+  },
+  {
+   "canonical": "beta karoten",
+   "category": "supplement",
+   "aliases": [
+    "beta karoten",
+    "betakaroten",
+    "beta carotene",
+    "provitamin a"
+   ]
+  },
+  {
+   "canonical": "glukozamin",
+   "category": "supplement",
+   "aliases": [
+    "glukozamin",
+    "glukozamina",
+    "glucosamine",
+    "glukozamin sulfat",
+    "glucosamine sulfate"
+   ]
+  },
+  {
+   "canonical": "hondroitin",
+   "category": "supplement",
+   "aliases": [
+    "hondroitin",
+    "hondroitina",
+    "chondroitin",
+    "chondroitin sulfate"
+   ]
+  },
+  {
+   "canonical": "aktivni ugalj",
+   "category": "supplement",
+   "aliases": [
+    "aktivni ugalj",
+    "aktivni ugljen",
+    "ugalj",
+    "ugljen",
+    "activated charcoal",
+    "carbo medicinalis",
+    "medicinski ugalj"
+   ]
+  },
+  {
+   "canonical": "valerijana",
+   "category": "supplement",
+   "aliases": [
+    "valerijana",
+    "valeriana",
+    "valerian",
+    "odoljen"
+   ]
+  },
+  {
+   "canonical": "kamilica",
+   "category": "supplement",
+   "aliases": [
+    "kamilica",
+    "kamilice",
+    "chamomile",
+    "matricaria",
+    "kamilica cvet"
+   ]
+  },
+  {
+   "canonical": "maticnjak",
+   "category": "supplement",
+   "aliases": [
+    "maticnjak",
+    "maticnjaka",
+    "melissa",
+    "lemon balm"
+   ]
+  },
+  {
+   "canonical": "menta",
+   "category": "supplement",
+   "aliases": [
+    "menta",
+    "nana",
+    "nane",
+    "peppermint",
+    "pitoma nana",
+    "ulje nane"
+   ]
+  },
+  {
+   "canonical": "origano",
+   "category": "supplement",
+   "aliases": [
+    "origano",
+    "origana",
+    "oregano",
+    "ulje origana",
+    "divlji origan",
+    "divljeg origana",
+    "oregano oil"
+   ]
+  },
+  {
+   "canonical": "ehinacea",
+   "category": "supplement",
+   "aliases": [
+    "ehinacea",
+    "echinacea",
+    "echinacea purpurea"
+   ]
+  },
+  {
+   "canonical": "africka sljiva",
+   "category": "supplement",
+   "aliases": [
+    "africka sljiva",
+    "pygeum",
+    "pygeum africanum"
+   ]
+  },
+  {
+   "canonical": "hijaluronska kiselina",
+   "category": "cosmetic",
+   "aliases": [
+    "hijaluronska kiselina",
+    "hijaluron",
+    "hijaluronska",
+    "hijaluronskom",
+    "hijaluronska kiselinom",
+    "hijaluronom",
+    "hijaluronski",
+    "hijaluronat",
+    "hyaluron",
+    "hyaluronic",
+    "hyaluronic acid",
+    "hyaluronska",
+    "hyaluron filler"
+   ]
+  },
+  {
+   "canonical": "retinol",
+   "category": "cosmetic",
+   "aliases": [
+    "retinol",
+    "retinola",
+    "retinolom",
+    "retinoid",
+    "retinal"
+   ]
+  },
+  {
+   "canonical": "niacinamid",
+   "category": "cosmetic",
+   "aliases": [
+    "niacinamid",
+    "niacinamida",
+    "niacinamidom",
+    "niacinamide",
+    "nikotinamid"
+   ]
+  },
+  {
+   "canonical": "panthenol",
+   "category": "cosmetic",
+   "aliases": [
+    "panthenol",
+    "pantenol",
+    "pantenola",
+    "pantenolom",
+    "d panthenol",
+    "dexpanthenol",
+    "dekspantenol",
+    "provitamin b5"
+   ]
+  },
+  {
+   "canonical": "urea",
+   "category": "cosmetic",
+   "aliases": [
+    "urea",
+    "uree",
+    "ureom",
+    "urea krema",
+    "karbamid"
+   ]
+  },
+  {
+   "canonical": "salicilna kiselina",
+   "category": "cosmetic",
+   "aliases": [
+    "salicilna kiselina",
+    "salicilna",
+    "salicilnom",
+    "salicylic",
+    "salicylic acid"
+   ]
+  },
+  {
+   "canonical": "glikolna kiselina",
+   "category": "cosmetic",
+   "aliases": [
+    "glikolna kiselina",
+    "glikolna",
+    "glycolic",
+    "glycolic acid",
+    "alfa hidroksi kiselina"
+   ]
+  },
+  {
+   "canonical": "peptidi",
+   "category": "cosmetic",
+   "aliases": [
+    "peptidi",
+    "peptida",
+    "peptidima",
+    "peptid",
+    "peptide",
+    "peptides",
+    "peptidni"
+   ]
+  },
+  {
+   "canonical": "ceramidi",
+   "category": "cosmetic",
+   "aliases": [
+    "ceramidi",
+    "ceramid",
+    "ceramida",
+    "ceramidima",
+    "ceramide",
+    "ceramides"
+   ]
+  },
+  {
+   "canonical": "arganovo ulje",
+   "category": "cosmetic",
+   "aliases": [
+    "arganovo ulje",
+    "argan",
+    "argana",
+    "arganovo",
+    "arganom",
+    "arganovim",
+    "argan oil"
+   ]
+  },
+  {
+   "canonical": "shea buter",
+   "category": "cosmetic",
+   "aliases": [
+    "shea buter",
+    "shea",
+    "shea butter",
+    "karite",
+    "karite buter",
+    "si puter"
+   ]
+  },
+  {
+   "canonical": "paracetamol",
+   "category": "otc-drug",
+   "aliases": [
+    "paracetamol",
+    "paracetamola",
+    "acetaminophen"
+   ]
+  },
+  {
+   "canonical": "ibuprofen",
+   "category": "otc-drug",
+   "aliases": [
+    "ibuprofen",
+    "ibuprofena"
+   ]
+  },
+  {
+   "canonical": "acetilsalicilna kiselina",
+   "category": "otc-drug",
+   "aliases": [
+    "acetilsalicilna kiselina",
+    "acetilsalicilna",
+    "acetylsalicylic acid",
+    "aspirin",
+    "aspirina",
+    "andol"
+   ]
+  }
+ ]
+}

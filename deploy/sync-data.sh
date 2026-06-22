@@ -49,8 +49,10 @@ if [[ "$SKIP_SCHEMA" == false ]]; then
         --table='"ProductStandardization"' \
         -f "$SCHEMA_FILE"
 
-    # Strip PG17-specific settings
-    sed -i.bak '/^SET transaction_timeout/d' "$SCHEMA_FILE"
+    # Strip directives the older server PG (PG15) can't parse:
+    #   - PG17:  SET transaction_timeout
+    #   - PG18:  \restrict / \unrestrict  psql markers emitted by pg_dump 18
+    sed -i.bak -e '/^SET transaction_timeout/d' -e '/^\\restrict/d' -e '/^\\unrestrict/d' "$SCHEMA_FILE"
     rm -f "${SCHEMA_FILE}.bak"
 
     echo "  Schema dumped from local DB"
@@ -149,8 +151,10 @@ ssh "$SERVER" << 'ENDSSH'
 set -e
 
 echo "  Importing data with triggers/FK disabled (this may take a while)..."
-# Strip PG17-specific settings that older PG versions don't support
-sed -i '/^SET transaction_timeout/d' /tmp/pharma_data.sql
+# Strip directives the older server PG (PG15) can't parse:
+#   - PG17:  SET transaction_timeout
+#   - PG18:  \restrict / \unrestrict  psql markers emitted by pg_dump 18
+sed -i -e '/^SET transaction_timeout/d' -e '/^\\restrict/d' -e '/^\\unrestrict/d' /tmp/pharma_data.sql
 # Pipe SET + dump + RESET into a single psql session
 # COPY FROM stdin requires the data to come through stdin, not via \i
 sudo -u postgres bash -c '(echo "SET session_replication_role = replica;" ; cat /tmp/pharma_data.sql ; echo "SET session_replication_role = DEFAULT;") | psql -d pharma_search 2>&1 | tail -20'

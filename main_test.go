@@ -122,78 +122,82 @@ func TestBuildFacetsFromHitsSupportsGroupedProductKeys(t *testing.T) {
 	}
 }
 
-func TestConvertHitsToGroupsSortsBySearchRelevanceBeforeVendorCoverage(t *testing.T) {
+func TestConvertHitsToGroupsRanksByCoverageWithinRelevanceTier(t *testing.T) {
 	hits := []map[string]interface{}{
+		// A single-vendor magnesium offer: relevant to the query but low coverage.
 		{
-			"id":                  "best-match",
-			"title":               "Detrical D3 2000 IU 30 tableta",
-			"price":               890.0,
+			"id":                  "mag-1",
+			"title":               "Magnezijum 300 mg 30 kapsula",
+			"price":               700.0,
 			"vendorId":            "vendor-a",
 			"vendorName":          "Vendor A",
-			"link":                "https://a.test/detrical",
-			"thumbnail":           "",
-			"brand":               "Detrical",
-			"normalizedName":      "vitamin d3 2000 iu 30 tableta",
-			"coreProductIdentity": "vitamin d3",
-			"dosageValue":         2000.0,
-			"dosageUnit":          "iu",
-			"form":                "tablete",
-			"quantityValue":       30.0,
+			"brand":               "BrandA",
+			"normalizedName":      "magnezijum 300 mg",
+			"coreProductIdentity": "magnezijum",
+			"dosageValue":         300.0,
+			"dosageUnit":          "mg",
+			"form":                "kapsule",
 		},
+		// A different magnesium strength stocked by two vendors: same relevance
+		// tier, higher coverage -> should rank first.
 		{
-			"id":                  "generic-1",
-			"title":               "Vitamin D3 2000 IU 60 tableta",
-			"price":               990.0,
+			"id":                  "mag-2",
+			"title":               "Magnezijum 375 mg 60 kapsula",
+			"price":               900.0,
 			"vendorId":            "vendor-b",
 			"vendorName":          "Vendor B",
-			"link":                "https://b.test/d3",
-			"thumbnail":           "",
-			"brand":               "OtherBrand",
-			"normalizedName":      "vitamin d3 2000 iu 60 tableta",
-			"coreProductIdentity": "vitamin d3",
-			"dosageValue":         2000.0,
-			"dosageUnit":          "iu",
-			"form":                "tablete",
-			"quantityValue":       60.0,
+			"brand":               "BrandB",
+			"normalizedName":      "magnezijum 375 mg",
+			"coreProductIdentity": "magnezijum",
+			"dosageValue":         375.0,
+			"dosageUnit":          "mg",
+			"form":                "kapsule",
 		},
 		{
-			"id":                  "generic-2",
-			"title":               "Vitamin D3 2000 IU 60 tableta",
-			"price":               1020.0,
+			"id":                  "mag-3",
+			"title":               "Magnezijum 375 mg 60 kapsula",
+			"price":               950.0,
 			"vendorId":            "vendor-c",
 			"vendorName":          "Vendor C",
-			"link":                "https://c.test/d3",
-			"thumbnail":           "",
-			"brand":               "OtherBrand",
-			"normalizedName":      "vitamin d3 2000 iu 60 tableta",
-			"coreProductIdentity": "vitamin d3",
-			"dosageValue":         2000.0,
-			"dosageUnit":          "iu",
+			"brand":               "BrandC",
+			"normalizedName":      "magnezijum 375 mg",
+			"coreProductIdentity": "magnezijum",
+			"dosageValue":         375.0,
+			"dosageUnit":          "mg",
+			"form":                "kapsule",
+		},
+		// An unrelated product: must rank below both (lower relevance tier).
+		{
+			"id":                  "vc-1",
+			"title":               "Vitamin C 500 mg 30 tableta",
+			"price":               400.0,
+			"vendorId":            "vendor-d",
+			"vendorName":          "Vendor D",
+			"brand":               "BrandD",
+			"normalizedName":      "vitamin c 500 mg",
+			"coreProductIdentity": "vitamin c",
+			"dosageValue":         500.0,
+			"dosageUnit":          "mg",
 			"form":                "tablete",
-			"quantityValue":       60.0,
 		},
 	}
 
-	groups := convertHitsToGroups(hits, "detrical d3", nil)
-	if len(groups) != 2 {
-		t.Fatalf("expected 2 groups, got %d", len(groups))
+	groups := convertHitsToGroups(hits, "magnezijum", nil)
+	if len(groups) != 3 {
+		t.Fatalf("expected 3 groups, got %d", len(groups))
 	}
 
-	if got := getString(groups[0], "id"); got == getString(groups[1], "id") {
-		t.Fatalf("expected distinct groups, got duplicate id %q", got)
+	// Within the magnesium relevance tier, the 2-vendor 375mg group outranks the
+	// 1-vendor 300mg group (coverage tie-break).
+	if got := getString(groups[0], "id"); got != "ing:magnezijum::375mg::form:kapsule" {
+		t.Fatalf("expected highest-coverage magnesium group first, got %q", got)
+	}
+	if got := int(getFloat(groups[0], "vendor_count")); got != 2 {
+		t.Fatalf("expected top group vendor_count=2, got %d", got)
 	}
 
-	topGroupProducts := getSlice(groups[0], "products")
-	if len(topGroupProducts) != 1 {
-		t.Fatalf("expected top group to keep the single best-match offer, got %d products", len(topGroupProducts))
-	}
-
-	topProduct, ok := topGroupProducts[0].(map[string]interface{})
-	if !ok {
-		t.Fatalf("expected top product to be a product map")
-	}
-
-	if got := getString(topProduct, "brand_name"); got != "Detrical" {
-		t.Fatalf("expected most relevant Detrical group first, got brand %q", got)
+	// The unrelated Vitamin C group is in a lower relevance tier and must rank last.
+	if got := getString(groups[2], "id"); got != "ing:vitamin c::500mg::form:tablete" {
+		t.Fatalf("expected unrelated group last, got %q", got)
 	}
 }

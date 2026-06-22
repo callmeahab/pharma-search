@@ -29,6 +29,7 @@ from matching_utils import (
     build_standardization_payload,
     normalize_form,
 )
+import dictionaries
 
 load_dotenv()
 
@@ -70,9 +71,10 @@ def load_model():
 
 
 QUANTITY_UNIT_PATTERN = (
-    r"mikrotablet\w*|mikrokapsul\w*|tab\w*|tabl\w*|tableta|tablete|"
-    r"kaps\w*|kapsula|kapsule|caps\w*|capsule\w*|softgel\w*|cps|"
-    r"komada|kom|komad|kesic\w*|ampul\w*"
+    r"mikrotablet\w*|mikrokapsul\w*|tabl\w*|tableta|tablete|tbl|"
+    r"kaps\w*|kapsula|kapsule|kap|caps\w*|capsule\w*|softgel\w*|cps|"
+    r"drazej\w*|pastil\w*|sas\w*|vrecic\w*|kesic\w*|ampul\w*|"
+    r"komada|komad|kom|tab\w*"
 )
 FORM_PATTERN = re.compile(
     r"\b(tablete|tableta|tabl|tab|kapsule|kapsula|kaps|capsules|capsule|caps|softgel|softgels|cps|"
@@ -94,14 +96,17 @@ BRAND_STOP_WORDS = {
 }
 
 
-# Unit normalization mapping
+# Unit normalization -> canonical set {mg, mcg, iu, g, ml, l, kg}
 UNIT_NORMALIZATION = {
     # Cyrillic to Latin
-    "мг": "mg", "г": "g", "мкг": "mcg", "мл": "ml", "л": "l", "ме": "iu",
+    "мг": "mg", "г": "g", "кг": "kg", "мкг": "mcg", "мл": "ml", "л": "l",
+    "ме": "iu", "ије": "iu", "ијм": "iu",
     # Greek/special characters
-    "μg": "mcg", "µg": "mcg",
-    # Variations
-    "i.u.": "iu", "i.j.": "iu", "ij": "iu",
+    "μg": "mcg", "µg": "mcg", "ug": "mcg",
+    # IU variations
+    "i.u.": "iu", "i.j.": "iu", "ij": "iu", "iu": "iu", "ije": "iu",
+    "jm": "iu", "j.m.": "iu", "ie": "iu", "i u": "iu", "i j": "iu",
+    # mass
     "gr": "g", "gram": "g", "grama": "g",
     "miligram": "mg", "miligrama": "mg",
     "mikrogram": "mcg", "mikrograma": "mcg",
@@ -110,115 +115,193 @@ UNIT_NORMALIZATION = {
 }
 
 
-# Units classified by type
-PHARMA_DOSAGE_UNITS = {"mg", "mcg", "iu", "ij", "i.u.", "i.j.", "μg", "µg"}
-VOLUME_UNITS = {"ml", "l", "mл", "л"}
-AMBIGUOUS_UNITS = {"g", "gr", "gram", "grama"}  # small values = dosage, large = weight
+def canon_unit(unit: str) -> str:
+    u = (unit or "").lower().strip().replace(" ", "")
+    return UNIT_NORMALIZATION.get(u, UNIT_NORMALIZATION.get(unit.lower().strip(), u))
 
-# Regex for finding pharma dosage in title text
+
+# Units classified by type
+VOLUME_UNITS = {"ml", "l"}
+WEIGHT_UNITS = {"g", "gr", "gram", "grama", "kg"}  # container weight (large values)
+
+# Collapse thousands separators (1.000 / 1,000 / 1 000) only directly before a
+# strength unit, so "1.000 IU" -> "1000 IU" without harming decimals like "1,2 mg".
+_THOUSANDS_RE = re.compile(
+    r'(?<![a-z0-9])(\d{1,3})[.,  ](\d{3})(?=\s*(?:iu|ij|i\.?\s?u\.?|i\.?\s?j\.?|j\.?\s?m\.?|mg|mcg|ug)\b)',
+    re.IGNORECASE,
+)
+
+
+def pre_normalize_dosage(text: str) -> str:
+    """Lowercase + collapse thousands separators ahead of strength extraction."""
+    t = text.lower()
+    t = _THOUSANDS_RE.sub(r"\1\2", t)
+    return t
+
+
+# IU written many ways; trailing period / end-of-string tolerated via (?![a-z]).
 PHARMA_DOSAGE_RE = re.compile(
-    r'(\d+(?:[.,]\d+)?)\s*(mg|mcg|μg|µg|iu|i\.u\.|i\.j\.|ij)\b', re.IGNORECASE
+    r'(\d+(?:[.,]\d+)?)\s*'
+    r'(mcg|µg|μg|ug|mg|iu|ij|i\.?\s?u\.?|i\.?\s?j\.?|j\.?\s?m\.?)'
+    r'\.?(?![a-z])',
+    re.IGNORECASE,
 )
-VOLUME_RE = re.compile(
-    r'(\d+(?:[.,]\d+)?)\s*(ml|l)\b', re.IGNORECASE
-)
-GRAM_RE = re.compile(
-    r'(\d+(?:[.,]\d+)?)\s*(g|gr)\b', re.IGNORECASE
-)
+VOLUME_RE = re.compile(r'(\d+(?:[.,]\d+)?)\s*(ml|l)\b', re.IGNORECASE)
+GRAM_RE = re.compile(r'(\d+(?:[.,]\d+)?)\s*(kg|g|gr|gram|grama)\b', re.IGNORECASE)
+
+
+def _parse_num(raw: str) -> float:
+    return float(raw.replace(".", "").replace(",", ".")) if raw.count(",") and raw.count(".") else float(raw.replace(",", "."))
+
+
+# Pack counts above this are implausible for tablets/capsules; such a "number +
+# form" match is really a dosage (e.g. "2000 tablete" = 2000 IU), not a count.
+MAX_PACK_COUNT = 500
+
+# Cosmetic/topical forms (mirror of Go matching.topicalForms); used to drop
+# flavor-derived false-positive forms on weight-based powders.
+_TOPICAL_FORMS = {
+    "krema", "krem", "gel", "serum", "losion", "mast", "sampon", "balzam", "sapun",
+    "maska", "pena", "puder", "lak", "mleko", "emulzija", "fluid", "pasta",
+}
+
+# Vitamin D is dosed in IU but is very often written as a bare number ("Detrical
+# 2000", "Vitamin D3 1000"). These are the realistic IU strengths; we only infer
+# an IU dosage when one of these exact values is present, to avoid grabbing pack
+# counts, years, or lot numbers.
+PREFERRED_IU = {
+    400, 500, 600, 800, 1000, 1200, 1500, 2000, 2500, 3000, 4000,
+    5000, 5600, 6000, 7000, 10000, 20000, 25000, 50000,
+}
+_BARE_NUM_RE = re.compile(r"(?<!\d)(\d{3,6})(?!\d)")
+
+
+def infer_bare_iu(title: str, quantity_value: Optional[int]) -> Optional[float]:
+    """Infer an IU dosage from a bare (unitless) number for single-ingredient
+    Vitamin D products. Returns None for combos or when no realistic IU value is
+    present."""
+    canon = dictionaries.supplement_ingredients(title)
+    if canon != ["vitamin d3"]:
+        return None
+    t = pre_normalize_dosage(title)
+    # Only realistic IU values are accepted, and the known pack count is excluded,
+    # so pack sizes / years / lot numbers are not mistaken for a strength.
+    candidates = {
+        int(m.group(1))
+        for m in _BARE_NUM_RE.finditer(t)
+        if int(m.group(1)) in PREFERRED_IU and int(m.group(1)) != (quantity_value or -1)
+    }
+    return float(max(candidates)) if candidates else None
+
+
+# Realistic Vitamin C mg strengths (written bare: "C 1000", "C-500").
+PREFERRED_C_MG = {100, 200, 250, 300, 500, 750, 1000, 1500, 2000, 3000, 4000}
+
+
+def infer_bare_mg(title: str, quantity_value: Optional[int]) -> Optional[float]:
+    """Infer a mg dosage from a bare number for single-ingredient Vitamin C, whose
+    strength is very often written without a unit ("Vitamin C 1000", "C-500")."""
+    canon = dictionaries.supplement_ingredients(title)
+    if canon != ["vitamin c"]:
+        return None
+    t = pre_normalize_dosage(title)
+    candidates = {
+        int(m.group(1))
+        for m in _BARE_NUM_RE.finditer(t)
+        if int(m.group(1)) in PREFERRED_C_MG and int(m.group(1)) != (quantity_value or -1)
+    }
+    return float(max(candidates)) if candidates else None
+
+
+def extract_measures(title: str) -> Dict[str, Any]:
+    """Extract pharma dosage (mg/mcg/iu/small-g) and container volume/weight from
+    a title with robust unit/separator handling."""
+    t = pre_normalize_dosage(title)
+    out = {
+        "dosage_value": None, "dosage_unit": None, "dosage_text": None,
+        "volume_value": None, "volume_unit": None,
+    }
+
+    m = PHARMA_DOSAGE_RE.search(t)
+    if m:
+        try:
+            out["dosage_value"] = _parse_num(m.group(1))
+            out["dosage_unit"] = canon_unit(m.group(2))
+            out["dosage_text"] = m.group(0).strip()
+        except ValueError:
+            pass
+    if out["dosage_value"] is None:
+        g = GRAM_RE.search(t)
+        if g:
+            try:
+                val, unit = _parse_num(g.group(1)), canon_unit(g.group(2))
+                if unit == "g" and val <= 5.0:
+                    out["dosage_value"], out["dosage_unit"], out["dosage_text"] = val, "g", g.group(0).strip()
+            except ValueError:
+                pass
+
+    # bottle volume (ml/l) — skip the denominator of a concentration like "10 mg/ml"
+    for vm in VOLUME_RE.finditer(t):
+        if vm.start() > 0 and t[vm.start() - 1] == "/":
+            continue
+        try:
+            out["volume_value"] = _parse_num(vm.group(1))
+            out["volume_unit"] = canon_unit(vm.group(2))
+        except ValueError:
+            pass
+        break
+
+    # large gram / kg -> container weight, stored on the volume dimension
+    if out["volume_value"] is None:
+        for g in GRAM_RE.finditer(t):
+            try:
+                val, unit = _parse_num(g.group(1)), canon_unit(g.group(2))
+            except ValueError:
+                continue
+            if unit == "kg":
+                out["volume_value"], out["volume_unit"] = val * 1000.0, "g"
+                break
+            if unit == "g" and val > 5.0:
+                out["volume_value"], out["volume_unit"] = val, "g"
+                break
+    return out
 
 
 def post_process_extraction(extracted: Dict[str, Any], title: str) -> Dict[str, Any]:
-    """
-    Post-process NER extraction to fix misclassified dosage entities.
-
-    If the NER model tagged a volume (ml/l) as DOSAGE, move it to volume fields
-    and regex-scan the title for the actual pharma dosage (mg/mcg/iu).
-    """
+    """Reconcile extracted measures: fix volume-as-dosage misclassification and
+    backfill from the title via extract_measures."""
     result = dict(extracted)
-    dosage_unit = (result.get("dosage_unit") or "").lower()
-    dosage_unit_normalized = UNIT_NORMALIZATION.get(dosage_unit, dosage_unit)
+    du = canon_unit(result.get("dosage_unit") or "")
 
-    # Check if the NER-extracted "dosage" is actually a volume
-    if dosage_unit_normalized in ("ml", "l") or dosage_unit in VOLUME_UNITS:
-        # Move the misclassified dosage to volume fields
+    if du in ("ml", "l"):
         result["volume_value"] = result.get("dosage_value")
-        result["volume_unit"] = dosage_unit_normalized
-        # Clear the dosage fields so we can re-extract
-        result["dosage_value"] = None
-        result["dosage_unit"] = None
-        result["dosage_text"] = None
+        result["volume_unit"] = du
+        result["dosage_value"] = result["dosage_unit"] = result["dosage_text"] = None
+    elif du == "g" and (result.get("dosage_value") or 0) > 5.0:
+        result["volume_value"] = result.get("dosage_value")
+        result["volume_unit"] = "g"
+        result["dosage_value"] = result["dosage_unit"] = result["dosage_text"] = None
+    elif du:
+        result["dosage_unit"] = du
 
-        # Try to find actual pharma dosage in the title
-        match = PHARMA_DOSAGE_RE.search(title)
-        if match:
-            try:
-                val = float(match.group(1).replace(",", "."))
-                unit = UNIT_NORMALIZATION.get(match.group(2).lower(), match.group(2).lower())
-                result["dosage_value"] = val
-                result["dosage_unit"] = unit
-                result["dosage_text"] = match.group(0)
-            except ValueError:
-                pass
+    measures = extract_measures(title)
+    if result.get("dosage_value") is None and measures["dosage_value"] is not None:
+        result["dosage_value"] = measures["dosage_value"]
+        result["dosage_unit"] = measures["dosage_unit"]
+        result["dosage_text"] = measures["dosage_text"]
+    if result.get("volume_value") is None and measures["volume_value"] is not None:
+        result["volume_value"] = measures["volume_value"]
+        result["volume_unit"] = measures["volume_unit"]
 
-    # Handle ambiguous 'g' unit: small values (<=5g) are dosage, larger are weight
-    elif dosage_unit_normalized == "g" or dosage_unit in AMBIGUOUS_UNITS:
-        val = result.get("dosage_value") or 0
-        if val > 5.0:
-            # Large gram value → weight, not dosage
-            result["volume_value"] = result.get("dosage_value")
-            result["volume_unit"] = "g"
-            result["dosage_value"] = None
-            result["dosage_unit"] = None
-            result["dosage_text"] = None
-
-            # Try to find actual pharma dosage
-            match = PHARMA_DOSAGE_RE.search(title)
-            if match:
-                try:
-                    val = float(match.group(1).replace(",", "."))
-                    unit = UNIT_NORMALIZATION.get(match.group(2).lower(), match.group(2).lower())
-                    result["dosage_value"] = val
-                    result["dosage_unit"] = unit
-                    result["dosage_text"] = match.group(0)
-                except ValueError:
-                    pass
-
-    # If NER found no dosage at all, try regex extraction from title
+    # Last resort: recover a bare (unitless) strength written without a unit.
     if result.get("dosage_value") is None:
-        match = PHARMA_DOSAGE_RE.search(title)
-        if match:
-            try:
-                val = float(match.group(1).replace(",", "."))
-                unit = UNIT_NORMALIZATION.get(match.group(2).lower(), match.group(2).lower())
-                result["dosage_value"] = val
-                result["dosage_unit"] = unit
-                result["dosage_text"] = match.group(0)
-            except ValueError:
-                pass
+        iu = infer_bare_iu(title, result.get("quantity_value"))
+        if iu is not None:
+            result["dosage_value"], result["dosage_unit"] = iu, "iu"
         else:
-            # Try gram with small-value threshold
-            match = GRAM_RE.search(title)
-            if match:
-                try:
-                    val = float(match.group(1).replace(",", "."))
-                    if val <= 5.0:
-                        result["dosage_value"] = val
-                        result["dosage_unit"] = "g"
-                        result["dosage_text"] = match.group(0)
-                except ValueError:
-                    pass
-
-    # Extract volume from title if we don't have it yet
-    if result.get("volume_value") is None:
-        match = VOLUME_RE.search(title)
-        if match:
-            try:
-                val = float(match.group(1).replace(",", "."))
-                unit = UNIT_NORMALIZATION.get(match.group(2).lower(), match.group(2).lower())
-                result["volume_value"] = val
-                result["volume_unit"] = unit
-            except ValueError:
-                pass
+            mg = infer_bare_mg(title, result.get("quantity_value"))
+            if mg is not None:
+                result["dosage_value"], result["dosage_unit"] = mg, "mg"
 
     return result
 
@@ -259,142 +342,85 @@ def generate_normalized_name(extracted: Dict[str, Any], title: str) -> Optional[
     return None
 
 
-_FORM_WORDS = {
-    "tablete", "tableta", "tabl", "tbl", "tab",
-    "kapsule", "kapsula", "kaps", "caps", "capsule", "capsules",
-    "softgel", "softgels",
-    "gel", "gela",
-    "sirup", "sprej", "spray", "kapi", "drops",
-    "krema", "krem", "cream", "mast", "losion", "lotion", "serum",
-    "prah", "powder", "granule", "granula",
-    "kesice", "kesica", "ampule", "ampula",
-    "komada", "kom", "komad",
-    "rastvor", "solution", "suspenzija",
-    "obloženih", "film",
-    "šampon", "sampon", "balzam", "sapun",
-    "parfem", "parfema", "edp", "edt", "parfum",
-    "pasta", "traka",
-    "cps",
-    # Cosmetics/body care form words
-    "ulje", "oil", "maska", "mask", "pena", "foam", "mousse",
-    "puder", "lak", "emulzija", "emulsion", "voda", "water",
-    "ruž", "ruz", "ulošci", "ulosci", "uložak", "ulozak",
-    "tonik", "toner", "mleko", "mlijeko", "spreju",
-    "fluid", "kupka", "dezodorans", "pastile", "pastila",
-    "čaj", "tea", "prahu",
-}
-
-_NOISE_WORDS = {
-    # Serbian single-letter fillers (a=and/but, i=and, u=in, o=about)
-    "a", "i", "u", "o",
-    # Serbian filler words
-    "za", "sa", "od", "na", "po", "iz", "do", "se", "je", "ili", "sve",
-    "the", "of", "with", "and", "for", "in",
-    # Serbian body parts / category words (not product identities)
-    "kosu", "kosa", "kose", "lice", "lica", "telo", "tela",
-    "ruke", "ruku", "noge", "nogu", "nos", "oči", "oci",
-    "usne", "zube", "zubi", "decu", "deca", "bebe",
-    "stopala", "nokti", "nokte",
-    # Serbian category descriptors / demographics
-    "tuširanje", "tusiranje", "kupanje", "pranje", "negu", "nega",
-    "čišćenje", "ciscenje", "hidratacija", "zaštita", "zastita",
-    "ženski", "muški", "muski", "muškarce", "muskarce", "žene", "zene",
-    "odrasle", "odraslih", "noćna", "nocna", "dnevna",
-    "suvu", "osetljivu", "kožu", "kozu", "područje", "podrucje",
-    "oko", "očiju", "ociju",
-    "roze", "plava", "plavi", "bela", "beli", "crna", "crni",
-    "brijanje", "žvakanje", "zvakanje",
-    "zaštitu", "zastitu", "sunca", "toaletna",
-    # Marketing
-    "plus", "extra", "forte", "max", "ultra", "super", "premium",
-    "pro", "active", "natural", "organic",
-    "gratis", "poklon", "set", "promo",
-    # Vendor/packaging noise
-    "dr.", "dr", "theiss",
-    "foods", "pharm", "pharma",
-    # Common suffixes that leak through
-    "2u1", "3u1",
-    # SPF is like dosage for sunscreen, not product identity
-    "spf", "spf15", "spf20", "spf30", "spf50", "spf50+",
-}
+# Patterns used to strip measures / pack tokens before identity extraction.
+# Fuse only short vitamer codes (d-3 -> d3, b-12 -> b12, omega-3 -> omega3); do
+# NOT fuse strengths like C-1000 / E-400 (those numbers are dosages — leave the
+# hyphen so it normalizes to a space and "vitamin c" is still detected).
+_HYPHEN_CODE_RE = re.compile(r'([a-z])-(\d{1,2})\b')
+_PACK_RES = [
+    re.compile(r'\b\d+\s*[xх×]\s*\d+(?:[.,]\d+)?\s*(?:mg|mcg|ug|µg|μg|iu|ij|ml|l|kg|g|gr)\b', re.IGNORECASE),
+    re.compile(r'\b\d+\s*[xх×]\s*\d+\b'),
+    re.compile(r'\b[axх×]\s*\d+\b', re.IGNORECASE),
+    re.compile(r'\b\d+\s*[xх×]\b'),
+]
+_QTY_FORM_RE = re.compile(rf'\b\d+\s*(?:{QUANTITY_UNIT_PATTERN}|obložen\w*|film\w*)\b', re.IGNORECASE)
+_SPF_RE = re.compile(r'\bspf\s*\d+\+?\b', re.IGNORECASE)
+_PERCENT_RE = re.compile(r'\b\d+(?:[.,]\d+)?\s*%')
+_KEEP_SHORT = {"c", "d", "b", "k", "e"}
 
 
-def _clean_title(t: str) -> list:
-    """Clean a lowercased title string and return significant core words."""
-    # Replace special chars with spaces
+def _strip_measures_for_core(title: str) -> str:
+    """Remove dosage / volume / pack-size / SPF tokens from a title so only the
+    product identity words remain."""
+    t = pre_normalize_dosage(title)
     t = re.sub(r'[®™©()\[\]/\\,;:!?]', ' ', t)
-
-    # Normalize hyphenated alphanumeric tokens: d-3 → d3, b-12 → b12, omega-3 → omega3
-    t = re.sub(r'\b([a-z]+)-(\d+)', r'\1\2', t)
-
-    # Remove concatenated quantity×dosage patterns FIRST: "60x2000iu", "30x500mg"
-    t = re.sub(r'\b\d+\s*[xх×]\s*\d+(?:[.,]\d+)?\s*(mg|mcg|μg|µg|iu|i\.u\.|i\.j\.|ij|ml|l|g|gr|kg)\b', ' ', t, flags=re.IGNORECASE)
-
-    # Remove quantity×count patterns without units: "60x2", "30x1"
-    t = re.sub(r'\b\d+\s*[xх×]\s*\d+\b', ' ', t)
-
-    # Remove dosage patterns: "1000 iu", "500mg", "1000ij", etc.
-    t = re.sub(r'\b\d+(?:[.,]\d+)?\s*(mg|mcg|μg|µg|iu|i\.u\.|i\.j\.|ij|ml|l|g|gr|kg)\b', ' ', t, flags=re.IGNORECASE)
-
-    # Remove quantity + form patterns: "60 tableta", "a30", "30 caps", "x60"
-    t = re.sub(r'\b[ax]?\d+\s*(mikrotablet\w*|mikrokapsul\w*|tab\w*|tabl\w*|tableta|tablete|kaps\w*|kapsula|kapsule|caps\w*|capsule\w*|softgel\w*|gel\w*|komada|kom|komad|kesic\w*|ampul\w*|obložen\w*|film\w*)\b', ' ', t, flags=re.IGNORECASE)
-    t = re.sub(r'\b[ax]\d+\b', ' ', t)
-    t = re.sub(r'\b\d+[xх×]\b', ' ', t)
-
-    # Remove SPF patterns: "spf50", "spf 30", "spf50+"
-    t = re.sub(r'\bspf\s*\d+\+?\b', ' ', t, flags=re.IGNORECASE)
-
-    # Remove standalone pure numbers but keep alphanumeric like d3, b12, k2, q10, c1000
-    t = re.sub(r'(?<![a-z0-9])\d+(?:\+\d+)*(?![a-z0-9])', ' ', t)
-
-    words = t.split()
-    core = []
-    for w in words:
-        w = w.strip(".,;:!?+–—_- ")
-        wl = w.lower()
-        if not wl:
-            continue
-        if len(wl) == 1 and wl not in ('c', 'e', 'd', 'b', 'k'):
-            continue
-        if wl in _FORM_WORDS:
-            continue
-        if wl in _NOISE_WORDS:
-            continue
-        core.append(wl)
-    return core
+    t = _HYPHEN_CODE_RE.sub(r'\1\2', t)  # d-3 -> d3, omega-3 -> omega3
+    for pat in _PACK_RES:
+        t = pat.sub(' ', t)
+    t = PHARMA_DOSAGE_RE.sub(' ', t)
+    t = re.sub(r'\b\d+(?:[.,]\d+)?\s*(?:ml|l|kg|g|gr|gram|grama)\b', ' ', t, flags=re.IGNORECASE)
+    t = _QTY_FORM_RE.sub(' ', t)
+    t = _SPF_RE.sub(' ', t)
+    t = _PERCENT_RE.sub(' ', t)
+    return t
 
 
-def _extract_core_ingredient(title: str, brand: Optional[str]) -> Optional[str]:
+def _extract_core_ingredient(title: str, brand: Optional[str] = None) -> Optional[str]:
+    """Extract a clean, canonical product identity.
+
+    Detects whitelisted ingredients (mapped to their canonical names so brand /
+    language / abbreviation variants collapse), then appends the remaining
+    descriptor tokens with brand / noise / form / pack tokens removed. Word order
+    is canonicalized (sorted ingredients first) so the same product yields the
+    same identity regardless of how the vendor titled it.
     """
-    Extract the core product identity from a title (brand-independent).
-    Strips: brand name, dosage+units, quantity+form words, noise/filler, pure numbers.
-    Keeps: product name, key identifiers (d3, b12, omega3, etc.)
+    cleaned = _strip_measures_for_core(title)
+    canon, leftover = dictionaries.analyze_ingredients(cleaned, track_a_only=False)
 
-    Tries brand-stripped version first for cross-brand grouping.
-    Falls back to full title if brand stripping leaves nothing useful.
-    """
-    t = title.lower()
+    brand_tokens = set(dictionaries.normalize(brand).split()) if brand else set()
 
-    # Try brand-stripped version first (enables cross-brand grouping)
-    if brand and len(brand) > 1:
-        t_stripped = t
-        brand_lower = brand.lower().strip()
-        for bw in brand_lower.split():
-            if len(bw) > 1:
-                t_stripped = re.sub(r'\b' + re.escape(bw) + r'\b', ' ', t_stripped)
+    descriptors: List[str] = []
+    for tok in leftover:
+        if tok in brand_tokens or dictionaries.is_brand(tok):
+            continue
+        if tok in dictionaries.NOISE_WORDS or tok in dictionaries.FORM_WORDS:
+            continue
+        if re.fullmatch(r'\d+(?:[.,]\d+)*', tok):
+            continue
+        if re.fullmatch(r'(?:\d+[a-z]+|[a-z]+\d+\+?)', tok) and tok not in dictionaries.SINGLE_TOKEN_ALIASES:
+            continue
+        if len(tok) < 2 and tok not in _KEEP_SHORT:
+            continue
+        descriptors.append(tok)
 
-        core = _clean_title(t_stripped)
-        result = " ".join(core[:4]).title() if core else None
-        # Require at least 2 chars — single letters (b, c) alone are too generic
-        if result and len(result) >= 2:
-            return result
+    parts = canon + descriptors
+    parts = parts[:5]
+    if not parts:
+        # Last-resort fallback still strips brand / noise / form so brand tokens
+        # never leak into the identity.
+        parts = [
+            t for t in leftover
+            if t not in brand_tokens
+            and not dictionaries.is_brand(t)
+            and t not in dictionaries.NOISE_WORDS
+            and t not in dictionaries.FORM_WORDS
+            and len(t) >= 2
+        ][:3]
 
-    # Fallback: use full title (brand stays in key)
-    core = _clean_title(t)
-    result = " ".join(core[:4]).title() if core else None
-    if result and len(result) >= 2:
-        return result
-    return None
+    core = " ".join(parts).strip()
+    if len(core) < 2:
+        return None
+    return core.title()
 
 
 
@@ -434,34 +460,11 @@ def parse_quantity_text(text: str) -> Optional[Dict[str, Any]]:
 
 
 def extract_brand_candidate(title: str) -> Optional[str]:
-    """Conservatively extract a leading brand candidate from the title."""
-    tokens = re.findall(r"[A-Za-zА-Яа-я0-9+-]+", title)
-    if not tokens:
-        return None
-
-    brand_tokens: List[str] = []
-    for token in tokens:
-        normalized = token.lower().strip("+-")
-        if not normalized:
-            continue
-        if re.match(r"^\d", normalized):
-            break
-        if normalized in BRAND_STOP_WORDS:
-            break
-        if FORM_PATTERN.match(normalized):
-            break
-        if PHARMA_DOSAGE_RE.match(normalized) or VOLUME_RE.match(normalized):
-            break
-
-        brand_tokens.append(token)
-        if len(brand_tokens) >= 2:
-            break
-
-    if not brand_tokens:
-        return None
-
-    brand = " ".join(brand_tokens).strip()
-    return brand if len(brand) > 1 else None
+    """Extract the brand as a KNOWN brand found anywhere in the title (longest
+    match). Returns Title Cased brand, or None. This avoids mistaking a product-line
+    name (e.g. 'Iso Sensation') for a brand, which would strip the real identity."""
+    brand = dictionaries.detect_brand(title)
+    return brand.title() if brand else None
 
 
 def extract_entities_rule_based(title: str) -> Dict[str, Any]:
@@ -490,32 +493,23 @@ def extract_entities_rule_based(title: str) -> Dict[str, Any]:
         result["form"] = normalized
         result["entities_found"].append({"label": "FORM", "text": form_match.group(1)})
 
-    dosage_match = PHARMA_DOSAGE_RE.search(title)
-    if dosage_match:
-        value = float(dosage_match.group(1).replace(",", "."))
-        unit = UNIT_NORMALIZATION.get(dosage_match.group(2).lower(), dosage_match.group(2).lower())
-        result["dosage_value"] = value
-        result["dosage_unit"] = unit
-        result["dosage_text"] = dosage_match.group(0)
-        result["entities_found"].append({"label": "DOSAGE", "text": dosage_match.group(0)})
-    else:
-        gram_match = GRAM_RE.search(title)
-        if gram_match:
-            value = float(gram_match.group(1).replace(",", "."))
-            if value <= 5.0:
-                result["dosage_value"] = value
-                result["dosage_unit"] = "g"
-                result["dosage_text"] = gram_match.group(0)
-                result["entities_found"].append({"label": "DOSAGE", "text": gram_match.group(0)})
+    measures = extract_measures(title)
+    result["dosage_value"] = measures["dosage_value"]
+    result["dosage_unit"] = measures["dosage_unit"]
+    result["dosage_text"] = measures["dosage_text"]
+    result["volume_value"] = measures["volume_value"]
+    result["volume_unit"] = measures["volume_unit"]
+    if measures["dosage_text"]:
+        result["entities_found"].append({"label": "DOSAGE", "text": measures["dosage_text"]})
 
-    volume_match = VOLUME_RE.search(title)
-    if volume_match:
-        result["volume_value"] = float(volume_match.group(1).replace(",", "."))
-        result["volume_unit"] = UNIT_NORMALIZATION.get(
-            volume_match.group(2).lower(), volume_match.group(2).lower()
-        )
-
-    quantity_match = QUANTITY_WITH_UNIT_RE.search(title)
+    # Pick the first plausible count. A "number + form" match whose number is too
+    # large to be a pack size (e.g. "2000 TABLETE" = 2000 IU in tablet form, not
+    # 2000 tablets) is skipped so it can be read as a dosage instead.
+    quantity_match = None
+    for m in QUANTITY_WITH_UNIT_RE.finditer(title):
+        if int(m.group(1)) <= MAX_PACK_COUNT:
+            quantity_match = m
+            break
     if quantity_match:
         result["quantity_value"] = int(quantity_match.group(1))
         result["quantity_unit"] = quantity_match.group(2).lower()
@@ -527,12 +521,19 @@ def extract_entities_rule_based(title: str) -> Dict[str, Any]:
                 result["form"] = normalized
     else:
         quantity_prefix_match = QUANTITY_PREFIX_RE.search(title)
-        if quantity_prefix_match:
+        if quantity_prefix_match and int(quantity_prefix_match.group(1)) <= MAX_PACK_COUNT:
             result["quantity_value"] = int(quantity_prefix_match.group(1))
             result["quantity_unit"] = "kom"
             result["entities_found"].append(
                 {"label": "QUANTITY", "text": quantity_prefix_match.group(0)}
             )
+
+    # Large powders/tubs (>=400 g, or any kg) are not cosmetics: a "krema"/"cream"
+    # form here is a flavor false-positive ("cookies & cream", "keks i krema"), so
+    # drop it. Small gram weights (30-250 g) can be genuine cosmetic creams -> keep.
+    _vu, _vv = result.get("volume_unit"), result.get("volume_value") or 0
+    if (_vu == "kg" or (_vu == "g" and _vv >= 400)) and normalize_form(result.get("form")) in _TOPICAL_FORMS:
+        result["form"] = None
 
     return result
 
@@ -709,20 +710,23 @@ def update_product_table(conn, updates: List[Dict]) -> int:
         for update in updates
     ]
 
+    # Direct assignment (no COALESCE): a re-extraction must fully overwrite, incl.
+    # clearing a field to NULL when the new extraction finds nothing — COALESCE
+    # would otherwise preserve stale values from a previous (noisier) run.
     query = """
         UPDATE "Product" AS p SET
-            "extractedBrand" = COALESCE(v.brand::text, p."extractedBrand"),
-            form = COALESCE(v.form::text, p.form),
-            "dosageValue" = COALESCE(v.dosage_value::double precision, p."dosageValue"),
-            "dosageUnit" = COALESCE(v.dosage_unit::text, p."dosageUnit"),
-            "quantityValue" = COALESCE(v.quantity_value::integer, p."quantityValue"),
-            "quantityUnit" = COALESCE(v.quantity_unit::text, p."quantityUnit"),
-            "volumeValue" = COALESCE(v.volume_value::numeric, p."volumeValue"),
-            "volumeUnit" = COALESCE(v.volume_unit::text, p."volumeUnit"),
-            "normalizedName" = COALESCE(v.normalized_name::text, p."normalizedName"),
-            "coreProductIdentity" = COALESCE(v.core_product_identity::text, p."coreProductIdentity"),
-            "searchTokens" = COALESCE(v.search_tokens::text[], p."searchTokens"),
-            "keywordTags" = COALESCE(v.keyword_tags::text[], p."keywordTags"),
+            "extractedBrand" = v.brand::text,
+            form = v.form::text,
+            "dosageValue" = v.dosage_value::double precision,
+            "dosageUnit" = v.dosage_unit::text,
+            "quantityValue" = v.quantity_value::integer,
+            "quantityUnit" = v.quantity_unit::text,
+            "volumeValue" = v.volume_value::numeric,
+            "volumeUnit" = v.volume_unit::text,
+            "normalizedName" = v.normalized_name::text,
+            "coreProductIdentity" = v.core_product_identity::text,
+            "searchTokens" = v.search_tokens::text[],
+            "keywordTags" = v.keyword_tags::text[],
             "processedAt" = CURRENT_TIMESTAMP,
             "updatedAt" = CURRENT_TIMESTAMP
         FROM (VALUES %s) AS v(
@@ -953,6 +957,19 @@ def process_products(nlp, conn, limit: int = 0, update_all: bool = False,
                 "quantity_value": extracted.get("quantity_value"),
                 "form": normalized_form,
             })
+
+            # Add canonical ingredient tokens (compact + spaced) so concept-based
+            # search unifies spelling/language variants (magnezijum/magnesium/mg).
+            canon, _ = dictionaries.analyze_ingredients(
+                f"{product['title']} {core_identity or ''}", track_a_only=False
+            )
+            extra_tokens = []
+            for c in canon:
+                extra_tokens.append(dictionaries.canonical_compact(c))
+                extra_tokens.extend(c.split())
+            if extra_tokens:
+                seen = set(search_tokens)
+                search_tokens = list(search_tokens) + [t for t in extra_tokens if t and t not in seen]
 
             update_record = {
                 "id": product["id"],

@@ -186,15 +186,20 @@ func (s *server) GetFeaturedProducts(ctx context.Context, limit int) ([]Featured
 			qv = float64(quantityValue.Int64)
 		}
 
-		groupKey := matching.BuildComparableGroupID(coreIdentity, dv, dosageUnit, vv, volumeUnit, qv, form)
-		if groupKey == "" {
-			groupKey = matching.BuildGroupID(coreIdentity, dv, dosageUnit)
-		}
-		if groupKey == "" {
-			groupKey = coreIdentity
-		}
-
-		displayName := matching.BuildDisplayName(coreIdentity, dv, dosageUnit, vv, volumeUnit, qv, form)
+		gk := matching.BuildGroupKey(matching.GroupKeyInput{
+			Core:        coreIdentity,
+			Brand:       brandName,
+			Title:       title,
+			ProductID:   id,
+			DosageValue: dv,
+			DosageUnit:  dosageUnit,
+			VolumeValue: vv,
+			VolumeUnit:  volumeUnit,
+			Quantity:    qv,
+			Form:        form,
+		})
+		groupKey := gk.Key
+		displayName := gk.DisplayName
 		if displayName == "" {
 			displayName = normalizedName
 		}
@@ -235,6 +240,7 @@ func (s *server) GetFeaturedProducts(ctx context.Context, limit int) ([]Featured
 
 	for _, key := range groupOrder {
 		group := groupMap[key]
+		group.ProductCount = len(group.Products)
 		deduped, _ := dedupeFeaturedProductsByVendor(group.Products)
 		group.Products = deduped
 		group.VendorCount = len(deduped)

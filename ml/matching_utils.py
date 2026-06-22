@@ -33,6 +33,7 @@ FORM_ALIASES = {
     "tabl": "tablete",
     "tableta": "tablete",
     "tablete": "tablete",
+    "kap": "kapsule",
     "kaps": "kapsule",
     "kapsula": "kapsule",
     "kapsule": "kapsule",
