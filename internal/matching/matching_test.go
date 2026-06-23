@@ -170,6 +170,32 @@ func TestResidualSynonymUnifiesCaseinSpellings(t *testing.T) {
 	}
 }
 
+func TestBuildGroupKeyBrandedMultivitaminMergesByCoreVariant(t *testing.T) {
+	// Same branded multivitamin (no whitelisted ingredient) across vendors and
+	// spelling variants ("A do Z" / "A-Z") -> one group (was per-offer singletons).
+	a := BuildGroupKey(GroupKeyInput{Core: "Centrum", Title: "Centrum A do Z 30 tableta", Form: "tablete", ProductID: "1"})
+	b := BuildGroupKey(GroupKeyInput{Core: "Centrum", Title: "Centrum A-Z 30 tableta", Form: "tablete", ProductID: "2"})
+	if a.Key != b.Key {
+		t.Fatalf("expected branded multivitamin to merge across vendors, got %q vs %q", a.Key, b.Key)
+	}
+	if a.Method != "brand-core" {
+		t.Fatalf("expected method 'brand-core', got %q", a.Method)
+	}
+	if strings.HasPrefix(a.Key, "offer:") {
+		t.Fatalf("branded multivitamin must not fall to a per-offer key, got %q", a.Key)
+	}
+	// A different variant must stay separate.
+	move := BuildGroupKey(GroupKeyInput{Core: "Centrum Move", Title: "Centrum Move 30 kapsula", Form: "kapsule", ProductID: "3"})
+	if move.Key == a.Key {
+		t.Fatalf("different variant (Move) must not merge with A-Z, both %q", a.Key)
+	}
+	// A bare generic multivitamin (no brand/variant) still groups by ingredient.
+	generic := BuildGroupKey(GroupKeyInput{Core: "Multivitamin", Title: "Multivitamin 30 tableta", Form: "tablete", ProductID: "4"})
+	if generic.Method != "ingredient" {
+		t.Fatalf("bare multivitamin should stay ingredient-grouped, got %q", generic.Method)
+	}
+}
+
 func TestExpandQueryVariantsIncludesCanonical(t *testing.T) {
 	variants := ExpandQueryVariants("d3")
 	if !contains(variants, "vitamin d3") {

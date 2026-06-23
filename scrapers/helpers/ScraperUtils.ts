@@ -26,10 +26,12 @@ export class ScraperUtils {
     height: 1080,
   };
 
+  // Full, current Chrome UAs (the old truncated strings were an obvious bot tell
+  // and weren't paired with client hints — see configurePage).
   static readonly USER_AGENTS = [
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15',
-    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko)',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
   ];
   private static readonly BLOCKED_RESOURCE_TYPES = new Set([
     'eventsource',
@@ -98,6 +100,10 @@ export class ScraperUtils {
       DNT: '1',
       'Upgrade-Insecure-Requests': '1',
       'User-Agent': userAgent,
+      // Client hints matching the Chrome 120 UA above (their absence is a bot tell).
+      'sec-ch-ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+      'sec-ch-ua-mobile': '?0',
+      'sec-ch-ua-platform': '"Windows"',
     });
     await page.setUserAgent(userAgent);
     await page.setDefaultNavigationTimeout(this.NAVIGATION_TIMEOUT_MS);
@@ -251,5 +257,35 @@ export class ScraperUtils {
         }, 200);
       });
     });
+  }
+
+  // Throws if the page is an anti-bot wall (Cloudflare managed challenge, "Just a
+  // moment", "you have been blocked"). Call right after navigation so a blocked
+  // scrape FAILS LOUD (recorded as an error + alerted) instead of silently
+  // "succeeding" with zero products. NOTE: a managed challenge usually cannot be
+  // cleared by stealth alone — it needs a real-browser solve or a scraping proxy.
+  static async assertNotBlocked(page: Page, label = 'page'): Promise<void> {
+    const info = await page.evaluate(() => ({
+      title: document.title || '',
+      body: (document.body?.innerText || '').slice(0, 800),
+      challenge: !!document.querySelector(
+        '#challenge-form, #cf-challenge-running, #challenge-running, [data-translate="checking_browser"]',
+      ),
+    }));
+    const blob = `${info.title}\n${info.body}`.toLowerCase();
+    const markers = [
+      'just a moment',
+      'checking your browser',
+      'attention required',
+      'sorry, you have been blocked',
+      'enable javascript and cookies to continue',
+      'verify you are human',
+      'cf-mitigated',
+    ];
+    if (info.challenge || markers.some((m) => blob.includes(m))) {
+      throw new Error(
+        `${label} blocked by an anti-bot challenge (Cloudflare?) — title="${info.title.slice(0, 80)}". Needs a scraping proxy / CF solver.`,
+      );
+    }
   }
 }

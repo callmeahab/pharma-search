@@ -8,15 +8,17 @@ import { ScraperUtils } from './helpers/ScraperUtils';
 puppeteer.use(StealthPlugin());
 
 const scrapedTitles = new Set<string>();
+// Slugs refreshed 2026-06-22 — the old ones 302-redirect to the homepage after a
+// catalog reorg. Current category slugs verified live from lama.rs.
 const baseUrls = [
-  'https://www.lama.rs/lamavita-zdravlje',
-  'https://www.lama.rs/proteini',
-  'https://www.lama.rs/povecanje-misicne-mase',
-  'https://www.lama.rs/rtd-i-zamene-za-obrok',
+  'https://www.lama.rs/proteini-i-gejneri',
   'https://www.lama.rs/aminokiseline',
   'https://www.lama.rs/kreatini',
-  'https://www.lama.rs/energija',
+  'https://www.lama.rs/energija-i-fokus',
   'https://www.lama.rs/mrsavljenje-i-definicija',
+  'https://www.lama.rs/vitamini-minerali-i-zdravlje',
+  'https://www.lama.rs/zdravlje-zglobova-i-kostiju',
+  'https://www.lama.rs/suplementi-na-akciji',
   'https://www.lama.rs/oprema',
 ];
 

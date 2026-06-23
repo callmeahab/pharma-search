@@ -55,7 +55,8 @@ async function scrapePage(
               return null;
             }
 
-            const titleElement = element.querySelector('h4');
+            // Title moved into the .h4art_det anchor (was a bare <h4>).
+            const titleElement = element.querySelector('.h4art_det a, .h4art_det, h4');
             const title = titleElement?.textContent?.trim() || '';
 
             const price =

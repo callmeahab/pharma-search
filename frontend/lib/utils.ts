@@ -97,6 +97,26 @@ export function formatPrice(price: number): string {
 }
 
 /**
+ * Human-friendly "price retrieved" age in Serbian: "danas", "juče",
+ * "pre N dana", or a date for older values. Returns "" if no/invalid input.
+ */
+export function formatPriceAge(iso?: string): string {
+  if (!iso) return "";
+  const then = new Date(iso);
+  const t = then.getTime();
+  if (isNaN(t)) return "";
+  const days = Math.floor((Date.now() - t) / 86400000);
+  if (days <= 0) return "danas";
+  if (days === 1) return "juče";
+  if (days < 7) return `pre ${days} ${pluralizeSr(days, "dan", "dana", "dana")}`;
+  if (days < 31) {
+    const w = Math.floor(days / 7);
+    return `pre ${w} ${pluralizeSr(w, "nedelju", "nedelje", "nedelja")}`;
+  }
+  return then.toLocaleDateString("sr-RS", { day: "2-digit", month: "2-digit", year: "numeric" });
+}
+
+/**
  * Serbian pluralization helper
  * Serbian has 3 forms: singular (1), few (2-4), many (5+, 0, 11-14)
  */

@@ -29,6 +29,7 @@ async function scrapePage(
       page.goto(url, { waitUntil: 'domcontentloaded' }),
       page.waitForNavigation({ waitUntil: 'networkidle2' }).catch(() => {}),
     ]);
+    await ScraperUtils.assertNotBlocked(page, 'srbotrade');
 
     await page
       .waitForSelector('.productItemWrapper', {

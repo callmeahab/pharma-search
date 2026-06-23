@@ -101,7 +101,8 @@ func searchProductsDB(db *sql.DB, query string, limit int) ([]map[string]interfa
 			p."volumeValue",
 			COALESCE(p."volumeUnit", '') as volume_unit,
 			COALESCE(p.form, '') as form,
-			p."quantityValue"
+			p."quantityValue",
+			p."priceScrapedAt"
 		FROM "Product" p
 		JOIN "Vendor" v ON v.id = p."vendorId"
 		CROSS JOIN q
@@ -156,16 +157,21 @@ func searchProductsDB(db *sql.DB, query string, limit int) ([]map[string]interfa
 		var brand, normalizedName, coreProductIdentity, dosageUnit, volumeUnit, form string
 		var price, dosageValue, volumeValue sql.NullFloat64
 		var quantityValue sql.NullInt64
+		var updatedAt sql.NullTime
 
 		if err := rows.Scan(&id, &title, &price, &vendorId, &vendorName, &link, &thumbnail,
 			&brand, &normalizedName, &coreProductIdentity,
-			&dosageValue, &dosageUnit, &volumeValue, &volumeUnit, &form, &quantityValue); err != nil {
+			&dosageValue, &dosageUnit, &volumeValue, &volumeUnit, &form, &quantityValue, &updatedAt); err != nil {
 			return nil, fmt.Errorf("scan error: %w", err)
 		}
 
 		priceVal := 0.0
 		if price.Valid {
 			priceVal = price.Float64
+		}
+		updatedAtStr := ""
+		if updatedAt.Valid {
+			updatedAtStr = updatedAt.Time.UTC().Format(time.RFC3339)
 		}
 
 		result := map[string]interface{}{
@@ -185,6 +191,7 @@ func searchProductsDB(db *sql.DB, query string, limit int) ([]map[string]interfa
 			"volumeUnit":          volumeUnit,
 			"form":                form,
 			"quantityValue":       float64(quantityValue.Int64),
+			"updatedAt":           updatedAtStr,
 		}
 		results = append(results, result)
 	}
@@ -383,6 +390,7 @@ func enrichProductsWithGroupKey(hits []map[string]interface{}) []map[string]inte
 			"link":                  getString(h, "link"),
 			"thumbnail":             getString(h, "thumbnail"),
 			"brand_name":            brand,
+			"price_updated_at":      getString(h, "updatedAt"),
 			"group_key":             gk.Key,
 			"group_display":         gk.DisplayName,
 			"group_method":          gk.Method,
@@ -1063,9 +1071,10 @@ func convertGroupsToProto(groups []map[string]interface{}) *pb.ProductGroupChunk
 				GroupKey:    getString(pm, "group_key"),
 				DosageValue: getFloat(pm, "dosage_value"),
 				DosageUnit:  getString(pm, "dosage_unit"),
-				Form:        getString(pm, "form"),
-				Quantity:    int32(getFloat(pm, "quantity")),
-				Rank:        int32(getFloat(pm, "rank")),
+				Form:           getString(pm, "form"),
+				Quantity:       int32(getFloat(pm, "quantity")),
+				Rank:           int32(getFloat(pm, "rank")),
+				PriceUpdatedAt: getString(pm, "price_updated_at"),
 			})
 		}
 

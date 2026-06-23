@@ -30,6 +30,7 @@ async function scrapePage(
       page.goto(url, { waitUntil: 'domcontentloaded' }),
       page.waitForNavigation({ waitUntil: 'networkidle2' }).catch(() => {}),
     ]);
+    await ScraperUtils.assertNotBlocked(page, 'benu');
 
     await page
       .waitForSelector('.product-box', {
@@ -91,16 +92,6 @@ async function scrapePage(
   }
 }
 
-async function hasNextPage(page: Page): Promise<boolean> {
-  try {
-    const nextButton = await page.$('.legacy-ajax.next');
-    return nextButton !== null;
-  } catch (error) {
-    console.error(`Error checking for next page: ${error}`);
-    return false;
-  }
-}
-
 async function scrapeMultipleBaseUrls(): Promise<Product[]> {
   const browser = await puppeteer.launch({
     headless: ScraperUtils.IS_HEADLESS,
@@ -145,13 +136,16 @@ async function scrapeMultipleBaseUrls(): Promise<Product[]> {
 
         allScrapedProducts = [...allScrapedProducts, ...products];
 
-        const nextPageExists = await hasNextPage(page);
-        if (!nextPageExists) {
-          console.log(`No next page found for ${pageUrl}, stopping...`);
+        // Paginate until a page yields no NEW products. scrapePage returns only
+        // titles not seen before, so this naturally stops at the true end AND when
+        // benu clamps an out-of-range ?page=N to the last page (a repeated page
+        // adds 0 new). The old `.legacy-ajax.next` button check stopped most
+        // categories far too early (benu has ~5k products; we were getting ~1.4k).
+        pageNum++;
+        if (pageNum > 300) {
+          console.log(`Reached page cap for ${baseUrl}, stopping...`);
           break;
         }
-
-        pageNum++;
       }
     }
 

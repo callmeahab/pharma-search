@@ -1,6 +1,11 @@
 /**
- * Import CSV files into the database
- * Reads CSV files from the output directory and inserts products into PostgreSQL
+ * Import CSV files into the database.
+ *
+ * For each vendor we import only the NEWEST CSV per scraper-shard (so old dated
+ * snapshots don't re-apply stale prices), then transactionally replace that
+ * vendor's catalog: upsert the fresh rows and delist (delete) any of the vendor's
+ * products that were NOT in this run — unless the fresh snapshot is suspiciously
+ * small vs. what's already stored (a broken scrape must not wipe a vendor).
  */
 
 import * as fs from 'fs';
@@ -8,6 +13,11 @@ import * as path from 'path';
 import { createDbPool, loadVendors } from './helpers/db';
 
 const OUTPUT_DIR = path.join(process.cwd(), 'output');
+
+// If a fresh snapshot has fewer than this fraction of the vendor's currently
+// stored products, we skip delisting (likely a broken/partial scrape) and only
+// upsert. Override with IMPORT_DELIST_MIN_RATIO.
+const DELIST_MIN_RATIO = Number.parseFloat(process.env.IMPORT_DELIST_MIN_RATIO || '0.5');
 
 interface ProductRow {
   title: string;
@@ -20,49 +30,58 @@ interface ProductRow {
   scrapedAt: string;
 }
 
-function parseCSVLine(line: string): string[] {
-  const values: string[] = [];
-  let current = '';
+// Robust CSV parser: handles quoted fields containing commas, escaped quotes
+// ("") and NEWLINES inside quotes (the old line-split parser corrupted any
+// multi-line quoted title).
+function parseCSVRecords(content: string): string[][] {
+  const records: string[][] = [];
+  let field = '';
+  let record: string[] = [];
   let inQuotes = false;
 
-  for (let i = 0; i < line.length; i++) {
-    const char = line[i];
-    const nextChar = line[i + 1];
-
+  for (let i = 0; i < content.length; i++) {
+    const c = content[i];
     if (inQuotes) {
-      if (char === '"' && nextChar === '"') {
-        current += '"';
-        i++; // Skip next quote
-      } else if (char === '"') {
-        inQuotes = false;
+      if (c === '"') {
+        if (content[i + 1] === '"') {
+          field += '"';
+          i++;
+        } else {
+          inQuotes = false;
+        }
       } else {
-        current += char;
+        field += c;
       }
-    } else {
-      if (char === '"') {
-        inQuotes = true;
-      } else if (char === ',') {
-        values.push(current);
-        current = '';
-      } else {
-        current += char;
-      }
+    } else if (c === '"') {
+      inQuotes = true;
+    } else if (c === ',') {
+      record.push(field);
+      field = '';
+    } else if (c === '\n') {
+      record.push(field);
+      field = '';
+      records.push(record);
+      record = [];
+    } else if (c !== '\r') {
+      field += c;
     }
   }
-  values.push(current);
-  return values;
+  if (field.length > 0 || record.length > 0) {
+    record.push(field);
+    records.push(record);
+  }
+  return records;
 }
 
 function parseCSV(content: string): ProductRow[] {
-  const lines = content.split('\n').filter(line => line.trim());
-  if (lines.length < 2) return [];
+  const records = parseCSVRecords(content);
+  if (records.length < 2) return [];
 
   const rows: ProductRow[] = [];
-
-  // Skip header (first line)
-  for (let i = 1; i < lines.length; i++) {
-    const values = parseCSVLine(lines[i]);
-    if (values.length >= 8) {
+  // Skip header (record 0)
+  for (let i = 1; i < records.length; i++) {
+    const values = records[i];
+    if (values.length >= 8 && values[0].trim()) {
       rows.push({
         title: values[0],
         price: parseFloat(values[1]) || 0,
@@ -75,95 +94,107 @@ function parseCSV(content: string): ProductRow[] {
       });
     }
   }
-
   return rows;
 }
 
+// Keep only the newest CSV per scraper-shard. Filenames are
+// `<shop>_<scraper>_<YYYY-MM-DD>.csv`; we group by the `<shop>_<scraper>` prefix
+// so all six ananas shards survive (each its latest date) while old dates drop.
+function latestCsvFiles(files: string[]): string[] {
+  const byPrefix = new Map<string, { date: string; file: string }>();
+  for (const f of files) {
+    const m = f.match(/^(.*)_(\d{4}-\d{2}-\d{2})\.csv$/);
+    if (!m) {
+      byPrefix.set(f, { date: '', file: f });
+      continue;
+    }
+    const prefix = m[1];
+    const date = m[2];
+    const cur = byPrefix.get(prefix);
+    if (!cur || date > cur.date) {
+      byPrefix.set(prefix, { date, file: f });
+    }
+  }
+  return [...byPrefix.values()].map((v) => v.file);
+}
+
 async function importCSVFiles() {
-  const pool = createDbPool({
-    max: 20,
-    idleTimeoutMillis: 30000,
-  });
+  const pool = createDbPool({ max: 20, idleTimeoutMillis: 30000 });
+  let hadError = false;
 
   try {
-    // Test connection
-    const client = await pool.connect();
-    await client.query('SELECT 1');
-    client.release();
+    const probe = await pool.connect();
+    await probe.query('SELECT 1');
+    probe.release();
     console.log('Database connection established');
 
-    // Get all CSV files
-    const files = fs.readdirSync(OUTPUT_DIR).filter(f => f.endsWith('.csv'));
-    console.log(`Found ${files.length} CSV files to import`);
-
-    let totalImported = 0;
-    let totalErrors = 0;
+    const allFiles = fs.readdirSync(OUTPUT_DIR).filter((f) => f.endsWith('.csv'));
+    const files = latestCsvFiles(allFiles);
+    console.log(
+      `Found ${allFiles.length} CSV files; using ${files.length} latest-per-shard`,
+    );
 
     const vendorIdByName = await loadVendors(pool);
 
+    // Group fresh rows by vendor (merging all shards of the same vendor, e.g. ananas1-6).
+    const perVendor = new Map<string, { vendorName: string; rows: ProductRow[] }>();
     for (const file of files) {
-      const filePath = path.join(OUTPUT_DIR, file);
-      console.log(`\nProcessing: ${file}`);
-
-      const content = fs.readFileSync(filePath, 'utf-8');
-      const parsedProducts = parseCSV(content);
-      console.log(`  Found ${parsedProducts.length} products`);
-
-      if (parsedProducts.length === 0) continue;
-
-      // Get vendor name from first product
-      const vendorName = parsedProducts[0].vendor;
-      const vendorId = vendorIdByName.get(vendorName);
-
-      if (!vendorId) {
-        console.log(`  Vendor "${vendorName}" not found, skipping file`);
+      const content = fs.readFileSync(path.join(OUTPUT_DIR, file), 'utf-8');
+      const parsed = parseCSV(content);
+      if (parsed.length === 0) {
+        console.log(`  ${file}: 0 products, skipping`);
         continue;
       }
+      const vendorName = parsed[0].vendor;
+      const vendorId = vendorIdByName.get(vendorName);
+      if (!vendorId) {
+        console.log(`  ${file}: vendor "${vendorName}" not found, skipping`);
+        continue;
+      }
+      const bucket = perVendor.get(vendorId) || { vendorName, rows: [] };
+      bucket.rows.push(...parsed);
+      perVendor.set(vendorId, bucket);
+    }
 
-      let fileImported = 0;
-      let fileErrors = 0;
-      let fileDuplicates = 0;
+    let totalImported = 0;
+    let totalDelisted = 0;
+    let totalErrors = 0;
 
-      const dedupedProducts = Array.from(
-        parsedProducts.reduce((map, product) => {
-          const existing = map.get(product.title);
-          if (existing) {
-            fileDuplicates++;
-          }
-          map.set(product.title, product);
-          return map;
-        }, new Map<string, ProductRow>()).values(),
+    for (const [vendorId, { vendorName, rows }] of perVendor) {
+      // Dedupe within the vendor's combined snapshot by title (last wins).
+      const deduped = Array.from(
+        rows.reduce((map, p) => map.set(p.title, p), new Map<string, ProductRow>()).values(),
       );
 
-      // Process in batches with upsert
-      const BATCH_SIZE = 2000;
-      for (let i = 0; i < dedupedProducts.length; i += BATCH_SIZE) {
-        const dedupedBatch = dedupedProducts.slice(i, i + BATCH_SIZE);
+      const client = await pool.connect();
+      try {
+        const { rows: cntRows } = await client.query(
+          'SELECT count(*)::int AS n FROM "Product" WHERE "vendorId" = $1',
+          [vendorId],
+        );
+        const existing = cntRows[0].n as number;
 
-        if (dedupedBatch.length === 0) {
-          continue;
-        }
+        await client.query('BEGIN');
+        const { rows: nowRows } = await client.query('SELECT now() AS now');
+        const watermark = nowRows[0].now as string;
 
-        try {
+        let imported = 0;
+        const BATCH_SIZE = 2000;
+        for (let i = 0; i < deduped.length; i += BATCH_SIZE) {
+          const batch = deduped.slice(i, i + BATCH_SIZE);
           const values: Array<string | number | null> = [];
-          const placeholders = dedupedBatch
-            .map((product, index) => {
-              const baseIndex = index * 7;
-              values.push(
-                product.title,
-                product.price,
-                product.category,
-                product.link,
-                product.thumbnail,
-                product.photos,
-                vendorId
-              );
-              return `($${baseIndex + 1}, $${baseIndex + 2}, $${baseIndex + 3}, $${baseIndex + 4}, $${baseIndex + 5}, $${baseIndex + 6}, $${baseIndex + 7}, NOW(), NOW())`;
+          const placeholders = batch
+            .map((p, index) => {
+              const b = index * 8;
+              // scrapedAt = when the price was actually scraped (preserved per row);
+              // updatedAt = now() each run (delist watermark, see below).
+              values.push(p.title, p.price, p.category, p.link, p.thumbnail, p.photos, vendorId, p.scrapedAt || null);
+              return `($${b + 1}, $${b + 2}, $${b + 3}, $${b + 4}, $${b + 5}, $${b + 6}, $${b + 7}, $${b + 8}::timestamptz, now(), now())`;
             })
             .join(', ');
 
-          await pool.query(
-            `INSERT INTO "Product" (title, price, category, link, thumbnail, photos, "vendorId", "createdAt", "updatedAt")
+          await client.query(
+            `INSERT INTO "Product" (title, price, category, link, thumbnail, photos, "vendorId", "priceScrapedAt", "createdAt", "updatedAt")
              VALUES ${placeholders}
              ON CONFLICT (title, "vendorId") DO UPDATE SET
                price = EXCLUDED.price,
@@ -171,36 +202,56 @@ async function importCSVFiles() {
                link = EXCLUDED.link,
                thumbnail = EXCLUDED.thumbnail,
                photos = EXCLUDED.photos,
-               "updatedAt" = NOW()`,
-            values
+               "priceScrapedAt" = EXCLUDED."priceScrapedAt",
+               "updatedAt" = now()`,
+            values,
           );
-
-          fileImported += dedupedBatch.length;
-        } catch (error) {
-          console.error(`  Error importing batch starting with "${dedupedBatch[0]?.title ?? 'unknown'}":`, error);
-          fileErrors += dedupedBatch.length;
+          imported += batch.length;
         }
-      }
 
-      if (fileDuplicates > 0) {
-        console.log(`  Skipped duplicates in batch: ${fileDuplicates}`);
+        // Delist products this run didn't touch — but only if the snapshot is
+        // plausibly complete (guards against a broken scrape nuking the vendor).
+        let delisted = 0;
+        const ratio = existing === 0 ? 1 : deduped.length / existing;
+        if (ratio >= DELIST_MIN_RATIO) {
+          const del = await client.query(
+            'DELETE FROM "Product" WHERE "vendorId" = $1 AND "updatedAt" < $2',
+            [vendorId, watermark],
+          );
+          delisted = del.rowCount || 0;
+        } else {
+          console.log(
+            `  ${vendorName}: snapshot ${deduped.length} vs existing ${existing} (ratio ${ratio.toFixed(2)} < ${DELIST_MIN_RATIO}) — SKIPPING delist (likely broken scrape)`,
+          );
+        }
+
+        await client.query('COMMIT');
+        console.log(`  ${vendorName}: upserted ${imported}, delisted ${delisted} (had ${existing})`);
+        totalImported += imported;
+        totalDelisted += delisted;
+      } catch (error) {
+        await client.query('ROLLBACK').catch(() => {});
+        console.error(`  ${vendorName}: import failed, rolled back:`, error);
+        totalErrors++;
+        hadError = true;
+      } finally {
+        client.release();
       }
-      console.log(`  Imported: ${fileImported}, Errors: ${fileErrors}`);
-      totalImported += fileImported;
-      totalErrors += fileErrors;
     }
 
     console.log(`\n=== Import Complete ===`);
-    console.log(`Total imported: ${totalImported}`);
-    console.log(`Total errors: ${totalErrors}`);
-
+    console.log(`Vendors: ${perVendor.size}`);
+    console.log(`Total upserted: ${totalImported}`);
+    console.log(`Total delisted: ${totalDelisted}`);
+    console.log(`Vendor failures: ${totalErrors}`);
   } catch (error) {
     console.error('Import failed:', error);
-    process.exit(1);
+    hadError = true;
   } finally {
     await pool.end();
   }
+
+  if (hadError) process.exit(1);
 }
 
-// Run the import
 importCSVFiles();

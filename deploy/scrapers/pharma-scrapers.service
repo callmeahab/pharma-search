@@ -1,0 +1,20 @@
+[Unit]
+Description=Pharma Search scraper pipeline (scrape -> import -> postprocess)
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Adjust User/paths to the host that runs scraping.
+User=root
+WorkingDirectory=/var/www/pharma-search/scrapers
+Environment=SCRAPERS_DIR=/var/www/pharma-search/scrapers
+# OnCalendar uses the system timezone — set the host TZ to Europe/Belgrade, or
+# adjust the timer accordingly.
+# Optional alerting (Slack-style webhook) — the worker POSTs failures here:
+# Environment=SCRAPER_ALERT_WEBHOOK=https://hooks.slack.com/services/xxx
+# Tune failure sensitivity (default 0.10 = alert+nonzero-exit if >10% fail):
+# Environment=SCRAPER_FAILURE_ALERT_RATIO=0.1
+ExecStart=/var/www/pharma-search/deploy/scrapers/run-pipeline.sh
+# The last full run took ~2h13m; allow generous headroom.
+TimeoutStartSec=4h

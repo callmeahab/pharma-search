@@ -36,6 +36,7 @@ function convertPbProductToBackend(p: PbProduct): BackendProduct {
     form: p.form,
     quantity: p.quantity,
     rank: p.rank,
+    price_updated_at: p.priceUpdatedAt || undefined,
   };
 }
 

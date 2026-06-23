@@ -25,6 +25,7 @@ async function scrapePage(
 
     // Wait for a short time to allow dynamic content to load
     await new Promise((resolve) => setTimeout(resolve, 3000));
+    await ScraperUtils.assertNotBlocked(page, 'jugofarm');
 
     if (await page.$('.captcha-container')) {
       console.log('CAPTCHA detected, attempting solve...');

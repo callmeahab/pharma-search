@@ -24,6 +24,7 @@ async function scrapePage(
 
   try {
     await ScraperUtils.goto(page, url);
+    await ScraperUtils.assertNotBlocked(page, 'drMax');
 
     // Check for empty message first
     const emptyMessage = await page.$('.message.info.empty');

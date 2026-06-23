@@ -1,0 +1,12 @@
+[Unit]
+Description=Run Pharma Search scrapers nightly
+
+[Timer]
+# 03:00 host-local time. Persistent=true fires a missed run after downtime.
+OnCalendar=*-*-* 03:00:00
+Persistent=true
+# Spread the start a bit so we don't hammer vendors at an exact fixed minute.
+RandomizedDelaySec=900
+
+[Install]
+WantedBy=timers.target

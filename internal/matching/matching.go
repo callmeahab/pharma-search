@@ -290,6 +290,14 @@ func BuildGroupKey(in GroupKeyInput) GroupKey {
 		(in.Form == "" && in.VolumeValue > 0 && mlUnit(in.VolumeUnit) && in.DosageValue <= 0))
 
 	suppl := SupplementIngredients(core)
+	// A bare generic multivitamin is not an identity for a BRANDED / named product:
+	// "Centrum Silver" / "Centrum Junior" must not collapse into the same group as
+	// every other brand's multivitamin. If there's a brand or any extra identifying
+	// token in the core, route it to the brand / core paths below instead.
+	if len(suppl) == 1 && suppl[0] == "multivitamin" &&
+		(NormalizeText(in.Brand) != "" || len(strings.Fields(NormalizeText(core))) > 1) {
+		suppl = nil
+	}
 	if len(suppl) > 0 && !topical {
 		canon := strings.Join(suppl, "+")
 		key := "ing:" + canon
@@ -350,6 +358,17 @@ func BuildGroupKey(in GroupKeyInput) GroupKey {
 		return GroupKey{Key: strings.Join(parts, "::"), DisplayName: buildSKUDisplay(in, residual), Method: "brand-sku", Residual: residual, HasMeasure: hasMeasure}
 	}
 
+	// Brand / name-anchored identity: a non-topical product with no whitelisted
+	// ingredient but a distinctive core (e.g. "Centrum", "Centrum Move",
+	// "Multivitamin Centrum") groups by its core + form + size, so identical
+	// branded products merge across vendors instead of becoming per-offer
+	// singletons. The core carries the brand/name, so different brands stay
+	// separate and different variants (A-Z vs Silver vs Move) stay separate.
+	if !topical && isDistinctiveCore(residual) {
+		parts := append([]string{"core", residual}, suffix()...)
+		return GroupKey{Key: strings.Join(parts, "::"), DisplayName: titleCaseWords(residual), Method: "brand-core", Residual: residual, HasMeasure: hasMeasure}
+	}
+
 	display := titleCaseWords(residual)
 	if display == "" {
 		display = titleCaseWords(core)
@@ -364,6 +383,18 @@ func BuildGroupKey(in GroupKeyInput) GroupKey {
 		offerID = NormalizeText(in.Title)
 	}
 	return GroupKey{Key: "offer:" + offerID, DisplayName: display, Method: "single", Residual: residual, HasMeasure: hasMeasure}
+}
+
+// isDistinctiveCore reports whether a residual is specific enough to safely group
+// products by (rather than a generic word that could merge unrelated items). True
+// for a multi-token residual, or a single token of >= 6 chars (a brand/product
+// name like "centrum"), so generic short leftovers still fall to a per-offer key.
+func isDistinctiveCore(residual string) bool {
+	f := strings.Fields(residual)
+	if len(f) >= 2 {
+		return true
+	}
+	return len(f) == 1 && len([]rune(f[0])) >= 6
 }
 
 // residualSynonyms collapses spelling variants of non-whitelisted line words so

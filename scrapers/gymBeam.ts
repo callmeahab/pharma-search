@@ -60,35 +60,26 @@ async function scrapePage(
           .querySelector('.product-name .line-clamp-2')
           ?.textContent?.trim();
 
-        // RSD Price - look for the price in the new structure
-        const spanTexts = Array.from(element.querySelectorAll('span')).map(s => s.textContent);
-        // Extract RSD price from spanTexts - look for the pattern with ≈() RSD
-        const rsdPriceText = spanTexts.find(t => t && /≈\([\d.,]+ RSD\)/.test(t));
+        // RSD Price. The site switched to showing the price DIRECTLY in dinars
+        // ("1.234 din" / "RSD") instead of the old "≈(… RSD)" EUR-approximation,
+        // so the old parenthetical regex matched nothing → every product scraped 0.
+        // Read the first span that holds a din/RSD amount. Serbian format: dot is
+        // the thousands separator, comma (rare for din) the decimal.
+        const spanTexts = Array.from(element.querySelectorAll('span')).map(s => s.textContent || '');
+        const rsdPriceText = spanTexts.find(t => /\d[\d.,]*\s*(din|rsd)/i.test(t));
         let rsdPrice = 0;
         if (rsdPriceText) {
-          const match = rsdPriceText.match(/≈\(([\d.,]+) RSD\)/);
+          const match = rsdPriceText.match(/([\d][\d.,]*)\s*(din|rsd)/i);
           if (match) {
-            const priceText = match[1];
-            let normalized = priceText;
-
-            // Remove currency symbols and trim
-            normalized = normalized.replace(/[^\d.,]/g, '').trim();
-
-            if (normalized.includes(',') && normalized.includes('.')) {
-              // Assume comma is thousand separator, dot is decimal
-              normalized = normalized.split('.')[0].replace(/,/g, '');
-            } else if (normalized.includes(',') && !normalized.includes('.')) {
-              // Assume comma is decimal separator
+            let normalized = match[1].replace(/[^\d.,]/g, '').trim();
+            if (normalized.includes(',')) {
+              // comma = decimal → keep integer part, strip dot thousands
               normalized = normalized.split(',')[0].replace(/\./g, '');
-            } else if (normalized.includes('.')) {
-              // Assume dot is decimal separator
-              normalized = normalized.split('.')[0].replace(/,/g, '');
             } else {
-              // No decimal, just remove any stray separators
-              normalized = normalized.replace(/[^\d]/g, '');
+              // only dots → thousands separators
+              normalized = normalized.replace(/\./g, '');
             }
-
-            rsdPrice = parseInt(normalized, 10);
+            rsdPrice = parseInt(normalized, 10) || 0;
           }
         }
 
@@ -184,40 +175,28 @@ async function scrapeMultipleBaseUrls(): Promise<Product[]> {
             const outOfStock = element.querySelector('.currently-not-available') !== null ||
               element.querySelector('[data-test="pdp-add-to-cart-recommended-products"][aria-disabled="true"]') !== null;
 
-            // Name
+            // Name — markup changed: the title is now in span.product-name
+            // (the old `.product-name .line-clamp-2` child matched nothing → empty
+            // name → every product filtered out → 0 products scraped).
             const name = element
-              .querySelector('.product-name .line-clamp-2')
+              .querySelector('.product-name, .product-name .line-clamp-2')
               ?.textContent?.trim();
 
-            // RSD Price - look for the price in the new structure
-            const spanTexts = Array.from(element.querySelectorAll('span')).map(s => s.textContent);
-            // Extract RSD price from spanTexts - look for the pattern with ≈() RSD
-            const rsdPriceText = spanTexts.find(t => t && /≈\([\d.,]+ RSD\)/.test(t));
+            // RSD Price — shown directly in dinars now ("1.234 din"/RSD), not the
+            // old "≈(… RSD)" EUR-approximation.
+            const spanTexts = Array.from(element.querySelectorAll('span')).map((s) => s.textContent || '');
+            const rsdPriceText = spanTexts.find((t) => /\d[\d.,]*\s*(din|rsd)/i.test(t));
             let rsdPrice = 0;
             if (rsdPriceText) {
-              const match = rsdPriceText.match(/≈\(([\d.,]+) RSD\)/);
+              const match = rsdPriceText.match(/([\d][\d.,]*)\s*(din|rsd)/i);
               if (match) {
-                const priceText = match[1];
-                let normalized = priceText;
-
-                // Remove currency symbols and trim
-                normalized = normalized.replace(/[^\d.,]/g, '').trim();
-
-                if (normalized.includes(',') && normalized.includes('.')) {
-                  // Assume comma is thousand separator, dot is decimal
-                  normalized = normalized.split('.')[0].replace(/,/g, '');
-                } else if (normalized.includes(',') && !normalized.includes('.')) {
-                  // Assume comma is decimal separator
+                let normalized = match[1].replace(/[^\d.,]/g, '').trim();
+                if (normalized.includes(',')) {
                   normalized = normalized.split(',')[0].replace(/\./g, '');
-                } else if (normalized.includes('.')) {
-                  // Assume dot is decimal separator
-                  normalized = normalized.split('.')[0].replace(/,/g, '');
                 } else {
-                  // No decimal, just remove any stray separators
-                  normalized = normalized.replace(/[^\d]/g, '');
+                  normalized = normalized.replace(/\./g, '');
                 }
-
-                rsdPrice = parseInt(normalized, 10);
+                rsdPrice = parseInt(normalized, 10) || 0;
               }
             }
 

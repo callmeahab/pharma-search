@@ -62,14 +62,16 @@ async function scrapePage(page: Page, url: string): Promise<Product[]> {
           const prices = priceText.split('Trenutna cena:');
           const price = prices[1] ? prices[1].trim() : '';
 
+          // `element` IS the .product-list-item, so query its descendants
+          // directly — the old `.product-list-item > …` selectors matched nothing.
           const link =
-            element
-              .querySelector('.product-list-item > div > a')
-              ?.getAttribute('href') || '';
+            element.querySelector('a[href*="/product/"]')?.getAttribute('href') ||
+            element.querySelector('a')?.getAttribute('href') ||
+            '';
           const img =
-            element
-              .querySelector('.product-list-item a img')
-              ?.getAttribute('src') || '';
+            element.querySelector('img')?.getAttribute('src') ||
+            element.querySelector('img')?.getAttribute('data-src') ||
+            '';
 
           return { title, price, link, img };
         })

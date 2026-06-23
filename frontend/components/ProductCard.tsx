@@ -1,12 +1,12 @@
 import React, { useState } from "react";
 import { Card, CardContent, CardFooter } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { ArrowLeftRight, ExternalLink, Heart, Store, TrendingDown } from "lucide-react";
+import { ArrowLeftRight, Clock, ExternalLink, Heart, Store, TrendingDown } from "lucide-react";
 import { Product } from "@/types/product";
 import ProductDetailModal from "./ProductDetailModal";
 import { trackProductClick, trackStoreClick } from "@/utils/analytics";
 import { useAuth } from "@/contexts/AuthContext";
-import { formatPrice, pluralizeSr } from "@/lib/utils";
+import { formatPrice, formatPriceAge, pluralizeSr } from "@/lib/utils";
 
 interface ProductCardProps {
   product: Product;
@@ -205,6 +205,13 @@ const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
                 </div>
               )}
             </>
+          )}
+
+          {formatPriceAge(product.priceUpdatedAt) && (
+            <p className="flex items-center gap-1 text-xs text-gray-400 dark:text-gray-500 mt-auto pt-1">
+              <Clock size={12} />
+              Cena ažurirana: {formatPriceAge(product.priceUpdatedAt)}
+            </p>
           )}
         </CardContent>
 

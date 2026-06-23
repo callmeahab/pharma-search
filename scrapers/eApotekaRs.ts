@@ -41,8 +41,12 @@ async function scrapePage(page: Page, url: string): Promise<Product[]> {
           const priceText =
             element.querySelector('.price')?.textContent?.trim() || '';
           const price = priceText.replace(/[^\d,]/g, '');
+          // Markup is now `a.link-name > h3`, so the link is the .link-name anchor
+          // (the old `h3 > a` matched nothing → every product was dropped).
           const link =
-            element.querySelector('h3 > a')?.getAttribute('href') || '';
+            element.querySelector('a.link-name')?.getAttribute('href') ||
+            element.querySelector('a[href]')?.getAttribute('href') ||
+            '';
           const imageElement = element.querySelector('.image-wrapper img');
           let img =
             imageElement?.getAttribute('data-src') ||

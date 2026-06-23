@@ -6,6 +6,7 @@ export interface Price {
   title?: string;
   is_best_deal?: boolean;
   diff_from_avg?: number;
+  updatedAt?: string; // when this offer's price was last retrieved (ISO 8601)
 }
 
 export interface ComparisonContext {
@@ -31,6 +32,7 @@ export interface Product {
   displayMode?: "group" | "offer";
   primaryOffer?: Price;
   comparisonContext?: ComparisonContext;
+  priceUpdatedAt?: string; // when the displayed (lowest) price was last retrieved
 }
 
 export interface BackendProduct {
@@ -51,6 +53,7 @@ export interface BackendProduct {
   form?: string;
   quantity?: number;
   rank: number;
+  price_updated_at?: string;
 }
 
 export interface ProductGroup {
@@ -96,6 +99,7 @@ function toPrices(group: ProductGroup): Price[] {
     inStock: true,
     link: product.link,
     title: product.title,
+    updatedAt: product.price_updated_at,
   }));
 }
 
@@ -193,6 +197,7 @@ export function convertBackendProductToProduct(
     displayMode: "offer",
     primaryOffer,
     comparisonContext,
+    priceUpdatedAt: backendProduct.price_updated_at,
   };
 }
 
@@ -217,6 +222,8 @@ export function convertProductGroupToProducts(group: ProductGroup): Product[] {
     productCount: group.product_count,
     displayMode: "group",
     comparisonContext,
+    // cheapest offer is products[0]; show when its price was retrieved
+    priceUpdatedAt: group.products[0]?.price_updated_at,
   };
 
   return [mainProduct];

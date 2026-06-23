@@ -91,6 +91,7 @@ message Product {
   string form = 12;
   int32 quantity = 13;
   int32 rank = 14;
+  string price_updated_at = 15;  // when this offer's price was last retrieved (ISO 8601)
 }
 
 message PriceRange {

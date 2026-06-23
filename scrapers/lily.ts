@@ -121,6 +121,7 @@ const browser = await puppeteer.launch({
             waitUntil: 'domcontentloaded',
             timeout: 60000,
           });
+          await ScraperUtils.assertNotBlocked(page, 'lily');
           const products = await scrapePage(page, category);
           console.log(
             `Scraped ${products.length} products from page ${pageNumber}`,
