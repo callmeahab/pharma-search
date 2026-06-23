@@ -5,6 +5,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { cleanTitle } from './hygiene';
 
 export interface Product {
   title: string;
@@ -34,7 +35,7 @@ function escapeCSV(value: string): string {
  */
 function productToCSVRow(product: Product, parsedPrice: number, vendor: string): string {
   return [
-    escapeCSV(product.title),
+    escapeCSV(cleanTitle(product.title)),
     parsedPrice.toString(),
     escapeCSV(product.category),
     escapeCSV(product.link),
@@ -113,7 +114,8 @@ export function parsePrice(priceString: string): number {
     price = 0; // Default value if parsing fails
   }
 
-  return price;
+  // RSD prices are whole dinars — round so a decimal (",50") never lingers as a float.
+  return Math.round(price);
 }
 
 /**

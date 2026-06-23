@@ -54,19 +54,11 @@ async function scrapePage(
           const priceText =
             element.querySelector('.card-item-price')?.textContent?.trim() ||
             '';
-          const price = priceText
-            .replace(/Od\s*/, '')
-            .replace(/\s+/g, ' ')
-            .replace(' RSD', '')
-            .trim();
-
-          // Only remove last digit if it's a zero
-          const formattedPrice =
-            price.includes('.') &&
-            price.split('.')[1].length === 3 &&
-            price.endsWith('0')
-              ? price.slice(0, -1)
-              : price;
+          // Pass the raw price text (just drop the "Od" prefix) to insertData —
+          // parsePrice() handles the Serbian "1.230,00" format. The old
+          // "remove last digit if it ends in 0" heuristic mangled whole numbers
+          // (e.g. "1.230" -> "1.23" -> 1 RSD).
+          const formattedPrice = priceText.replace(/Od\s*/, '').trim();
 
           const link =
             element.querySelector('.card-item-img')?.getAttribute('href') || '';

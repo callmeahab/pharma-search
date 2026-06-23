@@ -12,6 +12,9 @@
 
 import { gunzipSync } from 'node:zlib';
 import { insertData, Product, initializeDatabase, closeDatabase } from './database';
+// Full entity decode (named Serbian Latin + numeric/hex). The old local version only
+// handled &amp;/&lt;/… so &scaron;/&rsquo; leaked into titles as mojibake.
+import { decodeEntities } from './hygiene';
 
 const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
@@ -41,12 +44,6 @@ async function fetchText(url: string, timeoutMs = 25000): Promise<string | null>
   } finally {
     clearTimeout(t);
   }
-}
-
-function decodeEntities(s: string): string {
-  return s
-    .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&apos;/g, "'");
 }
 
 function extractLocs(xml: string): string[] {

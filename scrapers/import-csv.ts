@@ -11,6 +11,8 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { createDbPool, loadVendors } from './helpers/db';
+import { parsePrice } from './helpers/database';
+import { cleanTitle, isLikelyProduct } from './helpers/hygiene';
 
 const OUTPUT_DIR = path.join(process.cwd(), 'output');
 
@@ -82,9 +84,15 @@ function parseCSV(content: string): ProductRow[] {
   for (let i = 1; i < records.length; i++) {
     const values = records[i];
     if (values.length >= 8 && values[0].trim()) {
+      // Ingestion hygiene at the single chokepoint: clean the title (entity decode +
+      // vendor-suffix strip), robustly parse the price to integer RSD, and drop
+      // non-products (no price / category pages) so garbage never reaches the DB.
+      const title = cleanTitle(values[0]);
+      const price = parsePrice(values[1]);
+      if (!isLikelyProduct(title, price)) continue;
       rows.push({
-        title: values[0],
-        price: parseFloat(values[1]) || 0,
+        title,
+        price,
         category: values[2],
         link: values[3],
         thumbnail: values[4],
