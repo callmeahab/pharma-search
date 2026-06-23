@@ -9,6 +9,7 @@ package main
 
 import (
 	"database/sql"
+	"encoding/csv"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -35,6 +36,7 @@ type group struct {
 
 func main() {
 	jsonOut := flag.String("json", "", "write full JSON dump to this file")
+	csvOut := flag.String("csv", "", "write per-product rows (id,vendor,key,method,display,groupSize,form,brand,core,title) to this file")
 	flag.Parse()
 
 	dbURL := os.Getenv("DATABASE_URL")
@@ -50,25 +52,27 @@ func main() {
 	rows, err := db.Query(`
 		SELECT p.id, p.title, COALESCE(p."extractedBrand",''), COALESCE(p."coreProductIdentity",''),
 		       p."dosageValue", COALESCE(p."dosageUnit",''), p."volumeValue", COALESCE(p."volumeUnit",''),
-		       p."quantityValue", COALESCE(p.form,''), p."vendorId"
+		       p."quantityValue", COALESCE(p.form,''), p."vendorId", COALESCE(p."canonicalIdentity",'')
 		FROM "Product" p WHERE p.price > 0`)
 	if err != nil {
 		panic(err)
 	}
 	defer rows.Close()
 
+	type prec struct{ id, vendor, key, method, display, form, brand, core, title string }
+	var recs []prec
 	groups := map[string]*group{}
 	total := 0
 	for rows.Next() {
-		var id, title, brand, core, dunit, vunit, form, vendor string
+		var id, title, brand, core, dunit, vunit, form, vendor, canonical string
 		var dval, vval sql.NullFloat64
 		var qval sql.NullInt64
-		if err := rows.Scan(&id, &title, &brand, &core, &dval, &dunit, &vval, &vunit, &qval, &form, &vendor); err != nil {
+		if err := rows.Scan(&id, &title, &brand, &core, &dval, &dunit, &vval, &vunit, &qval, &form, &vendor, &canonical); err != nil {
 			panic(err)
 		}
 		total++
 		gk := matching.BuildGroupKey(matching.GroupKeyInput{
-			Core: core, Brand: brand, Title: title, ProductID: id,
+			Core: core, CanonicalIdentity: canonical, Brand: brand, Title: title, ProductID: id,
 			DosageValue: dval.Float64, DosageUnit: dunit,
 			VolumeValue: vval.Float64, VolumeUnit: vunit,
 			Quantity: float64(qval.Int64), Form: form,
@@ -86,6 +90,9 @@ func main() {
 		}
 		if len(g.Samples) < 4 {
 			g.Samples = append(g.Samples, title)
+		}
+		if *csvOut != "" {
+			recs = append(recs, prec{id, vendor, gk.Key, gk.Method, gk.DisplayName, form, brand, core, title})
 		}
 	}
 
@@ -132,6 +139,22 @@ func main() {
 		fmt.Printf("[%s] %s  prod=%d brands=%d %v\n    e.g. %s\n",
 			g.Method, g.Key, g.Products, len(g.Brands), truncBrands(g.Brands),
 			strings.Join(g.Samples[:min(2, len(g.Samples))], " || "))
+	}
+
+	if *csvOut != "" {
+		f, _ := os.Create(*csvOut)
+		defer f.Close()
+		w := csv.NewWriter(f)
+		_ = w.Write([]string{"id", "vendor", "key", "method", "display", "groupSize", "form", "brand", "core", "title"})
+		for _, r := range recs {
+			gs := 0
+			if g := groups[r.key]; g != nil {
+				gs = g.Products
+			}
+			_ = w.Write([]string{r.id, r.vendor, r.key, r.method, r.display, fmt.Sprintf("%d", gs), r.form, r.brand, r.core, r.title})
+		}
+		w.Flush()
+		fmt.Printf("\nper-product csv -> %s (%d rows)\n", *csvOut, len(recs))
 	}
 
 	if *jsonOut != "" {

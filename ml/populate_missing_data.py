@@ -395,9 +395,20 @@ def _extract_core_ingredient(title: str, brand: Optional[str] = None) -> Optiona
 
     brand_tokens = set(dictionaries.normalize(brand).split()) if brand else set()
 
+    # When a whitelisted ingredient anchors the group we strip the brand so the
+    # same molecule merges across brands. But a BRAND-IDENTITY product (no such
+    # ingredient — e.g. "Centrum Silver 50+ 60 tableta") has nothing else to
+    # identify it: stripping the brand leaves only the "50+"/pack numbers ("50",
+    # "50 60", "Tblete"). So keep the brand tokens in the core when there is no
+    # ingredient anchor; matching.BuildGroupKey re-strips generic sports brands
+    # via residualCore, so brand-independent lines (whey etc.) are unaffected.
+    # EXCEPTION: a pure cosmetic parent brand (La Roche Posay, Eucerin, Nivea) is
+    # shown separately by the Go brand-sku display, so keeping it in the core would
+    # duplicate it in the name — strip it for cosmetics, keep it for supplements.
+    strip_brand = bool(canon) or dictionaries.is_cosmetic_brand(brand)
     descriptors: List[str] = []
     for tok in leftover:
-        if tok in brand_tokens or dictionaries.is_brand(tok):
+        if strip_brand and (tok in brand_tokens or dictionaries.is_brand(tok)):
             continue
         if tok in dictionaries.NOISE_WORDS or tok in dictionaries.FORM_WORDS:
             continue
@@ -412,12 +423,11 @@ def _extract_core_ingredient(title: str, brand: Optional[str] = None) -> Optiona
     parts = canon + descriptors
     parts = parts[:5]
     if not parts:
-        # Last-resort fallback still strips brand / noise / form so brand tokens
-        # never leak into the identity.
+        # Last-resort fallback mirrors the brand policy above: strip brand only
+        # when an ingredient anchors the group, else keep it as the identity.
         parts = [
             t for t in leftover
-            if t not in brand_tokens
-            and not dictionaries.is_brand(t)
+            if (not strip_brand or (t not in brand_tokens and not dictionaries.is_brand(t)))
             and t not in dictionaries.NOISE_WORDS
             and t not in dictionaries.FORM_WORDS
             and len(t) >= 2

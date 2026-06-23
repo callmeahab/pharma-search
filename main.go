@@ -96,6 +96,7 @@ func searchProductsDB(db *sql.DB, query string, limit int) ([]map[string]interfa
 			COALESCE(p."extractedBrand", '') as brand,
 			COALESCE(p."normalizedName", '') as normalized_name,
 			COALESCE(p."coreProductIdentity", '') as core_product_identity,
+			COALESCE(p."canonicalIdentity", '') as canonical_identity,
 			p."dosageValue",
 			COALESCE(p."dosageUnit", '') as dosage_unit,
 			p."volumeValue",
@@ -154,13 +155,13 @@ func searchProductsDB(db *sql.DB, query string, limit int) ([]map[string]interfa
 	var results []map[string]interface{}
 	for rows.Next() {
 		var id, title, vendorId, vendorName, link, thumbnail string
-		var brand, normalizedName, coreProductIdentity, dosageUnit, volumeUnit, form string
+		var brand, normalizedName, coreProductIdentity, canonicalIdentity, dosageUnit, volumeUnit, form string
 		var price, dosageValue, volumeValue sql.NullFloat64
 		var quantityValue sql.NullInt64
 		var updatedAt sql.NullTime
 
 		if err := rows.Scan(&id, &title, &price, &vendorId, &vendorName, &link, &thumbnail,
-			&brand, &normalizedName, &coreProductIdentity,
+			&brand, &normalizedName, &coreProductIdentity, &canonicalIdentity,
 			&dosageValue, &dosageUnit, &volumeValue, &volumeUnit, &form, &quantityValue, &updatedAt); err != nil {
 			return nil, fmt.Errorf("scan error: %w", err)
 		}
@@ -185,6 +186,7 @@ func searchProductsDB(db *sql.DB, query string, limit int) ([]map[string]interfa
 			"brand":               brand,
 			"normalizedName":      normalizedName,
 			"coreProductIdentity": coreProductIdentity,
+			"canonicalIdentity":   canonicalIdentity,
 			"dosageValue":         dosageValue.Float64,
 			"dosageUnit":          dosageUnit,
 			"volumeValue":         volumeValue.Float64,
@@ -356,6 +358,7 @@ func enrichProductsWithGroupKey(hits []map[string]interface{}) []map[string]inte
 		title := getString(h, "title")
 		normalizedName := getString(h, "normalizedName")
 		coreIdentity := getString(h, "coreProductIdentity")
+		canonicalIdentity := getString(h, "canonicalIdentity")
 		brand := getString(h, "brand")
 		dosageValue := getFloat(h, "dosageValue")
 		dosageUnit := getString(h, "dosageUnit")
@@ -369,16 +372,17 @@ func enrichProductsWithGroupKey(hits []map[string]interface{}) []map[string]inte
 		pid := strings.ReplaceAll(getString(h, "id"), "product_", "")
 
 		gk := matching.BuildGroupKey(matching.GroupKeyInput{
-			Core:        coreIdentity,
-			Brand:       brand,
-			Title:       title,
-			ProductID:   pid,
-			DosageValue: dosageValue,
-			DosageUnit:  dosageUnit,
-			VolumeValue: volumeValue,
-			VolumeUnit:  volumeUnit,
-			Quantity:    qtyVal,
-			Form:        form,
+			Core:              coreIdentity,
+			CanonicalIdentity: canonicalIdentity,
+			Brand:             brand,
+			Title:             title,
+			ProductID:         pid,
+			DosageValue:       dosageValue,
+			DosageUnit:        dosageUnit,
+			VolumeValue:       volumeValue,
+			VolumeUnit:        volumeUnit,
+			Quantity:          qtyVal,
+			Form:              form,
 		})
 
 		product := map[string]interface{}{

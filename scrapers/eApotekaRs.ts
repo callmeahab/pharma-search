@@ -40,7 +40,12 @@ async function scrapePage(page: Page, url: string): Promise<Product[]> {
 
           const priceText =
             element.querySelector('.price')?.textContent?.trim() || '';
-          const price = priceText.replace(/[^\d,]/g, '');
+          // Serbian format "6.488,00 RSD": "." = thousands sep, "," = decimals.
+          // Take the integer part (before the decimal comma) and drop thousands
+          // separators -> integer RSD. The old `[^\d,]` kept the comma, which the
+          // CSV writer then stripped, fusing ",00" into the integer -> every price
+          // was inflated x100 (e.g. 6488 -> 648800).
+          const price = (priceText.replace(/\s/g, '').match(/([\d.]+)(?:,\d+)?/)?.[1] || '').replace(/\./g, '');
           // Markup is now `a.link-name > h3`, so the link is the .link-name anchor
           // (the old `h3 > a` matched nothing → every product was dropped).
           const link =

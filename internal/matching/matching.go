@@ -246,6 +246,10 @@ type GroupKeyInput struct {
 	VolumeUnit  string
 	Quantity    float64
 	Form        string
+	// CanonicalIdentity, when set, is an LLM-canonicalized brand+line identity that
+	// BuildGroupKey trusts verbatim (overrides the rule-derived core). Mined
+	// per-brand for products the rules collapse to a bare brand.
+	CanonicalIdentity string
 }
 
 // GroupKey is the result of grouping a single offer.
@@ -336,6 +340,16 @@ func BuildGroupKey(in GroupKeyInput) GroupKey {
 		return parts
 	}
 
+	// LLM-canonicalized identity wins: it already encodes brand + line/stage/variant
+	// consistently across vendors, so trust it verbatim (no noise-stripping that
+	// would re-collapse e.g. "Kaltex Daily Stress Support" -> "Kaltex"). Only the
+	// size/form suffix is appended so different sizes stay distinct.
+	if ci := NormalizeText(in.CanonicalIdentity); ci != "" {
+		hm := in.DosageValue > 0 || NormalizeUnit(in.VolumeUnit) == "g" || NormalizeUnit(in.VolumeUnit) == "kg"
+		parts := append([]string{"core", ci}, suffix()...)
+		return GroupKey{Key: strings.Join(parts, "::"), DisplayName: titleCaseWords(in.CanonicalIdentity), Method: "brand-core", Residual: ci, HasMeasure: hm}
+	}
+
 	// Brand-INDEPENDENT line merge applies ONLY to measurable supplement/sports
 	// products — a pharma dosage or a powder weight (g/kg). These are titled
 	// inconsistently across vendors ("Iso Sensation 93" vs "Ultimate Nutrition Whey
@@ -350,23 +364,30 @@ func BuildGroupKey(in GroupKeyInput) GroupKey {
 		return GroupKey{Key: strings.Join(parts, "::"), DisplayName: buildSKUDisplay(in, residual), Method: "brand-line", Residual: residual, HasMeasure: true}
 	}
 
-	// Brand-keyed SKU: cosmetics + branded goods (devices, baby care, makeup).
-	// Different brands stay separate; identical brand+line+size+form merges across
-	// vendors.
-	if brand := NormalizeText(in.Brand); brand != "" && residual != "" {
-		parts := append([]string{"sku", brand, residual}, suffix()...)
-		return GroupKey{Key: strings.Join(parts, "::"), DisplayName: buildSKUDisplay(in, residual), Method: "brand-sku", Residual: residual, HasMeasure: hasMeasure}
+	// Brand / name-anchored identity for NON-topical products: the core carries the
+	// brand+line, which IS the product identity (Centrum Silver, Pregnacare
+	// Original, Flonivin Forte, Osteocare). Unlike residualCore, identityCore KEEPS
+	// the brand/name tokens, so single-product brands (Osteocare) group across
+	// vendors, lines stay distinct (Silver vs Junior vs A-Z), and different brands
+	// stay separate. Cosmetics are topical and fall through to the brand-sku path
+	// below (brand kept separate from a descriptive residual).
+	if !topical {
+		if identity := identityCore(core); isDistinctiveCore(identity) {
+			parts := append([]string{"core", identity}, suffix()...)
+			return GroupKey{Key: strings.Join(parts, "::"), DisplayName: titleCaseWords(identity), Method: "brand-core", Residual: identity, HasMeasure: hasMeasure}
+		}
 	}
 
-	// Brand / name-anchored identity: a non-topical product with no whitelisted
-	// ingredient but a distinctive core (e.g. "Centrum", "Centrum Move",
-	// "Multivitamin Centrum") groups by its core + form + size, so identical
-	// branded products merge across vendors instead of becoming per-offer
-	// singletons. The core carries the brand/name, so different brands stay
-	// separate and different variants (A-Z vs Silver vs Move) stay separate.
-	if !topical && isDistinctiveCore(residual) {
-		parts := append([]string{"core", residual}, suffix()...)
-		return GroupKey{Key: strings.Join(parts, "::"), DisplayName: titleCaseWords(residual), Method: "brand-core", Residual: residual, HasMeasure: hasMeasure}
+	// Brand-keyed SKU: cosmetics + branded goods (devices, baby care, makeup).
+	// Different brands stay separate; identical brand+line+size+form merges across
+	// vendors. Strip the product's OWN brand tokens from the residual so a
+	// multi-word brand whose line token also survives in the core doesn't duplicate
+	// in the key/display ("Vichy Dercos Dercos", "Esi Aloe Aloe Vera"). General fix
+	// for all such brands — no per-brand list needed.
+	if brand := NormalizeText(in.Brand); brand != "" && residual != "" {
+		skuResidual := removeTokens(residual, strings.Fields(brand))
+		parts := append([]string{"sku", brand, skuResidual}, suffix()...)
+		return GroupKey{Key: strings.Join(parts, "::"), DisplayName: buildSKUDisplay(in, skuResidual), Method: "brand-sku", Residual: skuResidual, HasMeasure: hasMeasure}
 	}
 
 	display := titleCaseWords(residual)
@@ -428,6 +449,57 @@ func residualCore(core string) string {
 		}
 		out = append(out, t)
 		if len(out) >= 4 {
+			break
+		}
+	}
+	return strings.Join(out, " ")
+}
+
+// identityCore reduces a core to its identifying tokens but KEEPS brand/name
+// tokens (unlike residualCore, which strips them). Used for the brand-identity
+// path where the brand IS the product identity: "Pregnacare Original" must stay
+// "pregnacare original" (not collapse to "original"), and "Osteocare" must stay
+// "osteocare" (not become an empty residual -> per-offer singleton).
+// removeTokens drops every token in `drop` from the space-separated phrase,
+// preserving order of the remaining tokens.
+func removeTokens(phrase string, drop []string) string {
+	if phrase == "" || len(drop) == 0 {
+		return phrase
+	}
+	ds := make(map[string]bool, len(drop))
+	for _, d := range drop {
+		ds[d] = true
+	}
+	out := make([]string, 0, len(strings.Fields(phrase)))
+	for _, t := range strings.Fields(phrase) {
+		if !ds[t] {
+			out = append(out, t)
+		}
+	}
+	return strings.Join(out, " ")
+}
+
+func identityCore(core string) string {
+	tokens := strings.Fields(NormalizeText(core))
+	out := make([]string, 0, len(tokens))
+	for _, t := range tokens {
+		if syn, ok := residualSynonyms[t]; ok {
+			t = syn
+		}
+		if isNoiseWord(t) || isFormWord(t) {
+			continue
+		}
+		if numberOnlyPattern.MatchString(t) {
+			continue
+		}
+		if alphaNumPattern.MatchString(t) {
+			continue
+		}
+		if len(t) < 2 && !keepShortToken[t] {
+			continue
+		}
+		out = append(out, t)
+		if len(out) >= 5 {
 			break
 		}
 	}

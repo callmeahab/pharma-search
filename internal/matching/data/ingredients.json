@@ -36,7 +36,10 @@
     "ascorbic",
     "ester c",
     "acerola",
-    "liposomalni vitamin c"
+    "liposomalni vitamin c",
+    "ascorbate",
+    "camu",
+    "multiaskorbat"
    ]
   },
   {
@@ -75,7 +78,9 @@
     "mk 7",
     "menakinon",
     "menaquinone",
-    "menakinon 7"
+    "menakinon 7",
+    "k2mk7",
+    "mk"
    ]
   },
   {
@@ -91,7 +96,8 @@
     "cijanokobalamin",
     "cyanocobalamin",
     "metilkobalamin",
-    "methylcobalamin"
+    "methylcobalamin",
+    "mecobalamin"
    ]
   },
   {
@@ -117,7 +123,8 @@
     "vit b1",
     "tiamin",
     "thiamine",
-    "thiamin"
+    "thiamin",
+    "benfotiamine"
    ]
   },
   {
@@ -149,7 +156,9 @@
     "b5",
     "pantotenska kiselina",
     "pantothenic acid",
-    "kalcijum pantotenat"
+    "kalcijum pantotenat",
+    "pantotenska",
+    "pantothenic"
    ]
   },
   {
@@ -165,7 +174,13 @@
     "b9",
     "metilfolat",
     "methylfolate",
-    "folna kis"
+    "folna kis",
+    "folate",
+    "folatom",
+    "folique",
+    "folnom",
+    "metafolin",
+    "mthf"
    ]
   },
   {
@@ -210,7 +225,9 @@
     "vitaminima mineralima",
     "multivit",
     "multivit minerali",
-    "multivitaminski mineralni"
+    "multivitaminski mineralni",
+    "multivitamina",
+    "multivitamins"
    ]
   },
   {
@@ -235,7 +252,9 @@
     "magnesium oxide",
     "magnezijum taurat",
     "magnesium taurate",
-    "magnezijum direkt"
+    "magnezijum direkt",
+    "glicinat",
+    "magne"
    ]
   },
   {
@@ -251,7 +270,10 @@
     "cink pikolinat",
     "cink glukonat",
     "zinc gluconate",
-    "zn"
+    "zn",
+    "zinco",
+    "zincum",
+    "zink"
    ]
   },
   {
@@ -266,7 +288,9 @@
     "kalcijum karbonat",
     "calcium carbonate",
     "kalcijum citrat",
-    "calcium citrate"
+    "calcium citrate",
+    "ca",
+    "calcijum"
    ]
   },
   {
@@ -285,7 +309,8 @@
     "ferro sulfat",
     "ferrous sulfate",
     "fumarat gvozdja",
-    "fe"
+    "fe",
+    "fumarate"
    ]
   },
   {
@@ -297,7 +322,8 @@
     "selenom",
     "selenium",
     "selenomethionin",
-    "selenometionin"
+    "selenometionin",
+    "selenium100"
    ]
   },
   {
@@ -320,7 +346,8 @@
     "jodid",
     "iodine",
     "kalijum jodid",
-    "potassium iodide"
+    "potassium iodide",
+    "iodide"
    ]
   },
   {
@@ -330,7 +357,8 @@
     "kalijum",
     "potassium",
     "kalium",
-    "kalijum citrat"
+    "kalijum citrat",
+    "kcl"
    ]
   },
   {
@@ -340,7 +368,8 @@
     "bakar",
     "copper",
     "bakra",
-    "cuprum"
+    "cuprum",
+    "cu"
    ]
   },
   {
@@ -376,7 +405,10 @@
     "epa dha",
     "omega 3 epa dha",
     "omega masne kiseline",
-    "omega"
+    "omega",
+    "bakalara",
+    "epa",
+    "o3"
    ]
   },
   {
@@ -395,7 +427,14 @@
     "ubiquinone",
     "ubikinol",
     "ubiquinol",
-    "koenzim"
+    "koenzim",
+    "coenzim",
+    "coenzime",
+    "coenzym",
+    "coenzyme",
+    "coq",
+    "koenzimom",
+    "ubichinon"
    ]
   },
   {
@@ -412,7 +451,13 @@
     "hidrolizovani kolagen",
     "hydrolyzed collagen",
     "morski kolagen",
-    "marine collagen"
+    "marine collagen",
+    "biocollagen",
+    "colagen",
+    "hydrocollagen",
+    "kolagin",
+    "kollagen",
+    "peptan"
    ]
   },
   {
@@ -425,7 +470,20 @@
     "probiotic",
     "probiotics",
     "probiotske",
-    "probiotske kulture"
+    "probiotske kulture",
+    "acidophilus",
+    "bifidus",
+    "boulardi",
+    "boulardii",
+    "lgg",
+    "microflora",
+    "mikrobiota",
+    "mikroflorom",
+    "probiotici",
+    "probiotski",
+    "saccharomyces",
+    "simbiotik",
+    "sinbiotik"
    ]
   },
   {
@@ -447,7 +505,13 @@
     "creatine",
     "kreatin monohidrat",
     "creatine monohydrate",
-    "kreatin monohydrate"
+    "kreatin monohydrate",
+    "alkalyn",
+    "crea",
+    "creapure",
+    "creatin",
+    "krealkalyn",
+    "tricreatine"
    ]
   },
   {
@@ -457,7 +521,8 @@
     "bcaa",
     "bcaa aminokiseline",
     "branched chain amino acids",
-    "razgranate aminokiseline"
+    "razgranate aminokiseline",
+    "bcaas"
    ]
   },
   {
@@ -481,7 +546,8 @@
     "argininom",
     "arginine",
     "l arginine",
-    "l arginin"
+    "l arginin",
+    "aakg"
    ]
   },
   {
@@ -495,7 +561,11 @@
     "l carnitine",
     "l karnitin",
     "acetil l karnitin",
-    "acetyl l carnitine"
+    "acetyl l carnitine",
+    "alc",
+    "carni",
+    "carnitin",
+    "carnitinom"
    ]
   },
   {
@@ -514,7 +584,8 @@
     "5 htp",
     "htp",
     "5 hidroksitriptofan",
-    "5 hydroxytryptophan"
+    "5 hydroxytryptophan",
+    "5htp"
    ]
   },
   {
@@ -522,7 +593,8 @@
    "category": "supplement",
    "aliases": [
     "spirulina",
-    "spirulin"
+    "spirulin",
+    "spiruline"
    ]
   },
   {
@@ -540,7 +612,9 @@
    "aliases": [
     "propolis",
     "propolisa",
-    "propolisom"
+    "propolisom",
+    "propol",
+    "propoli"
    ]
   },
   {
@@ -564,7 +638,9 @@
     "ashwaganda",
     "asvaganda",
     "asvagandha",
-    "withania"
+    "withania",
+    "ashvagandha",
+    "asvagande"
    ]
   },
   {
@@ -574,7 +650,8 @@
     "maca",
     "maka",
     "zlatna maka",
-    "maca koren"
+    "maca koren",
+    "makamu"
    ]
   },
   {
@@ -585,7 +662,10 @@
     "ginko",
     "ginkgo",
     "ginkgo biloba",
-    "ginkobiloba"
+    "ginkobiloba",
+    "biloba",
+    "bilobom",
+    "gingko"
    ]
   },
   {
@@ -597,7 +677,9 @@
     "kantarionom",
     "kantarionovo ulje",
     "hypericum",
-    "kantarion ulje"
+    "kantarion ulje",
+    "kantarionovim",
+    "kantarionovo"
    ]
   },
   {
@@ -609,7 +691,10 @@
     "nevenom",
     "neven ulje",
     "calendula",
-    "kalendula"
+    "kalendula",
+    "calendulae",
+    "nevenova",
+    "nevenovo"
    ]
   },
   {
@@ -621,7 +706,9 @@
     "gavezom",
     "beinwell",
     "symphytum",
-    "gavez melem"
+    "gavez melem",
+    "beinwel",
+    "gavezova"
    ]
   },
   {
@@ -631,7 +718,10 @@
     "aloe vera",
     "aloe",
     "aloa vera",
-    "aloe vera gel"
+    "aloe vera gel",
+    "aloja",
+    "alojom",
+    "verom"
    ]
   },
   {
@@ -648,7 +738,10 @@
    "aliases": [
     "kvercetin",
     "quercetin",
-    "kvercetina"
+    "kvercetina",
+    "biodihidrokvercetin",
+    "emiq",
+    "quercetine"
    ]
   },
   {
@@ -656,7 +749,8 @@
    "category": "supplement",
    "aliases": [
     "lutein",
-    "luteina"
+    "luteina",
+    "luteinom"
    ]
   },
   {
@@ -673,7 +767,13 @@
    "aliases": [
     "beta glukan",
     "betaglukan",
-    "beta glucan"
+    "beta glucan",
+    "betaglukana",
+    "glucan",
+    "glucans",
+    "glukan",
+    "glukani",
+    "glukanom"
    ]
   },
   {
@@ -683,7 +783,10 @@
     "beta karoten",
     "betakaroten",
     "beta carotene",
-    "provitamin a"
+    "provitamin a",
+    "caroten",
+    "carotene",
+    "karoten"
    ]
   },
   {
@@ -694,7 +797,8 @@
     "glukozamina",
     "glucosamine",
     "glukozamin sulfat",
-    "glucosamine sulfate"
+    "glucosamine sulfate",
+    "glucosamin"
    ]
   },
   {
@@ -727,7 +831,10 @@
     "valerijana",
     "valeriana",
     "valerian",
-    "odoljen"
+    "odoljen",
+    "odoljena",
+    "valeriane",
+    "valerijane"
    ]
   },
   {
@@ -738,7 +845,9 @@
     "kamilice",
     "chamomile",
     "matricaria",
-    "kamilica cvet"
+    "kamilica cvet",
+    "camomile",
+    "kamilicom"
    ]
   },
   {
@@ -748,7 +857,8 @@
     "maticnjak",
     "maticnjaka",
     "melissa",
-    "lemon balm"
+    "lemon balm",
+    "maticnjakom"
    ]
   },
   {
@@ -760,7 +870,10 @@
     "nane",
     "peppermint",
     "pitoma nana",
-    "ulje nane"
+    "ulje nane",
+    "mente",
+    "menthol",
+    "peperminta"
    ]
   },
   {
@@ -773,7 +886,8 @@
     "ulje origana",
     "divlji origan",
     "divljeg origana",
-    "oregano oil"
+    "oregano oil",
+    "origanom"
    ]
   },
   {
@@ -782,7 +896,10 @@
    "aliases": [
     "ehinacea",
     "echinacea",
-    "echinacea purpurea"
+    "echinacea purpurea",
+    "echinacee",
+    "ehinacee",
+    "ehinaceom"
    ]
   },
   {
@@ -791,7 +908,10 @@
    "aliases": [
     "africka sljiva",
     "pygeum",
-    "pygeum africanum"
+    "pygeum africanum",
+    "sabal",
+    "saw",
+    "sljiva"
    ]
   },
   {
@@ -810,7 +930,15 @@
     "hyaluronic",
     "hyaluronic acid",
     "hyaluronska",
-    "hyaluron filler"
+    "hyaluron filler",
+    "hialuron",
+    "hialuronic",
+    "hijaluronske",
+    "hijaluronsku",
+    "hyalluronic",
+    "hyalouronic",
+    "hyalur",
+    "hyaluronom"
    ]
   },
   {
@@ -821,7 +949,8 @@
     "retinola",
     "retinolom",
     "retinoid",
-    "retinal"
+    "retinal",
+    "retinil"
    ]
   },
   {
@@ -846,7 +975,9 @@
     "d panthenol",
     "dexpanthenol",
     "dekspantenol",
-    "provitamin b5"
+    "provitamin b5",
+    "panetnolom",
+    "panten"
    ]
   },
   {
@@ -879,7 +1010,8 @@
     "glikolna",
     "glycolic",
     "glycolic acid",
-    "alfa hidroksi kiselina"
+    "alfa hidroksi kiselina",
+    "glikolnom"
    ]
   },
   {
@@ -892,7 +1024,8 @@
     "peptid",
     "peptide",
     "peptides",
-    "peptidni"
+    "peptidni",
+    "peptidnim"
    ]
   },
   {
@@ -904,7 +1037,9 @@
     "ceramida",
     "ceramidima",
     "ceramide",
-    "ceramides"
+    "ceramides",
+    "ceramidin",
+    "ceramidni"
    ]
   },
   {
@@ -959,6 +1094,130 @@
     "aspirin",
     "aspirina",
     "andol"
+   ]
+  },
+  {
+   "canonical": "bacopa",
+   "category": "supplement",
+   "aliases": [
+    "bacopa",
+    "brahmi"
+   ]
+  },
+  {
+   "canonical": "berberin",
+   "category": "supplement",
+   "aliases": [
+    "berberin",
+    "berberine"
+   ]
+  },
+  {
+   "canonical": "bor",
+   "category": "supplement",
+   "aliases": [
+    "bor",
+    "boron"
+   ]
+  },
+  {
+   "canonical": "bromelain",
+   "category": "supplement",
+   "aliases": [
+    "bromelain"
+   ]
+  },
+  {
+   "canonical": "brusnica",
+   "category": "supplement",
+   "aliases": [
+    "brusnica",
+    "brusnice"
+   ]
+  },
+  {
+   "canonical": "kofein",
+   "category": "supplement",
+   "aliases": [
+    "kofein",
+    "caffeine"
+   ]
+  },
+  {
+   "canonical": "eaa",
+   "category": "supplement",
+   "aliases": [
+    "eaa"
+   ]
+  },
+  {
+   "canonical": "glukomanan",
+   "category": "supplement",
+   "aliases": [
+    "glukomanan"
+   ]
+  },
+  {
+   "canonical": "macrogol",
+   "category": "otc-drug",
+   "aliases": [
+    "macrogol"
+   ]
+  },
+  {
+   "canonical": "manoza",
+   "category": "supplement",
+   "aliases": [
+    "manoza",
+    "mannose",
+    "manozan"
+   ]
+  },
+  {
+   "canonical": "simetikon",
+   "category": "otc-drug",
+   "aliases": [
+    "simetikon"
+   ]
+  },
+  {
+   "canonical": "taurin",
+   "category": "supplement",
+   "aliases": [
+    "taurin",
+    "taurine",
+    "taurinom"
+   ]
+  },
+  {
+   "canonical": "teanin",
+   "category": "supplement",
+   "aliases": [
+    "teanin",
+    "theanine"
+   ]
+  },
+  {
+   "canonical": "tmg",
+   "category": "supplement",
+   "aliases": [
+    "tmg"
+   ]
+  },
+  {
+   "canonical": "triptofan",
+   "category": "supplement",
+   "aliases": [
+    "triptofan",
+    "tryptophan"
+   ]
+  },
+  {
+   "canonical": "tirozin",
+   "category": "supplement",
+   "aliases": [
+    "tirozin",
+    "tyrosine"
    ]
   }
  ]

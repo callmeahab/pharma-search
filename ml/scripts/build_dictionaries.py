@@ -32,6 +32,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 INTEL = ROOT / "ml" / "data" / "grouping_intel.json"
+MINED = ROOT / "ml" / "data" / "mined_dictionary.json"
+VERIFIED_ING = ROOT / "ml" / "data" / "verified_ingredients.json"
+MINED_STRIP = ROOT / "ml" / "data" / "mined_strip.json"
 OUT_DIR = ROOT / "internal" / "matching" / "data"
 
 # --- normalization (mirror of Go matching.NormalizeText / py normalize_lookup_text) ---
@@ -120,8 +123,42 @@ CURATED_NOISE = [
 ]
 
 # Words wrongly mined as noise that are actually product-LINE identifiers; keep
-# them so flagship sports lines survive ("Gold Standard", "Serious Mass", "Prostar").
-NOISE_REMOVE = {"gold", "golden", "mass", "gainer", "platinum", "prostar", "elite", "max"}
+# them so flagship sports lines survive ("Gold Standard", "Serious Mass", "Prostar")
+# AND so branded multivitamin / OTC lines stay distinct and group across vendors
+# ("Centrum Silver" vs "Centrum Junior", "Pregnacare Original", "X Forte"). Without
+# these, a brand-identity product (no whitelisted ingredient) loses its line token
+# to the noise filter and collapses to a generic name or a per-vendor singleton.
+# Curated from an LLM pass over the catalog's noise-bucket frequency table. NOTE:
+# flavors/colors are deliberately NOT here — they must keep being stripped so the
+# same protein/cosmetic merges across its flavor/shade variants.
+NOISE_REMOVE = {
+    "gold", "golden", "mass", "gainer", "platinum", "prostar", "elite", "max",
+    # strength / line tiers
+    "forte", "plus", "original", "classic", "extra", "ultra", "strong", "complete",
+    "advanced", "advance", "direct", "rapid", "intense", "intensive", "total",
+    "expert", "duo", "mini", "maxi", "silver",
+    # demographic / target lines
+    "men", "women", "woman", "homme", "kids", "junior", "senior", "adult", "lady",
+    # diet / formulation lines
+    "vegan", "aktiv", "activ",
+    # medical / supplement product-line tokens that were collapsing distinct
+    # products into a bare-brand group (Orthomol Immun / Vital, Prenatal). Mined
+    # from over-merged brand-core groups (display == bare brand) in groupdump.
+    "immun", "imun", "imuno", "immuno", "vital", "prenatal",
+}
+
+# Vendor / store names and encoding artifacts (mojibake, html-entity fragments) that
+# leaked into scraped titles and polluted the product identity (e.g. the sitemap
+# scraper picking up an og:title with the shop name -> "Centrum Silver Apothecary
+# Rs Tablete"). Force them into the noise list so they're stripped from the core.
+# Curated from an LLM pass over the unknown-token frequency table.
+VENDOR_JUNK_NOISE = [
+    "apothecary", "apoteka", "gymbeam", "proteinbox", "maxlab", "milica", "bgb",
+    "scaron", "rsquo", "amp", "ampon", "pse",
+    # site / country suffixes that leak from og:title shop names ("Apothecary RS",
+    # "eApoteka RS") — never part of a real product identity.
+    "rs", "rb",
+]
 
 # Manufacturer / sports-nutrition brands the miner under-covered.
 CURATED_BRANDS = [
@@ -145,6 +182,10 @@ COSMETIC_BRANDS = [
     "loccitane", "oriflame", "avon", "nivea baby", "johnsons", "palmolive",
     "head shoulders", "schwarzkopf", "syoss", "gliss", "wella", "pantene",
     "dr theiss", "apivita", "korres", "weleda baby", "bepanthen", "sudocrem",
+    # makeup / nail cosmetics that were over-merging into a single bare-brand
+    # group via brand-core (gloss/olovka/lak shades) — route to brand-sku so
+    # shades/lines stay distinct per brand.
+    "deborah", "opi", "deborah milano",
 ]
 
 # Salt / chemical-form qualifiers that are NOT a separate identity under aggressive
@@ -182,31 +223,74 @@ CURATED_FORMS = [
 ]
 
 
+# ---------------------------------------------------------------------------
+# Comprehensive mined dictionary: an LLM classified the ENTIRE catalog vocabulary
+# (15k tokens) + 1.5k brand candidates into categories. We fold the safe, high-value
+# categories in here so the dictionary is data-driven instead of hand-curated.
+# INGREDIENTS are deliberately NOT auto-whitelisted from the mine (Track-A
+# over-merge risk) — they're protected from being stripped but stay as identity
+# tokens until a separately verified consolidation pass promotes them.
+# ---------------------------------------------------------------------------
+_mined = json.loads(MINED.read_text()) if MINED.exists() else {}
+def _mn(key):
+    return norm_list(_mined.get(key, []))
+MINED_INGREDIENT_TOKENS = set(_mn("ingredient_tokens"))
+MINED_BRAND_TOKENS = _mn("brand_tokens")
+MINED_FORMS = _mn("forms")
+MINED_FLAVORS = _mn("flavors")
+MINED_COLORS = _mn("colors")
+MINED_VARIANT = _mn("variant")
+MINED_NOISE = _mn("noise")
+# parent cosmetic brand tokens (so makeup/skincare routes to the brand-sku shade path)
+MINED_COSMETIC = norm_list([p for p, r in _mined.get("brands", {}).items() if r.get("type") == "cosmetic"])
+# mined product-line / variant tokens must SURVIVE stripping so lines stay distinct
+# (Oligovit SE, Kaltex Daily Stress Support) — fold into NOISE_REMOVE, but never let
+# a mined-active token be treated as a line word.
+NOISE_REMOVE = set(NOISE_REMOVE) | (set(MINED_VARIANT) - MINED_INGREDIENT_TOKENS)
+
+# Verified ingredient consolidation (LLM-mined, conservatively track_a-gated, then
+# human-reviewed): NEW canonicals + alias merges into existing ones. And the verified
+# "safe to strip" form/noise split (device/product-type words were kept OUT).
+_verified_ing = json.loads(VERIFIED_ING.read_text()) if VERIFIED_ING.exists() else {"new": [], "alias_merges": {}}
+_mined_strip = json.loads(MINED_STRIP.read_text()) if MINED_STRIP.exists() else {"forms": [], "noise": []}
+
+
 def build_ingredients(intel):
     entries = []
+    merges = _verified_ing.get("alias_merges", {})
     for item in intel["ingredients"]["ingredients"]:
         canonical = normalize(item["canonical"])
         if not canonical or canonical in CANONICAL_DROP:
             continue
         category = item.get("category", "supplement")
-        aliases = norm_list([canonical] + item.get("aliases", []) + ALIAS_ADD.get(canonical, []))
+        aliases = norm_list([canonical] + item.get("aliases", []) + ALIAS_ADD.get(canonical, [])
+                            + merges.get(canonical, []))
         aliases = [a for a in aliases if a not in ALIAS_DROP]
         if canonical not in aliases:
             aliases.insert(0, canonical)
         entries.append({"canonical": canonical, "category": category, "aliases": aliases})
-    # stable order: longest canonical first helps longest-match consumers, but we
-    # keep declaration order and let consumers sort aliases by length.
+    # verified NEW canonicals mined from the catalog (single actives, cross-brand safe)
+    have = {e["canonical"] for e in entries}
+    for ni in _verified_ing.get("new", []):
+        c = normalize(ni["canonical"])
+        if not c or c in have or c in CANONICAL_DROP:
+            continue
+        aliases = [a for a in norm_list([c] + ni.get("aliases", [])) if a not in ALIAS_DROP]
+        if c not in aliases:
+            aliases.insert(0, c)
+        entries.append({"canonical": c, "category": ni.get("category", "supplement"), "aliases": aliases})
+        have.add(c)
     return {"ingredients": entries}
 
 
 def build_brands(intel, ingredient_aliases):
     raw = intel["brands"]
-    strip = norm_list(raw["brands"] + CURATED_BRANDS)
+    strip = norm_list(raw["brands"] + CURATED_BRANDS + MINED_BRAND_TOKENS)
     keep = norm_list(raw["ambiguous"])
-    keep_set = set(keep) | ingredient_aliases
-    # never strip something that is a real ingredient identity
+    # never strip a real ingredient identity or a mined active (keep it as identity)
+    keep_set = set(keep) | ingredient_aliases | MINED_INGREDIENT_TOKENS | NOISE_REMOVE
     strip = [b for b in strip if b not in keep_set and len(b) >= 2]
-    cosmetic = norm_list(COSMETIC_BRANDS)
+    cosmetic = norm_list(COSMETIC_BRANDS + MINED_COSMETIC)
     return {"strip": strip, "keep": keep, "cosmetic": cosmetic}
 
 
@@ -230,12 +314,20 @@ EXISTING_FORMS = [
 
 
 def build_stopwords(intel, ingredient_aliases):
-    noise = norm_list(EXISTING_NOISE + intel["noise"]["noiseWords"] + SALT_FORMS + CURATED_NOISE)
-    forms = norm_list(EXISTING_FORMS + intel["noise"]["formWords"] + CURATED_FORMS)
-    # never let a stopword shadow a real ingredient identity, or a product-line word
-    noise = [w for w in noise if w not in ingredient_aliases and w not in NOISE_REMOVE]
-    forms = [w for w in forms if w not in NOISE_REMOVE]
-    forms = [w for w in forms if w not in ingredient_aliases]
+    # The RAW mined form/noise lists are NOT folded in wholesale — they over-strip
+    # context-dependent product-TYPE words ("grickalica"=clipper, "pelene"=diapers
+    # ARE the identity for a device/baby brand). Instead we fold in MINED_STRIP, the
+    # VERIFIED split where an LLM separated genuinely strippable forms/filler from
+    # the keep-as-identity product-type words (the latter stay out, as identity).
+    noise = norm_list(EXISTING_NOISE + intel["noise"]["noiseWords"] + SALT_FORMS + CURATED_NOISE
+                      + VENDOR_JUNK_NOISE + _mined_strip.get("noise", []))
+    forms = norm_list(EXISTING_FORMS + intel["noise"]["formWords"] + CURATED_FORMS
+                      + _mined_strip.get("forms", []))
+    # never let a stopword shadow a real ingredient identity, a mined active, or a
+    # product-line / variant word
+    protected = ingredient_aliases | MINED_INGREDIENT_TOKENS | NOISE_REMOVE
+    noise = [w for w in noise if w not in protected]
+    forms = [w for w in forms if w not in NOISE_REMOVE and w not in ingredient_aliases and w not in MINED_INGREDIENT_TOKENS]
     # a token cannot be both noise and form; prefer form
     form_set = set(forms)
     noise = [w for w in noise if w not in form_set]

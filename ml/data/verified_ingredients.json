@@ -1,0 +1,615 @@
+{
+ "new": [
+  {
+   "canonical": "bacopa",
+   "category": "supplement",
+   "aliases": [
+    "bacopa",
+    "brahmi"
+   ]
+  },
+  {
+   "canonical": "berberin",
+   "category": "supplement",
+   "aliases": [
+    "berberin",
+    "berberine"
+   ]
+  },
+  {
+   "canonical": "bor",
+   "category": "supplement",
+   "aliases": [
+    "bor",
+    "boron"
+   ]
+  },
+  {
+   "canonical": "bromelain",
+   "category": "supplement",
+   "aliases": [
+    "bromelain"
+   ]
+  },
+  {
+   "canonical": "brusnica",
+   "category": "supplement",
+   "aliases": [
+    "brusnica",
+    "brusnice"
+   ]
+  },
+  {
+   "canonical": "kofein",
+   "category": "supplement",
+   "aliases": [
+    "caffeine",
+    "kofein"
+   ]
+  },
+  {
+   "canonical": "eaa",
+   "category": "supplement",
+   "aliases": [
+    "eaa"
+   ]
+  },
+  {
+   "canonical": "glukomanan",
+   "category": "supplement",
+   "aliases": [
+    "glukomanan"
+   ]
+  },
+  {
+   "canonical": "macrogol",
+   "category": "otc-drug",
+   "aliases": [
+    "macrogol"
+   ]
+  },
+  {
+   "canonical": "manoza",
+   "category": "supplement",
+   "aliases": [
+    "mannose",
+    "manoza",
+    "manozan"
+   ]
+  },
+  {
+   "canonical": "simetikon",
+   "category": "otc-drug",
+   "aliases": [
+    "simetikon"
+   ]
+  },
+  {
+   "canonical": "taurin",
+   "category": "supplement",
+   "aliases": [
+    "taurin",
+    "taurine",
+    "taurinom"
+   ]
+  },
+  {
+   "canonical": "teanin",
+   "category": "supplement",
+   "aliases": [
+    "teanin",
+    "theanine"
+   ]
+  },
+  {
+   "canonical": "tmg",
+   "category": "supplement",
+   "aliases": [
+    "tmg"
+   ]
+  },
+  {
+   "canonical": "triptofan",
+   "category": "supplement",
+   "aliases": [
+    "triptofan",
+    "tryptophan"
+   ]
+  },
+  {
+   "canonical": "tirozin",
+   "category": "supplement",
+   "aliases": [
+    "tirozin",
+    "tyrosine"
+   ]
+  }
+ ],
+ "alias_merges": {
+  "5 htp": [
+   "5 htp",
+   "5htp",
+   "htp"
+  ],
+  "arginin": [
+   "aakg",
+   "arginin",
+   "arginina",
+   "arginine"
+  ],
+  "probiotik": [
+   "acidophilus",
+   "bifidus",
+   "boulardi",
+   "boulardii",
+   "lgg",
+   "microflora",
+   "mikrobiota",
+   "mikroflorom",
+   "probiotic",
+   "probiotici",
+   "probiotics",
+   "probiotik",
+   "probiotika",
+   "probiotikom",
+   "probiotske",
+   "probiotski",
+   "saccharomyces",
+   "simbiotik",
+   "sinbiotik"
+  ],
+  "karnitin": [
+   "alc",
+   "carni",
+   "carnitin",
+   "carnitine",
+   "carnitinom",
+   "karnitin"
+  ],
+  "kreatin": [
+   "alkalyn",
+   "crea",
+   "creapure",
+   "creatin",
+   "creatine",
+   "krealkalyn",
+   "kreatin",
+   "kreatinom",
+   "tricreatine"
+  ],
+  "aloe vera": [
+   "aloe",
+   "aloe vera",
+   "aloja",
+   "alojom",
+   "verom"
+  ],
+  "arganovo ulje": [
+   "argan",
+   "argana",
+   "arganom",
+   "arganovim",
+   "arganovo",
+   "arganovo ulje"
+  ],
+  "vitamin c": [
+   "ascorbate",
+   "camu",
+   "multiaskorbat",
+   "vitamin c"
+  ],
+  "ashwagandha": [
+   "ashvagandha",
+   "ashwaganda",
+   "ashwagandha",
+   "asvaganda",
+   "asvagande"
+  ],
+  "vitamin b1": [
+   "b1",
+   "benfotiamine",
+   "thiamine",
+   "vitamin b1"
+  ],
+  "vitamin b12": [
+   "b12",
+   "mecobalamin",
+   "methylcobalamin",
+   "metilkobalamin",
+   "vitamin b12"
+  ],
+  "vitamin b2": [
+   "b2",
+   "riboflavin",
+   "vitamin b2"
+  ],
+  "vitamin b6": [
+   "b6",
+   "vitamin b6"
+  ],
+  "folna kiselina": [
+   "b9",
+   "folat",
+   "folate",
+   "folatom",
+   "folic",
+   "folique",
+   "folna",
+   "folna kiselina",
+   "folnom",
+   "metafolin",
+   "metilfolat",
+   "mthf"
+  ],
+  "omega 3": [
+   "bakalara",
+   "epa",
+   "o3",
+   "omega",
+   "omega 3",
+   "omega3"
+  ],
+  "bakar": [
+   "bakar",
+   "cu"
+  ],
+  "bcaa": [
+   "bcaa",
+   "bcaas"
+  ],
+  "gavez": [
+   "beinwel",
+   "beinwell",
+   "gavez",
+   "gaveza",
+   "gavezom",
+   "gavezova"
+  ],
+  "beta glukan": [
+   "beta glukan",
+   "betaglukan",
+   "betaglukana",
+   "glucan",
+   "glucans",
+   "glukan",
+   "glukani",
+   "glukanom"
+  ],
+  "ginko biloba": [
+   "biloba",
+   "bilobom",
+   "gingko",
+   "ginkgo",
+   "ginko",
+   "ginko biloba"
+  ],
+  "kolagen": [
+   "biocollagen",
+   "colagen",
+   "collagen",
+   "hydrocollagen",
+   "kolagen",
+   "kolagena",
+   "kolagenom",
+   "kolagin",
+   "kollagen",
+   "peptan"
+  ],
+  "kvercetin": [
+   "biodihidrokvercetin",
+   "emiq",
+   "kvercetin",
+   "quercetin",
+   "quercetine"
+  ],
+  "biotin": [
+   "biotin",
+   "biotinom"
+  ],
+  "kalcijum": [
+   "ca",
+   "calcijum",
+   "calcium",
+   "kalcijum",
+   "kalcijumom"
+  ],
+  "neven": [
+   "calendula",
+   "calendulae",
+   "neven",
+   "nevena",
+   "nevenom",
+   "nevenova",
+   "nevenovo"
+  ],
+  "kamilica": [
+   "camomile",
+   "chamomile",
+   "kamilica",
+   "kamilice",
+   "kamilicom"
+  ],
+  "beta karoten": [
+   "beta karoten",
+   "caroten",
+   "carotene",
+   "karoten"
+  ],
+  "ceramidi": [
+   "ceramida",
+   "ceramide",
+   "ceramides",
+   "ceramidi",
+   "ceramidima",
+   "ceramidin",
+   "ceramidni"
+  ],
+  "hlorela": [
+   "chlorella",
+   "hlorela"
+  ],
+  "hondroitin": [
+   "chondroitin",
+   "hondroitin"
+  ],
+  "hrom": [
+   "chromium",
+   "hrom"
+  ],
+  "cink": [
+   "cink",
+   "cinkom",
+   "zinc",
+   "zinco",
+   "zincum",
+   "zink",
+   "zn"
+  ],
+  "koenzim q10": [
+   "coenzim",
+   "coenzime",
+   "coenzym",
+   "coenzyme",
+   "coq",
+   "coq10",
+   "koenzim",
+   "koenzim q10",
+   "koenzimom",
+   "q10",
+   "ubichinon",
+   "ubiquinol"
+  ],
+  "kurkuma": [
+   "curcuma",
+   "curcumin",
+   "kurkuma",
+   "kurkume",
+   "kurkumin",
+   "kurkumom",
+   "turmeric"
+  ],
+  "vitamin d3": [
+   "d3",
+   "vitamin d3"
+  ],
+  "panthenol": [
+   "dekspantenol",
+   "panetnolom",
+   "panten",
+   "pantenol",
+   "pantenolom",
+   "panthenol"
+  ],
+  "ehinacea": [
+   "echinacea",
+   "echinacee",
+   "ehinacea",
+   "ehinacee",
+   "ehinaceom"
+  ],
+  "gvozdje": [
+   "fe",
+   "fumarate",
+   "gvozdje",
+   "gvozdjem",
+   "iron"
+  ],
+  "magnezijum": [
+   "glicinat",
+   "magne",
+   "magnezijum"
+  ],
+  "glikolna kiselina": [
+   "glikolna kiselina",
+   "glikolnom",
+   "glycolic"
+  ],
+  "glukozamin": [
+   "glucosamin",
+   "glucosamine",
+   "glukozamin"
+  ],
+  "glutamin": [
+   "glutamin",
+   "glutamine"
+  ],
+  "hijaluronska kiselina": [
+   "hialuron",
+   "hialuronic",
+   "hijaluron",
+   "hijaluronom",
+   "hijaluronska",
+   "hijaluronska kiselina",
+   "hijaluronske",
+   "hijaluronski",
+   "hijaluronskom",
+   "hijaluronsku",
+   "hyalluronic",
+   "hyalouronic",
+   "hyalur",
+   "hyaluron",
+   "hyaluronic",
+   "hyaluronom"
+  ],
+  "jod": [
+   "iodide",
+   "iodine",
+   "jod"
+  ],
+  "vitamin k2": [
+   "k2",
+   "k2mk7",
+   "mk",
+   "mk7",
+   "vitamin k2"
+  ],
+  "kalijum": [
+   "kalijum",
+   "kcl",
+   "potassium"
+  ],
+  "kantarion": [
+   "kantarion",
+   "kantariona",
+   "kantarionom",
+   "kantarionovim",
+   "kantarionovo"
+  ],
+  "shea buter": [
+   "karite",
+   "shea",
+   "shea buter"
+  ],
+  "likopen": [
+   "likopen",
+   "lycopene"
+  ],
+  "lutein": [
+   "lutein",
+   "luteinom"
+  ],
+  "maca": [
+   "maca",
+   "maka",
+   "makamu"
+  ],
+  "mangan": [
+   "mangan"
+  ],
+  "maticnjak": [
+   "maticnjak",
+   "maticnjaka",
+   "maticnjakom"
+  ],
+  "melatonin": [
+   "melatonin",
+   "melatonina",
+   "melatoninom"
+  ],
+  "menta": [
+   "menta",
+   "mente",
+   "menthol",
+   "nane",
+   "peperminta"
+  ],
+  "msm": [
+   "msm"
+  ],
+  "multivitamin": [
+   "multivitamin",
+   "multivitamina",
+   "multivitamini",
+   "multivitamins",
+   "multivitaminski"
+  ],
+  "vitamin b3": [
+   "niacin",
+   "vitamin b3"
+  ],
+  "niacinamid": [
+   "niacinamid",
+   "niacinamide",
+   "niacinamidom"
+  ],
+  "valerijana": [
+   "odoljena",
+   "valerian",
+   "valeriane",
+   "valerijana",
+   "valerijane"
+  ],
+  "origano": [
+   "oregano",
+   "origana",
+   "origano",
+   "origanom"
+  ],
+  "vitamin b5": [
+   "pantotenska",
+   "pantothenic",
+   "vitamin b5"
+  ],
+  "peptidi": [
+   "peptide",
+   "peptides",
+   "peptidi",
+   "peptidima",
+   "peptidnim"
+  ],
+  "propolis": [
+   "propol",
+   "propoli",
+   "propolis",
+   "propolisa",
+   "propolisom"
+  ],
+  "resveratrol": [
+   "resveratrol"
+  ],
+  "retinol": [
+   "retinil",
+   "retinol",
+   "retinolom"
+  ],
+  "africka sljiva": [
+   "africka sljiva",
+   "sabal",
+   "saw",
+   "sljiva"
+  ],
+  "salicilna kiselina": [
+   "salicilna kiselina",
+   "salicilnom",
+   "salicylic"
+  ],
+  "selen": [
+   "selen",
+   "selenium",
+   "selenium100",
+   "selenom"
+  ],
+  "silicijum": [
+   "silica",
+   "silicijum"
+  ],
+  "spirulina": [
+   "spirulina",
+   "spiruline"
+  ],
+  "vitamin e": [
+   "tocopherol",
+   "tokoferol",
+   "vitamin e"
+  ],
+  "aktivni ugalj": [
+   "aktivni ugalj",
+   "ugalj"
+  ],
+  "urea": [
+   "urea",
+   "uree",
+   "ureom"
+  ]
+ }
+}

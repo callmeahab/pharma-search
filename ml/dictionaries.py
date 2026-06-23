@@ -82,6 +82,26 @@ for _entry in _load("ingredients.json")["ingredients"]:
 _brands = _load("brands.json")
 BRAND_STRIP: Set[str] = {normalize(b) for b in _brands["strip"] if normalize(b)}
 BRAND_KEEP: Set[str] = {normalize(b) for b in _brands["keep"] if normalize(b)}
+# Pure-cosmetic parent brands. Their products are grouped by line via the Go
+# brand-sku path (brand shown separately from a descriptive residual), so the brand
+# must be STRIPPED from the core — otherwise it leaks into the residual and the
+# display duplicates it ("La Roche Posay Roche Posay Effaclar"). Supplement/identity
+# brands (Centrum, Pregnacare) are NOT here, so they stay in the core as the
+# group identity. Sub-tokens (>=5 chars) catch partial matches like detect_brand
+# returning "roche posay" for the "la roche posay" entry.
+COSMETIC_BRANDS: Set[str] = {normalize(b) for b in _brands.get("cosmetic", []) if normalize(b)}
+_COSMETIC_BRAND_TOKENS: Set[str] = {
+    tok for b in COSMETIC_BRANDS for tok in b.split() if len(tok) >= 5
+}
+
+
+def is_cosmetic_brand(brand) -> bool:
+    n = normalize(brand)
+    if not n:
+        return False
+    if n in COSMETIC_BRANDS:
+        return True
+    return any(tok in _COSMETIC_BRAND_TOKENS for tok in n.split())
 
 # --- stopwords ---
 _stop = _load("stopwords.json")
