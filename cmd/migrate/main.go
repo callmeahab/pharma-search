@@ -38,7 +38,6 @@ var permanentIndexNames = []string{
 	"idx_product_spf_value",
 	"idx_product_core_identity",
 	"idx_product_search_tokens",
-	"idx_product_keyword_tags",
 	"idx_product_normalized_lower",
 	"idx_product_normalized_trgm",
 	"idx_product_processed",

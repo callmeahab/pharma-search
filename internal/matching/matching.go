@@ -53,8 +53,13 @@ var formAliases = map[string]string{
 	"capsule": "kapsule", "capsules": "kapsule", "softgel": "kapsule", "softgels": "kapsule",
 	"cps": "kapsule", "sirup": "sirup", "sprej": "sprej", "spray": "sprej",
 	"kapi": "kapi", "drops": "kapi", "gel": "gel", "gela": "gel",
-	"krema": "krema", "krem": "krema", "cream": "krema", "mast": "mast",
-	"ointment": "mast", "losion": "losion", "lotion": "losion", "serum": "serum",
+	// Cream/ointment family collapses to one form: vendors title the SAME topical
+	// product as "krem" / "krema" / "mast" / "pomada" interchangeably (e.g. Galenika
+	// Pantenol dexpanthenol 5% 30g), so keying them separately fragments the group.
+	// Functionally distinct topicals (gel, serum, losion, sprej, kapi) stay separate.
+	"krema": "krema", "krem": "krema", "cream": "krema", "mast": "krema",
+	"ointment": "krema", "pomada": "krema", "pomast": "krema",
+	"losion": "losion", "lotion": "losion", "serum": "serum",
 	"rastvor": "rastvor", "solution": "rastvor", "suspenzija": "suspenzija",
 	"kesica": "kesice", "kesice": "kesice", "ampula": "ampule", "ampule": "ampule",
 	"prah": "prah", "powder": "prah",

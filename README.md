@@ -7,15 +7,11 @@ Pharmaceutical product price comparison platform for Serbia. Aggregates prices f
 ```
 ┌─────────────┐     ┌─────────────────┐     ┌─────────────┐
 │   Next.js   │────▶│  Go + ConnectRPC │────▶│ PostgreSQL  │
-│  Frontend   │     │     Backend      │     │             │
-└─────────────┘     └────────┬─────────┘     └─────────────┘
-                             │
-                             ▼
-                    ┌─────────────────┐
-                    │   Meilisearch   │
-                    │  (Search Index) │
-                    └─────────────────┘
+│  Frontend   │     │     Backend      │     │  (pg_trgm)  │
+└─────────────┘     └─────────────────┘     └─────────────┘
 ```
+
+Search runs in PostgreSQL (`pg_trgm` trigram + ILIKE + concept token matching) — no external search service. Grouping is computed at query time by `internal/matching`.
 
 ## Tech Stack
 
@@ -24,9 +20,9 @@ Pharmaceutical product price comparison platform for Serbia. Aggregates prices f
 | Frontend | Next.js 15, React 19, TailwindCSS, shadcn/ui |
 | Backend | Go 1.24, ConnectRPC |
 | Database | PostgreSQL 16 |
-| Search | Meilisearch |
+| Search | PostgreSQL `pg_trgm` (trigram + concept matching) |
 | Scrapers | Puppeteer, Bun |
-| ML | Python 3.12, spaCy |
+| ML | Python 3.12 (deterministic rules + mined dictionaries) |
 
 ## Local Development
 
@@ -42,7 +38,7 @@ Pharmaceutical product price comparison platform for Serbia. Aggregates prices f
 3. Wait for setup to complete
 
 The devcontainer automatically:
-- Starts PostgreSQL and Meilisearch
+- Starts PostgreSQL
 - Applies database migrations
 - Installs all dependencies
 
@@ -113,7 +109,7 @@ ConnectRPC endpoints on port 50051:
 
 | Method | Description |
 |--------|-------------|
-| `Search` | Full-text product search via Meilisearch |
+| `Search` | Product search via PostgreSQL `pg_trgm` |
 | `GetProductGroups` | Retrieve grouped products |
 | `GetVendors` | List all vendors |
 
@@ -129,8 +125,8 @@ buf generate proto
 
 ## Product Enrichment
 
-Primary product enrichment now comes from lookup tables plus deterministic normalization rules.
-Optional spaCy model support is still possible, but it is no longer the primary workflow.
+Product enrichment comes from lookup tables (`ProductStandardization`) plus deterministic
+normalization rules over the LLM-mined shared dictionaries in `internal/matching/data/`.
 
 Example structured output:
 
@@ -147,17 +143,10 @@ python -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### Optional spaCy Support
-
-```bash
-pip install -r requirements-ml.txt
-```
-
-If you already have a compatible saved model under `ml/models/pharma_ner`, `populate_missing_data.py` will use it automatically. Otherwise it falls back to deterministic rules.
-
 ### Populate Database
 
-Extract entities from product titles and update the database:
+Extract entities from product titles (deterministic rules + the shared dictionaries
+in `internal/matching/data/`) and update the database:
 
 ```bash
 # Show stats and sample extractions (dry run)
@@ -171,9 +160,6 @@ python populate_missing_data.py --all
 
 # Limit number of products
 python populate_missing_data.py --limit 1000
-
-# Run without spaCy/model dependencies
-python populate_missing_data.py --rules-only
 ```
 
 ## Deployment
@@ -192,7 +178,7 @@ ssh root@your-server 'bash /tmp/setup.sh'
 
 This installs and configures:
 - Node.js, Bun, PM2, Go 1.24
-- PostgreSQL 15, Meilisearch
+- PostgreSQL 15
 - Nginx reverse proxy
 - UFW firewall
 
@@ -213,17 +199,10 @@ This will:
 
 ### Sync Data
 
-Copy database and rebuild search index:
+Copy the catalog database to the server (account/watchlist tables are preserved):
 
 ```bash
-# Sync PostgreSQL and rebuild Meilisearch index
 ./deploy/sync-data.sh root@your-server
-
-# PostgreSQL only
-./deploy/sync-data.sh root@your-server --pg-only
-
-# Rebuild Meilisearch index only
-./deploy/sync-data.sh root@your-server --meili-only
 ```
 
 ### SSL Certificate
@@ -241,8 +220,6 @@ certbot --nginx -d yourdomain.com -d www.yourdomain.com
 
 ```bash
 DATABASE_URL=postgresql://user:pass@localhost:5432/pharma_search
-MEILI_URL=http://localhost:7700
-MEILI_API_KEY=your_key
 ```
 
 ### Frontend (.env.local)

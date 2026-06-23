@@ -15,10 +15,6 @@ from pathlib import Path
 from typing import Dict, Any, Optional, List, Tuple
 from datetime import datetime
 
-try:
-    import spacy
-except ImportError:  # pragma: no cover - exercised only when spaCy is absent
-    spacy = None
 import psycopg2
 from psycopg2.extras import execute_values
 from dotenv import load_dotenv
@@ -34,7 +30,6 @@ import dictionaries
 load_dotenv()
 
 # Configuration
-MODEL_PATH = Path(__file__).parent / "models" / "pharma_ner"
 BATCH_SIZE = 500
 LOG_FILE = Path(__file__).parent / "populate_missing_data.log"
 
@@ -54,20 +49,6 @@ def get_db_connection():
     """Connect to PostgreSQL database."""
     db_url = os.getenv("DATABASE_URL", "postgres://postgres:docker@localhost:5432/pharma_search")
     return psycopg2.connect(db_url)
-
-
-def load_model():
-    """Load the optional trained multi-entity NER model when available."""
-    if spacy is None:
-        logger.info("spaCy is not installed. Continuing with deterministic rules only.")
-        return None
-
-    if MODEL_PATH.exists():
-        logger.info(f"Loading model from {MODEL_PATH}")
-        return spacy.load(MODEL_PATH)
-
-    logger.info(f"Model not found at {MODEL_PATH}. Continuing with deterministic rules only.")
-    return None
 
 
 QUANTITY_UNIT_PATTERN = (
@@ -558,56 +539,6 @@ def extract_entities_rule_based(title: str) -> Dict[str, Any]:
     return result
 
 
-def extract_entities_from_doc(doc) -> Dict[str, Any]:
-    """Extract all entities from a processed spaCy doc."""
-    result = {
-        "brand": None,
-        "dosage_value": None,
-        "dosage_unit": None,
-        "dosage_text": None,
-        "form": None,
-        "quantity_value": None,
-        "quantity_unit": None,
-        "volume_value": None,
-        "volume_unit": None,
-        "entities_found": []
-    }
-
-    for ent in doc.ents:
-        result["entities_found"].append({
-            "label": ent.label_,
-            "text": ent.text
-        })
-
-        if ent.label_ == "BRAND" and not result["brand"]:
-            result["brand"] = ent.text.strip()
-
-        elif ent.label_ == "DOSAGE" and not result["dosage_value"]:
-            parsed = parse_dosage_text(ent.text)
-            if parsed:
-                result["dosage_value"] = parsed["value"]
-                result["dosage_unit"] = parsed["unit"]
-                result["dosage_text"] = ent.text.strip()
-
-        elif ent.label_ == "FORM" and not result["form"]:
-            result["form"] = ent.text.strip().lower()
-
-        elif ent.label_ == "QUANTITY" and not result["quantity_value"]:
-            parsed = parse_quantity_text(ent.text)
-            if parsed:
-                result["quantity_value"] = parsed["value"]
-                result["quantity_unit"] = parsed["unit"]
-
-    return result
-
-
-def extract_entities(title: str, nlp=None) -> Dict[str, Any]:
-    """Extract all entities from a product title using ML when available."""
-    if nlp is None:
-        return extract_entities_rule_based(title)
-    return extract_entities_from_doc(nlp(title))
-
-
 def get_products_missing_data(conn, limit: int = BATCH_SIZE, update_all: bool = False,
                                last_id: str = "") -> List[Dict]:
     """Get products with missing extracted data."""
@@ -637,7 +568,6 @@ def get_products_missing_data(conn, limit: int = BATCH_SIZE, update_all: bool = 
                   OR "normalizedName" IS NULL
                   OR "coreProductIdentity" IS NULL
                   OR "searchTokens" IS NULL
-                  OR "keywordTags" IS NULL
               )
             ORDER BY id
             LIMIT %s
@@ -725,7 +655,6 @@ def update_product_table(conn, updates: List[Dict]) -> int:
             update.get("normalized_name"),
             update.get("core_product_identity"),
             update.get("search_tokens"),
-            update.get("keyword_tags"),
         )
         for update in updates
     ]
@@ -746,13 +675,12 @@ def update_product_table(conn, updates: List[Dict]) -> int:
             "normalizedName" = v.normalized_name::text,
             "coreProductIdentity" = v.core_product_identity::text,
             "searchTokens" = v.search_tokens::text[],
-            "keywordTags" = v.keyword_tags::text[],
             "processedAt" = CURRENT_TIMESTAMP,
             "updatedAt" = CURRENT_TIMESTAMP
         FROM (VALUES %s) AS v(
             id, brand, form, dosage_value, dosage_unit, quantity_value, quantity_unit,
             volume_value, volume_unit, normalized_name, core_product_identity,
-            search_tokens, keyword_tags
+            search_tokens
         )
         WHERE p.id = v.id
         RETURNING p.id
@@ -839,7 +767,7 @@ def update_standardization_table(conn, updates: List[Dict]) -> int:
     return updated
 
 
-def process_products(nlp, conn, limit: int = 0, update_all: bool = False,
+def process_products(conn, limit: int = 0, update_all: bool = False,
                      update_standardization: bool = True):
     """Process products and extract missing data."""
 
@@ -852,7 +780,7 @@ def process_products(nlp, conn, limit: int = 0, update_all: bool = False,
                        WHERE title IS NOT NULL AND LENGTH(title) > 5
                        AND ("processedAt" IS NULL
                             OR "normalizedName" IS NULL OR "coreProductIdentity" IS NULL
-                            OR "searchTokens" IS NULL OR "keywordTags" IS NULL)''')
+                            OR "searchTokens" IS NULL)''')
     total_to_process = cur.fetchone()[0]
     cur.close()
     logger.info(f"Total products to process: {total_to_process}")
@@ -911,17 +839,10 @@ def process_products(nlp, conn, limit: int = 0, update_all: bool = False,
 
         inferred_by_index: Dict[int, Dict[str, Any]] = {}
         if inference_titles:
-            if nlp is not None:
-                docs = nlp.pipe(inference_titles, batch_size=128)
-                for i, doc in enumerate(
-                    tqdm(docs, total=len(inference_titles), desc="Extracting entities")
-                ):
-                    inferred_by_index[inference_indexes[i]] = extract_entities_from_doc(doc)
-            else:
-                for i, title in enumerate(
-                    tqdm(inference_titles, total=len(inference_titles), desc="Extracting entities (rules)")
-                ):
-                    inferred_by_index[inference_indexes[i]] = extract_entities_rule_based(title)
+            for i, title in enumerate(
+                tqdm(inference_titles, total=len(inference_titles), desc="Extracting entities")
+            ):
+                inferred_by_index[inference_indexes[i]] = extract_entities_rule_based(title)
 
         for idx, product in enumerate(products):
             standardization = standardizations.get(product["title"]) or standardizations.get(product["title"].lower())
@@ -940,7 +861,7 @@ def process_products(nlp, conn, limit: int = 0, update_all: bool = False,
                     "volume_unit": standardization.get("volume_unit"),
                 }
             else:
-                inferred = inferred_by_index.get(idx) or extract_entities(product["title"], nlp)
+                inferred = inferred_by_index.get(idx) or extract_entities_rule_based(product["title"])
                 if standardization:
                     extracted = {
                         "brand": standardization["brand"] or inferred["brand"],
@@ -965,7 +886,7 @@ def process_products(nlp, conn, limit: int = 0, update_all: bool = False,
             # Generate normalized name and core identity
             norm_name = generate_normalized_name(extracted, product["title"])
             core_identity = _extract_core_ingredient(product["title"], extracted.get("brand"))
-            search_tokens, keyword_tags = build_search_metadata({
+            search_tokens, _ = build_search_metadata({
                 "title": product["title"],
                 "brand": extracted.get("brand"),
                 "core_product_identity": core_identity,
@@ -1006,8 +927,7 @@ def process_products(nlp, conn, limit: int = 0, update_all: bool = False,
                 "normalized_name": norm_name,
                 "core_product_identity": core_identity,
                 "search_tokens": search_tokens,
-                "keyword_tags": keyword_tags,
-                "pipeline_source": "ml_pipeline" if nlp is not None and idx in inferred_by_index else "rules_pipeline",
+                "pipeline_source": "rules_pipeline",
             }
 
             updates.append(update_record)
@@ -1074,28 +994,13 @@ def main():
         "--dry-run", action="store_true",
         help="Show what would be done without making changes"
     )
-    parser.add_argument(
-        "--rules-only", action="store_true",
-        help="Skip spaCy model loading and use deterministic extraction rules only"
-    )
 
     args = parser.parse_args()
 
     logger.info("=" * 60)
     logger.info("Populate Missing Product Data")
     logger.info("=" * 60)
-
-    # Optional model support
-    if args.rules_only:
-        nlp = None
-        logger.info("Skipping spaCy model load because --rules-only was provided")
-    else:
-        nlp = load_model()
-
-    if nlp is not None:
-        logger.info(f"Optional model enabled with pipes: {nlp.pipe_names}")
-    else:
-        logger.info("Using standardization lookups and deterministic extraction rules only")
+    logger.info("Using standardization lookups and deterministic extraction rules")
 
     # Connect to database
     logger.info("Connecting to database...")
@@ -1140,10 +1045,11 @@ def main():
         """)
         for row in cur.fetchall():
             title = row[0]
-            extracted = extract_entities(title, nlp)
+            extracted = extract_entities_rule_based(title)
             logger.info(f"\n  Title: {title}")
-            for ent in extracted["entities_found"]:
-                logger.info(f"    {ent['label']}: {ent['text']}")
+            logger.info(f"    brand={extracted.get('brand')} form={extracted.get('form')} "
+                        f"dosage={extracted.get('dosage_value')}{extracted.get('dosage_unit') or ''} "
+                        f"qty={extracted.get('quantity_value')}")
         cur.close()
 
     else:
@@ -1151,7 +1057,7 @@ def main():
         start_time = datetime.now()
 
         stats = process_products(
-            nlp, conn,
+            conn,
             limit=args.limit,
             update_all=args.all,
             update_standardization=not args.no_standardization
