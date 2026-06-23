@@ -75,10 +75,9 @@ async function scrapePage(
         const productElements = document.querySelectorAll('.product-grid-view');
         return Array.from(productElements)
           .map((element) => {
-            // Check if product is out of stock
-            if (element.querySelector('.fusion-out-of-stock')) {
-              return null;
-            }
+            // NOTE: do NOT skip out-of-stock items — ~220 of ~533 products are
+            // marked .fusion-out-of-stock and dropping them was the bulk of the
+            // under-coverage. We keep them (price still shown for comparison).
 
             const titleElement = element.querySelector('.product-title a');
             const title = titleElement?.textContent?.trim() || '';

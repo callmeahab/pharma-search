@@ -83,15 +83,6 @@ async function scrapePage(page: Page, url: string): Promise<Product[]> {
   }
 }
 
-async function hasNextPage(page: Page): Promise<boolean> {
-  try {
-    const nextButton = await page.$('.fa.fa-angle-right');
-    return !!nextButton;
-  } catch {
-    return false;
-  }
-}
-
 async function scrapeMultipleBaseUrls(): Promise<Product[]> {
 const browser = await puppeteer.launch({
     headless: ScraperUtils.IS_HEADLESS,
@@ -144,16 +135,14 @@ const browser = await puppeteer.launch({
         } else {
           consecutiveFailures = 0;
           allScrapedProducts = [...allScrapedProducts, ...products];
-
-          // Check for next page
-          const nextPageExists = await hasNextPage(page);
-          if (!nextPageExists) {
-            console.log('No next page found, moving to next category');
-            break;
-          }
+          // Pagination continues until a page returns no products
+          // (consecutiveFailures). The old `.fa.fa-angle-right` next-page check
+          // matched nothing in the live markup, so it stopped after page 1 —
+          // capturing only ~48 of ~9,800 products.
         }
 
         pageNumber++;
+        if (pageNumber > 400) break; // safety cap
         await new Promise((resolve) => setTimeout(resolve, 2000));
       }
     }

@@ -50,7 +50,11 @@ function decodeEntities(s: string): string {
 }
 
 function extractLocs(xml: string): string[] {
-  return [...xml.matchAll(/<loc>\s*([^<]+?)\s*<\/loc>/gi)].map((m) => decodeEntities(m[1].trim()));
+  // Handles both plain <loc>url</loc> and CDATA-wrapped <loc><![CDATA[url]]></loc>
+  // (OpenCart / PrestaShop advanced sitemaps use CDATA).
+  return [...xml.matchAll(/<loc>\s*(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?\s*<\/loc>/gis)]
+    .map((m) => decodeEntities(m[1].trim()))
+    .filter(Boolean);
 }
 
 // Bounded-concurrency map.
@@ -152,37 +156,43 @@ function metaContent(html: string, key: string): string {
 }
 
 export function parseProductPage(html: string, url: string): Product | null {
+  let title = '';
+  let price = '';
+  let image = '';
+  let category = '';
+
+  // 1. JSON-LD Product (fall through if a field is missing rather than return early).
   const blocks = [...html.matchAll(/<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)];
   for (const b of blocks) {
     let data: unknown;
     try { data = JSON.parse(b[1].trim()); } catch { continue; }
     const prod = findProductNode(data);
     if (prod) {
-      const title = typeof prod.name === 'string' ? prod.name.trim() : '';
-      if (!title) continue;
-      return {
-        title,
-        price: extractOfferPrice(prod.offers),
-        category: typeof prod.category === 'string' ? prod.category : '',
-        link: url,
-        thumbnail: firstImage(prod.image),
-        photos: firstImage(prod.image),
-      };
+      if (!title && typeof prod.name === 'string') title = prod.name.trim();
+      if (!price) price = extractOfferPrice(prod.offers);
+      if (!image) image = firstImage(prod.image);
+      if (!category && typeof prod.category === 'string') category = prod.category;
+      if (title && price) break;
     }
   }
-  // OpenGraph / microdata fallback
-  const rawTitle = metaContent(html, 'og:title');
-  if (rawTitle) {
-    // Strip a trailing site-name suffix ("Product | eApoteka", "Product — Shop").
-    const title = rawTitle.replace(/\s*[|–—]\s*[^|–—]{1,40}\s*$/, '').replace(/,\s*$/, '').trim() || rawTitle;
-    const price =
+
+  // 2. OpenGraph / microdata / Magento for any still-missing field.
+  if (!title) {
+    const raw = metaContent(html, 'og:title');
+    title = raw.replace(/\s*[|–—]\s*[^|–—]{1,40}\s*$/, '').replace(/,\s*$/, '').trim() || raw;
+  }
+  if (!image) image = metaContent(html, 'og:image');
+  if (!price) {
+    price =
       metaContent(html, 'product:price:amount') ||
       metaContent(html, 'og:price:amount') ||
       metaContent(html, 'price') ||
-      microdataPrice(html);
-    return { title, price, category: '', link: url, thumbnail: metaContent(html, 'og:image'), photos: '' };
+      microdataPrice(html) ||
+      magentoPrice(html);
   }
-  return null;
+
+  if (!title) return null;
+  return { title, price, category, link: url, thumbnail: image, photos: image };
 }
 
 // Microdata price: <meta itemprop="price" content="X"> or <span itemprop="price">X</span>.
@@ -192,6 +202,12 @@ function microdataPrice(html: string): string {
   if (m1) return m1[1];
   const m2 = html.match(/itemprop=["']price["'][^>]*>([^<]*[0-9][0-9.,]*)/i);
   return m2 ? m2[1].trim() : '';
+}
+
+// Magento renders the canonical price in a data attribute: data-price-amount="1234.5".
+function magentoPrice(html: string): string {
+  const m = html.match(/data-price-amount=["']([0-9][0-9.]*)["']/i);
+  return m ? m[1] : '';
 }
 
 export async function scrapeSitemapVendor(baseUrl: string, shopName: string, opts: SitemapOpts = {}): Promise<Product[]> {

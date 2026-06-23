@@ -203,3 +203,19 @@ Classified all 24 curl-able under-coverers by whether this method yields a **pri
 - **Sitemap not discoverable (urls=0)** — need per-vendor sitemap path / JS sitemap:
   `Oliva`, `Apothecary`, `Web Apoteka`, `X Sport`, `XL Sport`, `Maximalium`,
   `Ogistra`, `Vitalikum`, `Filly`.
+
+---
+
+# Optimization scan — 2026-06-23 (post-refresh)
+
+28 still-failing/under-covering scrapers diagnosed: 26 code-fixable, 2 external blockers.
+**#1 lever = run-config:** the full re-scrape ran at 10-min/concurrency-6 and starved
+Puppeteer scrapers; 30-40min/concurrency-3 recovers many for free (benu 2483→4247,
+jankovic→10930). Then code fixes cluster into: JSON-API swaps, sitemap+JSON-LD, and
+selector/pagination one-liners (most have an API/sitemap → use apiScrapers.ts /
+sitemapScraper.ts).
+
+Big-yield: DM→dmtech JSON API (+15k), eApoteka→drop dead next-page gate (+9.7k),
+Oliva→sitemap (+7.6k), Apothecary→PrestaShop sitemap+JSON-LD (+5.5k), Fitness Shop
+(nssport)→sitemap (+5.5k), Laurus→sitemap (+4.1k). External blockers: Apoteka Shop
+(origin 522 down), Jugofarm (CF managed challenge — needs proxy or park).

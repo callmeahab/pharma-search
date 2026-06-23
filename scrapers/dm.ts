@@ -1,174 +1,90 @@
-import puppeteer from 'puppeteer-extra';
-import StealthPlugin from 'puppeteer-extra-plugin-stealth';
-import { insertData, Product , initializeDatabase, closeDatabase } from './helpers/database';
-import { Page } from 'puppeteer';
-import { ScraperUtils } from './helpers/ScraperUtils';
+// Rewritten 2026-06-23: dm.rs renders categories via JS; the Puppeteer crawl only
+// captured ~2.5k of ~18k. Use dm's public JSON product API instead (no browser).
+import { insertData, Product, initializeDatabase, closeDatabase } from './helpers/database';
 
-// Configure stealth plugin
-puppeteer.use(StealthPlugin());
+const UA =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+const API = 'https://product-search.services.dmtech.com/rs/search/crawl';
+const CATEGORIES: Record<string, string> = {
+  sminka: '010000', 'nega-i-parfemi': '020000', zdravlje: '030000', ishrana: '040000',
+  'bebe-i-deca': '050000', domacinstvo: '060000', ljubimci: '070000', kosa: '110000',
+};
 
-const scrapedTitles = new Set<string>();
-const baseUrls = [
-  'https://www.dm.rs/sminka?allCategories.id0=010000&pageSize0=10&sort0=editorial_relevance&currentPage0=',
-  'https://www.dm.rs/nega-i-parfemi?allCategories.id0=020000&pageSize0=10&sort0=editorial_relevance&currentPage0=',
-  'https://www.dm.rs/kosa?allCategories.id0=110000&pageSize0=10&sort0=editorial_relevance&currentPage0=',
-  'https://www.dm.rs/muskarci?additionalDistributionChannels0=SEINZ&pageSize0=10&sort0=editorial_relevance&currentPage0=',
-  'https://www.dm.rs/zdravlje?allCategories.id0=030000&pageSize0=10&sort0=editorial_relevance&currentPage0=',
-  'https://www.dm.rs/ishrana?allCategories.id0=040000&pageSize0=10&sort0=editorial_relevance&currentPage0=',
-  'https://www.dm.rs/bebe-i-deca?allCategories.id0=050000&pageSize0=10&sort0=editorial_relevance&currentPage0=',
-  'https://www.dm.rs/domacinstvo?allCategories.id0=060000&pageSize0=10&sort0=editorial_relevance&currentPage0=',
-  'https://www.dm.rs/ljubimci?allCategories.id0=070000&pageSize0=10&sort0=editorial_relevance&currentPage0=',
-];
+interface DmTile {
+  tileHeadline?: string;
+  tileHeadlineLong?: string;
+  brandName?: string;
+  self?: string;
+  images?: Array<{ tileSrc?: string }>;
+  price?: { price?: { current?: { value?: string } } };
+}
+interface DmResp { count?: number; totalPages?: number; products?: Array<{ tileData?: DmTile }> }
 
-async function scrapePage(page: Page, category: string): Promise<Product[]> {
-  try {
-    // Add a more lenient timeout and catch specific timeout errors
-    await page
-      .waitForSelector('#product-tiles [data-dmid="product-tile"]', {
-        timeout: 5000,
-      })
-      .catch(() => {
-        // If selector times out, we assume no products are found
-        return [];
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+// The API rate-limits (HTTP 429) on rapid requests — retry with backoff and stay
+// polite. pageSize=500 is the largest size that reliably returns 200.
+async function fetchPage(catId: string, page: number): Promise<DmResp | null> {
+  const url = `${API}?query=&purchasable=true&type=search-static&allCategories.id=${catId}&pageSize=500&currentPage=${page}`;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      const res = await fetch(url, {
+        headers: { 'User-Agent': UA, Referer: 'https://www.dm.rs/', Accept: 'application/json' },
+        redirect: 'follow',
       });
-
-    // Check if products exist before trying to scrape
-    const hasProducts = await page.$(
-      '#product-tiles [data-dmid="product-tile"]',
-    );
-    if (!hasProducts) {
-      return [];
-    }
-
-    const products = await page.$$eval(
-      '#product-tiles [data-dmid="product-tile"]',
-      (items, cat) =>
-        items.map((item) => ({
-          title:
-            [
-              item
-                .querySelector('[data-dmid="product-description"] > span')
-                ?.textContent?.trim(),
-              item
-                .querySelector('[data-dmid="product-description"] > a')
-                ?.textContent?.trim(),
-            ]
-              .filter(Boolean)
-              .join(' ') || '',
-          price:
-            item
-              .querySelector('[data-dmid="price-localized"]')
-              ?.textContent?.trim() || '',
-          link:
-            (
-              item.querySelector(
-                '[data-dmid="product-tile"] > a',
-              ) as HTMLAnchorElement
-            )?.href || '',
-          thumbnail:
-            (
-              item.querySelector(
-                '[data-dmid="product-tile"] > a > img',
-              ) as HTMLImageElement
-            )?.src || '',
-          photos:
-            (
-              item.querySelector(
-                '[data-dmid="product-tile"] > a > img',
-              ) as HTMLImageElement
-            )?.src || '',
-          category: cat,
-        })),
-      category,
-    );
-
-    return products.filter((p) => p.title && !scrapedTitles.has(p.title));
-  } catch (error) {
-    console.error(`Error scraping ${category} page:`, error);
-    return [];
-  }
-}
-
-async function scrapeMultipleBaseUrls(): Promise<Product[]> {
-const browser = await puppeteer.launch({
-    headless: ScraperUtils.IS_HEADLESS,
-    defaultViewport: null,
-    args: ScraperUtils.getBrowserArgs(),
-  });
-
-  try {
-    const page = await browser.newPage();
-    await ScraperUtils.configurePage(page);
-    let allScrapedProducts: Product[] = [];
-
-    for (const baseUrl of baseUrls) {
-      const category = baseUrl.split('?')[0].split('/').pop() || '';
-      let pageNumber = 0;
-      let consecutiveEmptyPages = 0;
-
-      while (consecutiveEmptyPages < 2) {
-        // Stop after 2 empty pages in a row
-        const pageUrl = `${baseUrl}${pageNumber}`;
-        console.log(`Scraping page: ${pageUrl}`);
-
-        try {
-          await page.goto(pageUrl, {
-            waitUntil: 'domcontentloaded',
-            timeout: 30000,
-          });
-
-          const products = await scrapePage(page, category);
-          console.log(
-            `Scraped ${products.length} products from page ${pageNumber}`,
-          );
-
-          if (products.length === 0) {
-            consecutiveEmptyPages++;
-            console.log(`Empty page found (${consecutiveEmptyPages} in a row)`);
-          } else {
-            consecutiveEmptyPages = 0;
-            allScrapedProducts = [...allScrapedProducts, ...products];
-          }
-
-          pageNumber++;
-        } catch (error) {
-          console.error(`Error on page ${pageNumber}:`, error);
-          consecutiveEmptyPages++;
-        }
+      if (res.status === 429) {
+        await sleep(2000 * (attempt + 1));
+        continue;
       }
-
-      console.log(`Finished scraping category: ${category}`);
+      if (!res.ok) return null;
+      return (await res.json()) as DmResp;
+    } catch {
+      await sleep(1000 * (attempt + 1));
     }
-
-    return allScrapedProducts;
-  } finally {
-    await ScraperUtils.cleanup();
-    await browser.close();
   }
+  return null;
 }
 
-// Execute the scraper
-async function main() {
-  try {
-    // Initialize database connection
-    await initializeDatabase();
-    
-    const allProducts = await scrapeMultipleBaseUrls();
-    
-
-  if (allProducts.length > 0) {
-    await insertData(allProducts, 'DM');
-  } else {
-    console.log('No products found.');
+async function scrape(): Promise<Product[]> {
+  const products: Product[] = [];
+  const seen = new Set<string>();
+  for (const [cat, id] of Object.entries(CATEGORIES)) {
+    for (let page = 0; page < 60; page++) {
+      const data = await fetchPage(id, page);
+      const batch = data?.products || [];
+      if (batch.length === 0) break;
+      for (const p of batch) {
+        const t = p.tileData;
+        if (!t) continue;
+        const title = (t.tileHeadlineLong || t.tileHeadline || '').trim();
+        const link = t.self ? `https://www.dm.rs${t.self}` : '';
+        if (!title || !link || seen.has(link)) continue;
+        seen.add(link);
+        const img = t.images?.[0]?.tileSrc || '';
+        products.push({
+          title,
+          price: (t.price?.price?.current?.value || '').replace(/RSD/i, '').trim(),
+          category: cat,
+          link,
+          thumbnail: img,
+          photos: img,
+        });
+      }
+      if (page + 1 >= (data?.totalPages ?? 1)) break;
+      await sleep(600); // be polite — the API rate-limits
+    }
   }
-  } catch (error) {
-    console.error('Scraper failed:', error);
-    process.exit(1);
+  if (products.length === 0) throw new Error('DM: API returned 0 products — failing loud');
+  return products;
+}
+
+(async () => {
+  await initializeDatabase();
+  try {
+    const products = await scrape();
+    await insertData(products, 'DM');
+    console.log(`Successfully processed ${products.length} products`);
   } finally {
-    // Close database connection
     await closeDatabase();
   }
-}
-
-// Run the scraper
-main();
+})().then(() => process.exit(0)).catch((e) => { console.error('DM scraper failed:', e); process.exit(1); });

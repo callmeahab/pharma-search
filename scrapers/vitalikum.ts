@@ -74,11 +74,7 @@ async function scrapePage(
       const productElements = document.querySelectorAll('.product-teaser');
       return Array.from(productElements)
         .map((element) => {
-          // Check if product is out of stock
-          if (element.querySelector('input[value="Nema na lageru"]')) {
-            return null;
-          }
-
+          // Keep out-of-stock items too — dropping them lost ~100+ products.
           const titleElement = element.querySelector('.node__title a');
           const title = titleElement?.textContent?.trim() || '';
 
@@ -142,14 +138,21 @@ const browser = await puppeteer.launch({
         const pageUrl = `${baseUrl}?page=${pageNumber}`;
         console.log(`Scraping page: ${pageUrl}`);
 
-        const products = await scrapePage(page, pageUrl, category);
+        let products = await scrapePage(page, pageUrl, category);
         if (products.length === 0) {
-          console.log(`No products found on page ${pageNumber}, stopping...`);
+          // A transient empty/timeout must NOT abandon the whole category —
+          // retry once before treating it as the real end of the category.
+          await ScraperUtils.delay(2500);
+          products = await scrapePage(page, pageUrl, category);
+        }
+        if (products.length === 0) {
+          console.log(`No products found on page ${pageNumber} (after retry), stopping...`);
           break;
         }
 
         allScrapedProducts = [...allScrapedProducts, ...products];
         pageNumber++;
+        if (pageNumber > 200) break; // safety cap
       }
     }
 
