@@ -2,6 +2,7 @@ import React from "react";
 import { Instagram, Facebook, Share2 } from "lucide-react";
 import Link from "next/link";
 import { Copyright } from "lucide-react";
+import BrandLogo from "./BrandLogo";
 
 const Footer = () => {
   return (
@@ -9,9 +10,8 @@ const Footer = () => {
       <div className="container mx-auto px-4">
         <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
           <div>
-            <h3 className="font-bold text-xl mb-4">
-              <span className="text-green-400 dark:text-green-300">Apo</span>
-              <span className="text-green-600 dark:text-green-600">šteka</span>
+            <h3 className="mb-4">
+              <BrandLogo markClassName="h-8 w-8" textClassName="text-xl" />
             </h3>
             <p className="text-gray-600 text-sm dark:text-gray-400">
               Uporedite cene u različitim apotekama i pronađite najbolje ponude

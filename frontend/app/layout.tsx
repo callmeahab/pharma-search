@@ -17,6 +17,14 @@ export const metadata: Metadata = {
   keywords:
     "apoteka, lekovi, vitamini, suplementi, zdravstveni proizvodi, uporedjivanje cena, online kupovina, farmaceutski proizvodi, zdrava ishrana, wellness, dijetetski suplementi, prirodni lekovi, medicinski proizvodi, apotekarske usluge, zdravlje i nega",
   authors: [{ name: "Kumovi" }],
+  icons: {
+    icon: [
+      { url: "/favicon.ico", sizes: "any" },
+      { url: "/icon.png", type: "image/png", sizes: "1024x1024" },
+    ],
+    shortcut: "/favicon.ico",
+    apple: "/icon.png",
+  },
   openGraph: {
     title: "Apošteka - Uporedi cene lekova i suplemenata",
     description:

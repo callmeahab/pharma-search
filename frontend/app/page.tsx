@@ -6,13 +6,13 @@ import HeroSection from "@/components/HeroSection";
 import ProductList from "@/components/ProductList";
 import { searchGroupsStreaming, fetchGroupsPage, getFeaturedProducts, getGlobalFacets, SearchResult, StreamingSearchResult } from "@/lib/api";
 import { convertBackendProductToProduct, convertProductGroupToProducts, ProductGroup } from "@/types/product";
-import { Spinner } from "@/components/ui/spinner";
+import ProductSkeleton from "@/components/ProductSkeleton";
 import Footer from "@/components/Footer";
 import { FilterSidebar, FilterState, defaultFilters, Facets } from "@/components/FilterSidebar";
 import { FilterChips } from "@/components/FilterChips";
 import { ResultsToolbar } from "@/components/ResultsToolbar";
 import { Button } from "@/components/ui/button";
-import { Filter, Loader2 } from "lucide-react";
+import { Filter } from "lucide-react";
 
 export const dynamic = 'force-dynamic';
 
@@ -410,9 +410,7 @@ export default function HomePage() {
   const showSidebar = resultsView || !!facets;
 
   const featuredView = isLoadingFeatured ? (
-    <div className="flex flex-col items-center justify-center py-16">
-      <Spinner size="lg" text="Učitavanje popularnih proizvoda..." />
-    </div>
+    <ProductSkeleton count={6} />
   ) : (
     featuredProducts?.groups && (
       <ProductList
@@ -485,12 +483,7 @@ export default function HomePage() {
 
               <div className="flex-1 min-w-0">
                 {isSearching ? (
-                  <div className="flex flex-col items-center justify-center py-16">
-                    <Spinner size="xl" text="Pretraživanje proizvoda..." />
-                    <p className="mt-4 text-gray-600 dark:text-gray-400 text-center max-w-md">
-                      Pretražujemo bazu proizvoda i pronalazimo najbolje rezultate za vašu pretragu
-                    </p>
-                  </div>
+                  <ProductSkeleton count={6} />
                 ) : searchError ? (
                   <div className="text-center py-12">
                     <p className="text-lg text-red-600">Greška pri pretraživanju</p>
@@ -504,9 +497,8 @@ export default function HomePage() {
                     {/* Infinite scroll trigger */}
                     <div ref={loadMoreRef} className="h-10" />
                     {isLoadingMore && (
-                      <div className="flex justify-center py-8">
-                        <Loader2 className="h-8 w-8 animate-spin text-health-primary" />
-                        <span className="ml-2 text-gray-600 dark:text-gray-400">Učitavanje više proizvoda...</span>
+                      <div className="mt-6">
+                        <ProductSkeleton count={3} />
                       </div>
                     )}
                     {!hasMore && accumulatedGroups.length > 0 && (

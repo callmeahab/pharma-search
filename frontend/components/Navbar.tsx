@@ -10,6 +10,7 @@ import { User } from "lucide-react";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useAuth } from "@/contexts/AuthContext";
 import Link from "next/link";
+import BrandLogo from "./BrandLogo";
 
 const Navbar = () => {
   const pathname = usePathname();
@@ -88,7 +89,7 @@ const Navbar = () => {
           <div className="w-full flex justify-between items-center mb-4 md:mb-0 md:w-auto md:flex-shrink-0">
             <Link
               href="/"
-              className="flex items-center justify-start"
+              className="flex items-center justify-start rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-health-primary focus-visible:ring-offset-2 dark:focus-visible:ring-health-accent dark:focus-visible:ring-offset-gray-800"
               onClick={(e) => {
                 e.preventDefault();
                 handleSearch("");
@@ -97,13 +98,7 @@ const Navbar = () => {
                 }
               }}
             >
-              <span className="text-green-400 dark:text-green-300 font-bold text-2xl">
-                Apo
-              </span>
-              <span className="text-yellow-400 font-bold text-2xl">$</span>
-              <span className="text-green-700 dark:text-green-400 font-bold text-2xl">
-                teka
-              </span>
+              <BrandLogo markClassName="h-9 w-9 md:h-10 md:w-10" />
             </Link>
 
             {isMobile && (

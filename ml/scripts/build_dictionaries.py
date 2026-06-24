@@ -87,7 +87,11 @@ ALIAS_DROP = {"mg", "protein", "proteini", "proteina", "proteinski", "proteinska
 # Gold Standard, ...) differentiated by brand/line/flavor/size, not a generic
 # "whey protein" commodity. Grouping all whey into one bucket is as wrong as
 # grouping every face cream as "cream", so they go to the brand-line (Track B) path.
-CANONICAL_DROP = {"magnezijum b6", "vitamin d3 k2", "whey protein", "vegan protein"}
+# Demoted from Track-A: heterogeneous "categories" (not a fungible single ingredient)
+# that over-merge unrelated products under one group. "probiotik" lumped probiotic
+# COOKIES/oatmeal/toothpaste with real supplements (96 RSD cookie .. 6000 RSD), like
+# "whey protein" collapsed every whey into one group. These group by brand/product instead.
+CANONICAL_DROP = {"magnezijum b6", "vitamin d3 k2", "whey protein", "vegan protein", "probiotik"}
 
 # Flavor / sport-supplement descriptor words and generic brand-suffix words. These
 # pollute branded-line identities (protein/gainer/etc.) and must be stripped so the
@@ -104,6 +108,14 @@ CURATED_NOISE = [
     "pistac", "badem", "badema", "oraha", "slani", "salted", "neutralni", "neutralna",
     "neutralno", "neutral", "nezasladjeni", "bez", "ukus", "ukusa", "okus", "okusa",
     "flavor", "flavour", "zero", "pina", "colada", "cheesecake", "marshmallow",
+    # "probiotik" is a heterogeneous CATEGORY, not a fungible ingredient (also dropped
+    # from Track-A, see CANONICAL_DROP). As a bare 9-char residual it re-merged every
+    # unrelated probiotic (a 96 RSD cookie .. a 6000 RSD supplement), so strip it: branded
+    # probiotics still group by brand (Omni Biotic, Linex, Enterobiotik), and the
+    # indistinguishable generic "Probiotik" listings fall to honest per-offer cards
+    # instead of one misleading group.
+    "probiotik", "probiotic", "probiotici", "probiotika", "probiotikom", "probiotske",
+    "probiotska", "probiotski", "probiotics",
     # protein / sport descriptors (the ingredient itself is no longer whitelisted)
     "protein", "proteina", "proteini", "proteinski", "proteinska", "proteinske",
     "whey", "surutka", "surutke", "izolat", "izolata", "izolatom", "isolate", "isolat",

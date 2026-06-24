@@ -93,7 +93,18 @@ echo "  Building frontend..."
 cd frontend
 export PATH="/root/.bun/bin:$PATH"
 bun install --frozen-lockfile 2>/dev/null || bun install
-NODE_OPTIONS="--max_old_space_size=512" bun run build
+# Memory is tight on this 2GB box: 512MB OOM-panics Turbopack, 1536MB gets OOM-killed
+# (SIGKILL). 1024MB is the sweet spot. A failed build MUST abort the deploy here (before
+# the migrate/restart steps) so the currently-running frontend keeps serving its old
+# build instead of crash-looping with "Could not find a production build".
+NODE_OPTIONS="--max_old_space_size=1024" bun run build || {
+    echo "  ERROR: frontend build failed — aborting deploy (current build stays live)" >&2
+    exit 1
+}
+if [ ! -f .next/BUILD_ID ]; then
+    echo "  ERROR: frontend build did not produce .next/BUILD_ID — aborting" >&2
+    exit 1
+fi
 
 # Build backend
 echo "  Building backend..."
