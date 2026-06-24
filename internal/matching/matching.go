@@ -282,6 +282,45 @@ func BuildGroupKey(in GroupKeyInput) GroupKey {
 		core = ExtractCoreFromTitle(in.Title)
 	}
 
+	// The attribute suffix (strength / size / form) used by the canonical-identity
+	// and Track-B paths.
+	suffix := func() []string {
+		var parts []string
+		if sKey, _ := canonicalStrength(in.DosageValue, in.DosageUnit, nil); sKey != "" {
+			parts = append(parts, sKey)
+		}
+		if size := sizeKey(in.VolumeValue, in.VolumeUnit); size != "" {
+			parts = append(parts, size)
+		}
+		if form := NormalizeForm(in.Form); form != "" {
+			parts = append(parts, "form:"+form)
+		}
+		return parts
+	}
+
+	// LLM-canonicalized identity wins over EVERY rule-derived route — including the
+	// Track-A ingredient merge below. It already encodes brand + line/stage/variant
+	// consistently across vendors, so trust it verbatim (no noise-stripping that
+	// would re-collapse e.g. "Kaltex Daily Stress Support" -> "Kaltex"). It must be
+	// checked first: a probiotik whose core still carries an ingredient word
+	// (taurin / menta / vitamin d3 / kolagen) would otherwise be bucketed into that
+	// ingredient's brand-agnostic commodity group, lumping different makers' products
+	// together. Only the size/strength suffix is appended so sizes stay distinct.
+	if ci := NormalizeText(in.CanonicalIdentity); ci != "" {
+		hm := in.DosageValue > 0 || NormalizeUnit(in.VolumeUnit) == "g" || NormalizeUnit(in.VolumeUnit) == "kg"
+		parts := append([]string{"core", ci}, suffix()...)
+		// Append the strength/size to the display so size-differentiated lines (e.g.
+		// a protein line at 910 g vs 2.27 kg) don't render as identical-looking cards.
+		disp := titleCaseWords(in.CanonicalIdentity)
+		if _, sDisp := canonicalStrength(in.DosageValue, in.DosageUnit, nil); sDisp != "" {
+			disp += " " + sDisp
+		}
+		if in.VolumeValue > 0 && in.VolumeUnit != "" {
+			disp += " " + formatDisplayMeasure(in.VolumeValue, NormalizeUnit(in.VolumeUnit))
+		}
+		return GroupKey{Key: strings.Join(parts, "::"), DisplayName: disp, Method: "brand-core", Residual: ci, HasMeasure: hm}
+	}
+
 	// Decide whether this is a topical/cosmetic product (which must NOT merge into
 	// an ingredient supplement group). The form field is empty for ~58% of rows, so
 	// also scan the title for a topical-form word ("krema", "serum", "maska", ...);
@@ -329,40 +368,9 @@ func BuildGroupKey(in GroupKeyInput) GroupKey {
 		return GroupKey{Key: key, DisplayName: display, Method: "ingredient"}
 	}
 
-	// Track B. Build the attribute suffix (strength / size / form) once.
+	// Track B. The attribute suffix (strength / size / form) is built by the suffix
+	// closure defined near the top of the function.
 	residual := residualCore(core)
-	suffix := func() []string {
-		var parts []string
-		if sKey, _ := canonicalStrength(in.DosageValue, in.DosageUnit, nil); sKey != "" {
-			parts = append(parts, sKey)
-		}
-		if size := sizeKey(in.VolumeValue, in.VolumeUnit); size != "" {
-			parts = append(parts, size)
-		}
-		if form := NormalizeForm(in.Form); form != "" {
-			parts = append(parts, "form:"+form)
-		}
-		return parts
-	}
-
-	// LLM-canonicalized identity wins: it already encodes brand + line/stage/variant
-	// consistently across vendors, so trust it verbatim (no noise-stripping that
-	// would re-collapse e.g. "Kaltex Daily Stress Support" -> "Kaltex"). Only the
-	// size/form suffix is appended so different sizes stay distinct.
-	if ci := NormalizeText(in.CanonicalIdentity); ci != "" {
-		hm := in.DosageValue > 0 || NormalizeUnit(in.VolumeUnit) == "g" || NormalizeUnit(in.VolumeUnit) == "kg"
-		parts := append([]string{"core", ci}, suffix()...)
-		// Append the strength/size to the display so size-differentiated lines (e.g.
-		// a protein line at 910 g vs 2.27 kg) don't render as identical-looking cards.
-		disp := titleCaseWords(in.CanonicalIdentity)
-		if _, sDisp := canonicalStrength(in.DosageValue, in.DosageUnit, nil); sDisp != "" {
-			disp += " " + sDisp
-		}
-		if in.VolumeValue > 0 && in.VolumeUnit != "" {
-			disp += " " + formatDisplayMeasure(in.VolumeValue, NormalizeUnit(in.VolumeUnit))
-		}
-		return GroupKey{Key: strings.Join(parts, "::"), DisplayName: disp, Method: "brand-core", Residual: ci, HasMeasure: hm}
-	}
 
 	// Brand-INDEPENDENT line merge applies ONLY to measurable supplement/sports
 	// products — a pharma dosage or a powder weight (g/kg). These are titled

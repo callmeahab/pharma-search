@@ -108,14 +108,6 @@ CURATED_NOISE = [
     "pistac", "badem", "badema", "oraha", "slani", "salted", "neutralni", "neutralna",
     "neutralno", "neutral", "nezasladjeni", "bez", "ukus", "ukusa", "okus", "okusa",
     "flavor", "flavour", "zero", "pina", "colada", "cheesecake", "marshmallow",
-    # "probiotik" is a heterogeneous CATEGORY, not a fungible ingredient (also dropped
-    # from Track-A, see CANONICAL_DROP). As a bare 9-char residual it re-merged every
-    # unrelated probiotic (a 96 RSD cookie .. a 6000 RSD supplement), so strip it: branded
-    # probiotics still group by brand (Omni Biotic, Linex, Enterobiotik), and the
-    # indistinguishable generic "Probiotik" listings fall to honest per-offer cards
-    # instead of one misleading group.
-    "probiotik", "probiotic", "probiotici", "probiotika", "probiotikom", "probiotske",
-    "probiotska", "probiotski", "probiotics",
     # protein / sport descriptors (the ingredient itself is no longer whitelisted)
     "protein", "proteina", "proteini", "proteinski", "proteinska", "proteinske",
     "whey", "surutka", "surutke", "izolat", "izolata", "izolatom", "isolate", "isolat",
@@ -226,6 +218,31 @@ ALIAS_ADD = {
     ],
 }
 
+# Search-only concepts: their category ("search") is deliberately NOT in
+# CATEGORY_TRACK_A, so they NEVER affect grouping (BuildGroupKey's ingredient route
+# uses SupplementIngredients == Track-A-only). Their sole purpose is to unify SEARCH
+# recall across Serbian morphological cases + EN/SR spellings, so a query like
+# "probiotici" / "probiotika" resolves to the same concept token as "probiotik"
+# (precise, indexed searchTokens @>) instead of collapsing to the noisy fuzzy-trigram
+# fallback that surfaces singletons and cosmetics. `probiotik` stays in CANONICAL_DROP
+# (kept out of grouping); it re-enters here ONLY as a search concept.
+#
+# `prebiotik` MUST be its own anchored concept: it is edit-distance 1 from "probiotik",
+# so once "probiotik" is a fuzzy single-token alias, a "prebiotik" query would otherwise
+# fuzzy-drift into probiotik. An exact alias for prebiotik wins over the fuzzy match.
+CURATED_SEARCH_CONCEPTS = [
+    {"canonical": "probiotik", "category": "search", "aliases": [
+        "probiotik", "probiotici", "probiotika", "probiotske", "probiotski",
+        "probiotskih", "probioticima", "probioticki", "probioticke", "probioticna",
+        "probioticne", "probiotsko", "probiotska", "probiotic", "probiotics",
+        "probiotikum", "probiotikom",
+    ]},
+    {"canonical": "prebiotik", "category": "search", "aliases": [
+        "prebiotik", "prebiotici", "prebiotika", "prebiotski", "prebiotskih",
+        "prebioticima", "prebiotska", "prebiotske", "prebiotic", "prebiotics",
+    ]},
+]
+
 # Gummy / jelly delivery form words (normalized to "bombone" elsewhere) — kept out
 # of the residual so gummy vitamins don't fragment on these descriptors.
 CURATED_FORMS = [
@@ -291,6 +308,17 @@ def build_ingredients(intel):
         if c not in aliases:
             aliases.insert(0, c)
         entries.append({"canonical": c, "category": ni.get("category", "supplement"), "aliases": aliases})
+        have.add(c)
+    # search-only concepts (non-Track-A) — re-add even if in CANONICAL_DROP, since they
+    # are deliberately excluded from grouping but needed for search-concept resolution.
+    for sc in CURATED_SEARCH_CONCEPTS:
+        c = normalize(sc["canonical"])
+        if not c or c in have:
+            continue
+        aliases = [a for a in norm_list([c] + sc.get("aliases", [])) if a not in ALIAS_DROP]
+        if c not in aliases:
+            aliases.insert(0, c)
+        entries.append({"canonical": c, "category": sc["category"], "aliases": aliases})
         have.add(c)
     return {"ingredients": entries}
 

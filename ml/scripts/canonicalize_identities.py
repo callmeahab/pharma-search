@@ -31,9 +31,11 @@ import sys
 import tempfile
 from pathlib import Path
 
-import anthropic
 import psycopg2
 from psycopg2.extras import execute_values
+
+# anthropic is only needed for the LLM pass; --overrides-only must run without it
+# (and without an API key). Import lazily inside the functions that use it.
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "ml"))
@@ -121,7 +123,7 @@ def find_targets(csv_path: str, min_size: int):
     return targets
 
 
-def canonicalize(client: anthropic.Anthropic, target: dict) -> dict:
+def canonicalize(client, target: dict) -> dict:
     rows = "\n".join(f"{p['id']}\t{p['title'][:120]}" for p in target["products"])
     msg = client.messages.create(
         model=MODEL, max_tokens=8000,
@@ -142,6 +144,35 @@ def canonicalize(client: anthropic.Anthropic, target: dict) -> dict:
 # + adversarially verified once (see ml/scripts and the workflow that produced it).
 # Keyed by normalized core, NOT product id, so it survives re-scrapes/re-imports.
 LINE_OVERRIDES = ROOT / "ml" / "data" / "line_canonical_overrides.json"
+
+
+# Probiotik brand/strain overrides, keyed by NORMALIZED TITLE (not core): probiotik
+# products are count-based and their core strips the brand to a bare "probiotik", so
+# neither a size suffix nor the core can separate makers. The title carries the brand
+# and is stable across re-scrapes. Mined + adversarially verified by the probiotik
+# brand/strain workflow, then majority-resolved per title.
+PROBIOTIK_OVERRIDES = ROOT / "ml" / "data" / "probiotik_title_overrides.json"
+
+
+def apply_probiotik_overrides(cur) -> int:
+    """Set canonicalIdentity for probiotik products by matching their normalized title
+    against the curated probiotik override map. NO measure guard (probiotik is sold by
+    count, not size); scoped to titles containing probiotik/probiotic so the count-based
+    relaxation can't affect bars/diapers/etc. Returns rows updated."""
+    if not PROBIOTIK_OVERRIDES.exists():
+        return 0
+    ov = json.loads(PROBIOTIK_OVERRIDES.read_text())
+    cur.execute('''SELECT id, title FROM "Product"
+                   WHERE title ILIKE '%probiotik%' OR title ILIKE '%probiotic%' ''')
+    pairs = [(pid, ov[d.normalize(title)]) for pid, title in cur.fetchall()
+             if d.normalize(title) in ov]
+    if pairs:
+        execute_values(
+            cur,
+            'UPDATE "Product" p SET "canonicalIdentity" = v.cid FROM (VALUES %s) AS v(id, cid) WHERE p.id = v.id',
+            pairs,
+        )
+    return len(pairs)
 
 
 def apply_line_overrides(cur) -> int:
@@ -184,9 +215,10 @@ def main():
         conn = psycopg2.connect(db_url)
         cur = conn.cursor()
         n = apply_line_overrides(cur)
+        np = apply_probiotik_overrides(cur)
         conn.commit()
         conn.close()
-        log.info("line overrides applied: %d products", n)
+        log.info("line overrides applied: %d products; probiotik overrides: %d", n, np)
         return
 
     if not os.getenv("ANTHROPIC_API_KEY"):
@@ -198,6 +230,7 @@ def main():
     n_prod = sum(len(t["products"]) for t in targets)
     log.info("targets: %d brands, %d products", len(targets), n_prod)
 
+    import anthropic
     client = anthropic.Anthropic()
     pairs: dict[str, str] = {}
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.concurrency) as ex:
@@ -229,7 +262,8 @@ def main():
     # Apply the curated protein brand-line overrides on top (different products than
     # the bare-brand catch-alls above, so no conflict).
     n_ov = apply_line_overrides(cur)
-    log.info("line overrides applied: %d products", n_ov)
+    n_pb = apply_probiotik_overrides(cur)
+    log.info("line overrides applied: %d products; probiotik overrides: %d", n_ov, n_pb)
     conn.commit()
     cur.execute('SELECT count(*) FROM "Product" WHERE "canonicalIdentity" IS NOT NULL')
     log.info("rows with canonicalIdentity now: %d", cur.fetchone()[0])

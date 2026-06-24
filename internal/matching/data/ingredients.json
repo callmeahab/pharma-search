@@ -1193,6 +1193,45 @@
     "tirozin",
     "tyrosine"
    ]
+  },
+  {
+   "canonical": "probiotik",
+   "category": "search",
+   "aliases": [
+    "probiotik",
+    "probiotici",
+    "probiotika",
+    "probiotske",
+    "probiotski",
+    "probiotskih",
+    "probioticima",
+    "probioticki",
+    "probioticke",
+    "probioticna",
+    "probioticne",
+    "probiotsko",
+    "probiotska",
+    "probiotic",
+    "probiotics",
+    "probiotikum",
+    "probiotikom"
+   ]
+  },
+  {
+   "canonical": "prebiotik",
+   "category": "search",
+   "aliases": [
+    "prebiotik",
+    "prebiotici",
+    "prebiotika",
+    "prebiotski",
+    "prebiotskih",
+    "prebioticima",
+    "prebiotska",
+    "prebiotske",
+    "prebiotic",
+    "prebiotics"
+   ]
   }
  ]
 }
