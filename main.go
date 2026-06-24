@@ -51,108 +51,26 @@ func connectDB() (*sql.DB, error) {
 	return sql.Open("postgres", dbURL)
 }
 
-// searchProductsDB queries PostgreSQL using trigram similarity + ILIKE for product search.
-// Returns all matching products (up to limit) with fields matching what enrichProductsWithGroupKey expects.
-func searchProductsDB(db *sql.DB, query string, limit int) ([]map[string]interface{}, error) {
-	if db == nil {
-		return nil, fmt.Errorf("database not connected")
-	}
-	if limit <= 0 {
-		limit = 5000
-	}
+// productSelectCols is the column list shared by every product query below; the
+// scan order in scanProductRows MUST match it exactly.
+const productSelectCols = `
+	p.id, p.title, p.price, p."vendorId", v.name as vendor_name, p.link,
+	COALESCE(p.thumbnail, '') as thumbnail,
+	COALESCE(p."extractedBrand", '') as brand,
+	COALESCE(p."normalizedName", '') as normalized_name,
+	COALESCE(p."coreProductIdentity", '') as core_product_identity,
+	COALESCE(p."canonicalIdentity", '') as canonical_identity,
+	p."dosageValue", COALESCE(p."dosageUnit", '') as dosage_unit,
+	p."volumeValue", COALESCE(p."volumeUnit", '') as volume_unit,
+	COALESCE(p.form, '') as form, COALESCE(p."canonicalCategory", '') as category,
+	p."quantityValue", p."priceScrapedAt"`
 
-	rawQuery := strings.TrimSpace(query)
-	normalizedQuery := matching.NormalizeText(rawQuery)
-	if normalizedQuery == "" {
-		normalizedQuery = strings.ToLower(rawQuery)
-	}
+// fuzzyFallbackMin: only run the (slower) fuzzy trigram pass when the precise,
+// index-served path returns fewer than this many hits (i.e. a typo'd/alias query).
+const fuzzyFallbackMin = 8
 
-	rawLikePattern := "%" + escapeLikePattern(rawQuery) + "%"
-	// SearchConcepts maps the query to canonical "concept" tokens: ingredient
-	// mentions become a single compact canonical (so spelling/language variants
-	// unify because those tokens were also written into each product's
-	// searchTokens). required uses AND semantics via the indexed @> operator.
-	required, _ := matching.SearchConcepts(rawQuery)
-	// Fuzzy/typo recall only for single-concept queries; multi-concept queries
-	// (brand+ingredient, ingredient+strength) stay precise (AND-only).
-	allowFuzzy := len(required) <= 1
-
-	rows, err := db.Query(`
-		WITH q AS (
-			SELECT
-				$1::text   AS raw_like,
-				$2::text   AS norm_query,
-				$3::text[] AS required,
-				$4::bool   AS allow_fuzzy
-		)
-		SELECT
-			p.id,
-			p.title,
-			p.price,
-			p."vendorId",
-			v.name as vendor_name,
-			p.link,
-			COALESCE(p.thumbnail, '') as thumbnail,
-			COALESCE(p."extractedBrand", '') as brand,
-			COALESCE(p."normalizedName", '') as normalized_name,
-			COALESCE(p."coreProductIdentity", '') as core_product_identity,
-			COALESCE(p."canonicalIdentity", '') as canonical_identity,
-			p."dosageValue",
-			COALESCE(p."dosageUnit", '') as dosage_unit,
-			p."volumeValue",
-			COALESCE(p."volumeUnit", '') as volume_unit,
-			COALESCE(p.form, '') as form,
-			COALESCE(p."canonicalCategory", '') as category,
-			p."quantityValue",
-			p."priceScrapedAt"
-		FROM "Product" p
-		JOIN "Vendor" v ON v.id = p."vendorId"
-		CROSS JOIN q
-		WHERE p.price > 0
-		  AND (
-			-- precise: product contains ALL concept tokens (AND semantics)
-			(cardinality(q.required) > 0 AND COALESCE(p."searchTokens", ARRAY[]::text[]) @> q.required)
-			-- exact phrase substring
-			OR p.title ILIKE q.raw_like
-			OR COALESCE(p."normalizedName", '') ILIKE q.raw_like
-			OR COALESCE(p."coreProductIdentity", '') ILIKE q.raw_like
-			-- typo tolerance (single-concept queries only): trigram on the
-			-- (short) identity, not the whole title
-			OR (q.allow_fuzzy AND COALESCE(p."coreProductIdentity", '') % q.norm_query)
-			OR (q.allow_fuzzy AND p.title % q.norm_query)
-			-- typo tolerance for a brand/word inside a long title: word_similarity
-			-- (<%) compares the query to the best-matching word in the text, so a
-			-- one-char brand typo ("paradontax"->"parodontax") still matches where
-			-- whole-string similarity() fails. Threshold set per-DB to 0.5
-			-- (migration 010). GIN-indexable via the trgm indexes.
-			OR (q.allow_fuzzy AND q.norm_query <% p.title)
-			OR (q.allow_fuzzy AND q.norm_query <% COALESCE(p."normalizedName", ''))
-		  )
-		ORDER BY
-			CASE
-				WHEN lower(COALESCE(p."coreProductIdentity", '')) = q.norm_query THEN 0
-				WHEN cardinality(q.required) > 0 AND COALESCE(p."searchTokens", ARRAY[]::text[]) @> q.required THEN 1
-				WHEN COALESCE(p."normalizedName", '') ILIKE q.raw_like THEN 2
-				WHEN COALESCE(p."coreProductIdentity", '') ILIKE q.raw_like THEN 3
-				WHEN p.title ILIKE q.raw_like THEN 4
-				ELSE 5
-			END,
-			GREATEST(
-				similarity(p.title, q.norm_query),
-				similarity(COALESCE(p."normalizedName", ''), q.norm_query),
-				similarity(COALESCE(p."coreProductIdentity", ''), q.norm_query),
-				-- so typo'd brand matches order by how close the matched word is
-				word_similarity(q.norm_query, p.title)
-			) DESC
-			,
-			p.price ASC
-		LIMIT $5
-	`, rawLikePattern, normalizedQuery, pq.Array(required), allowFuzzy, limit)
-	if err != nil {
-		return nil, fmt.Errorf("search query error: %w", err)
-	}
+func scanProductRows(rows *sql.Rows) ([]map[string]interface{}, error) {
 	defer rows.Close()
-
 	var results []map[string]interface{}
 	for rows.Next() {
 		var id, title, vendorId, vendorName, link, thumbnail string
@@ -176,7 +94,7 @@ func searchProductsDB(db *sql.DB, query string, limit int) ([]map[string]interfa
 			updatedAtStr = updatedAt.Time.UTC().Format(time.RFC3339)
 		}
 
-		result := map[string]interface{}{
+		results = append(results, map[string]interface{}{
 			"id":                  id,
 			"title":               title,
 			"price":               priceVal, // DB stores price in RSD directly
@@ -196,12 +114,158 @@ func searchProductsDB(db *sql.DB, query string, limit int) ([]map[string]interfa
 			"category":            category,
 			"quantityValue":       float64(quantityValue.Int64),
 			"updatedAt":           updatedAtStr,
-		}
-		results = append(results, result)
+		})
+	}
+	return results, rows.Err()
+}
+
+// searchProductsDB returns matching products (up to limit). With no query but
+// brand/category filters it BROWSES the indexed canonicalCategory/extractedBrand
+// columns directly (home-page category navigation). With a query it runs an
+// index-served PRECISE pass (concept @> + substring ILIKE, all GIN-indexed) and
+// only falls back to the slower fuzzy trigram pass when the precise pass is sparse
+// (a typo'd/alias query). This avoids the full-table seq scan + per-row similarity()
+// sort the old single-query design forced on every search.
+func searchProductsDB(db *sql.DB, query string, limit int, browseBrands, browseCategories []string) ([]map[string]interface{}, error) {
+	if db == nil {
+		return nil, fmt.Errorf("database not connected")
+	}
+	if limit <= 0 {
+		limit = 5000
 	}
 
-	if err := rows.Err(); err != nil {
+	rawQuery := strings.TrimSpace(query)
+
+	// BROWSE: no search term -> drive results off the brand/category filters. Used by
+	// the home page. Ordered by vendor coverage (how many pharmacies stock the product)
+	// so the working set is the category's POPULAR/canonical products, not the cheapest
+	// — ORDER BY price ASC would cap a 69k-row category to its sub-330-RSD tail and hide
+	// every premium brand. The Go grouper then re-ranks by precise vendor_count.
+	if rawQuery == "" {
+		if len(browseBrands) == 0 && len(browseCategories) == 0 {
+			return []map[string]interface{}{}, nil
+		}
+		// pq.Array(nil) binds as SQL NULL (not '{}'), which would make the cardinality
+		// check NULL and drop every row — so coerce nil to an empty slice.
+		if browseCategories == nil {
+			browseCategories = []string{}
+		}
+		if browseBrands == nil {
+			browseBrands = []string{}
+		}
+		rows, err := db.Query(`
+			SELECT `+productSelectCols+`
+			FROM "Product" p
+			JOIN "Vendor" v ON v.id = p."vendorId"
+			LEFT JOIN (
+				SELECT pp."coreProductIdentity" AS ci, count(DISTINCT pp."vendorId") AS n
+				FROM "Product" pp
+				WHERE pp.price > 0
+				  AND (cardinality($1::text[]) = 0 OR pp."canonicalCategory" = ANY($1))
+				  AND (cardinality($2::text[]) = 0 OR pp."extractedBrand" = ANY($2))
+				  AND pp."coreProductIdentity" <> ''
+				GROUP BY pp."coreProductIdentity"
+			) vc ON vc.ci = p."coreProductIdentity"
+			WHERE p.price > 0
+			  AND (cardinality($1::text[]) = 0 OR p."canonicalCategory" = ANY($1))
+			  AND (cardinality($2::text[]) = 0 OR p."extractedBrand" = ANY($2))
+			ORDER BY COALESCE(vc.n, 1) DESC, p.price ASC
+			LIMIT $3
+		`, pq.Array(browseCategories), pq.Array(browseBrands), limit)
+		if err != nil {
+			return nil, fmt.Errorf("browse query error: %w", err)
+		}
+		return scanProductRows(rows)
+	}
+
+	normalizedQuery := matching.NormalizeText(rawQuery)
+	if normalizedQuery == "" {
+		normalizedQuery = strings.ToLower(rawQuery)
+	}
+	rawLikePattern := "%" + escapeLikePattern(rawQuery) + "%"
+	// SearchConcepts maps the query to canonical "concept" tokens (ingredient
+	// mentions -> a single compact canonical, so spelling/language variants unify).
+	// required uses AND semantics via the indexed @> operator.
+	required, _ := matching.SearchConcepts(rawQuery)
+
+	// PRECISE pass — every branch is GIN-indexable (searchTokens @>, trgm ILIKE on
+	// title/normalizedName/coreProductIdentity). Patterns are bound params and the
+	// indexed columns are NOT wrapped in COALESCE, so the planner BitmapOr's the four
+	// indexes instead of seq-scanning. Ordering is cheap (no per-row similarity());
+	// convertHitsToGroups re-ranks the resulting groups anyway.
+	rows, err := db.Query(`
+		SELECT `+productSelectCols+`
+		FROM "Product" p
+		JOIN "Vendor" v ON v.id = p."vendorId"
+		WHERE p.price > 0
+		  AND (
+			(cardinality($2::text[]) > 0 AND p."searchTokens" @> $2)
+			OR p.title ILIKE $1
+			OR p."normalizedName" ILIKE $1
+			OR p."coreProductIdentity" ILIKE $1
+		  )
+		ORDER BY
+			CASE
+				WHEN lower(p."coreProductIdentity") = $3 THEN 0
+				WHEN cardinality($2::text[]) > 0 AND p."searchTokens" @> $2 THEN 1
+				WHEN p."normalizedName" ILIKE $1 THEN 2
+				WHEN p."coreProductIdentity" ILIKE $1 THEN 3
+				ELSE 4
+			END,
+			-- Relevance within the tier so the LIMIT cut keeps the most relevant rows
+			-- (not the cheapest) for broad queries whose match set exceeds the limit.
+			-- Runs only on the index-narrowed match set, not a full table scan.
+			GREATEST(
+				similarity(p.title, $3),
+				similarity(p."normalizedName", $3),
+				similarity(p."coreProductIdentity", $3),
+				word_similarity($3, p.title)
+			) DESC,
+			p.price ASC
+		LIMIT $4
+	`, rawLikePattern, pq.Array(required), normalizedQuery, limit)
+	if err != nil {
+		return nil, fmt.Errorf("search query error: %w", err)
+	}
+	results, err := scanProductRows(rows)
+	if err != nil {
 		return nil, err
+	}
+
+	// FUZZY FALLBACK — only when the precise pass is sparse (typo'd/alias query). The
+	// `%`/`<%` operators are GIN-trgm-indexable on their own (no @> OR to defeat them).
+	allowFuzzy := len(required) <= 1
+	if allowFuzzy && len(results) < fuzzyFallbackMin {
+		frows, ferr := db.Query(`
+			SELECT `+productSelectCols+`
+			FROM "Product" p
+			JOIN "Vendor" v ON v.id = p."vendorId"
+			WHERE p.price > 0
+			  AND (
+				p."coreProductIdentity" % $1
+				OR p.title % $1
+				OR $1 <% p.title
+				OR $1 <% p."normalizedName"
+			  )
+			ORDER BY GREATEST(
+				similarity(p.title, $1),
+				similarity(p."coreProductIdentity", $1),
+				word_similarity($1, p.title)
+			) DESC
+			LIMIT $2
+		`, normalizedQuery, limit)
+		if ferr == nil {
+			fuzzy, _ := scanProductRows(frows)
+			seen := make(map[string]struct{}, len(results))
+			for _, r := range results {
+				seen[getString(r, "id")] = struct{}{}
+			}
+			for _, r := range fuzzy {
+				if _, ok := seen[getString(r, "id")]; !ok {
+					results = append(results, r)
+				}
+			}
+		}
 	}
 
 	return results, nil
@@ -971,13 +1035,13 @@ func (s *server) Autocomplete(ctx context.Context, req *connect.Request[pb.Autoc
 func (s *server) Search(ctx context.Context, req *connect.Request[pb.SearchRequest]) (*connect.Response[pb.GenericJsonResponse], error) {
 	limit := int(req.Msg.GetLimit())
 	if limit == 0 {
-		limit = 1000
+		limit = 5000
 	}
 	if limit > 5000 {
 		limit = 5000
 	}
 
-	hits, err := searchProductsDB(s.db, req.Msg.GetQ(), limit)
+	hits, err := searchProductsDB(s.db, req.Msg.GetQ(), limit, req.Msg.GetBrandNames(), req.Msg.GetCategories())
 	if err != nil {
 		return nil, err
 	}
@@ -1032,14 +1096,16 @@ func (s *server) SearchGroups(ctx context.Context, req *connect.Request[pb.Searc
 		groupLimit = 20
 	}
 
-	hits, err := searchProductsDB(s.db, req.Msg.GetQ(), 5000)
+	// Filters double as the BROWSE selector when q is empty (home-page navigation);
+	// when q is non-empty they're applied group-level below.
+	hits, err := searchProductsDB(s.db, req.Msg.GetQ(), 5000, req.Msg.GetBrandNames(), req.Msg.GetCategories())
 	if err != nil {
 		return nil, err
 	}
 
 	allGroups := convertHitsToGroups(hits, req.Msg.GetQ(), s.db)
 	// Filter at the GROUP level (keep all members of matching groups) so price
-	// ranges / vendor counts stay accurate.
+	// ranges / vendor counts stay accurate. No-op for browse (already SQL-filtered).
 	allGroups = filterGroupsByBrandCategory(allGroups, req.Msg.GetBrandNames(), req.Msg.GetCategories())
 
 	paginatedGroups := allGroups
@@ -1082,7 +1148,9 @@ func (s *server) SearchGroupsStream(ctx context.Context, req *connect.Request[pb
 
 	if cached == nil {
 		// Cache miss - fetch all products from PostgreSQL and group them
-		hits, err := searchProductsDB(s.db, query, 5000)
+		// Filters double as the BROWSE selector when query is empty (home-page
+		// navigation); when query is non-empty they're applied group-level below.
+		hits, err := searchProductsDB(s.db, query, 5000, brandFilter, categoryFilter)
 		if err != nil {
 			return err
 		}
@@ -1445,7 +1513,7 @@ func (s *server) GetFeatured(ctx context.Context, req *connect.Request[pb.Featur
 }
 
 func (s *server) PriceComparison(ctx context.Context, req *connect.Request[pb.PriceComparisonRequest]) (*connect.Response[pb.GenericJsonResponse], error) {
-	hits, err := searchProductsDB(s.db, req.Msg.GetQ(), 5000)
+	hits, err := searchProductsDB(s.db, req.Msg.GetQ(), 5000, nil, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1657,7 +1725,7 @@ func runTestSearch() {
 	}
 
 	start := time.Now()
-	hits, err := searchProductsDB(db, query, 1000)
+	hits, err := searchProductsDB(db, query, 1000, nil, nil)
 	if err != nil {
 		log.Fatalf("Search failed: %v", err)
 	}

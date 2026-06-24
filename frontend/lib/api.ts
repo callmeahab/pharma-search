@@ -61,6 +61,19 @@ export async function checkHealth(): Promise<{ status: string }> {
   return grpcClient.health();
 }
 
+// Global (catalog-wide) facets — used to populate the home-page brand/category
+// filters before any search/browse, so every option is selectable up front.
+export async function getGlobalFacets(): Promise<{
+  facets?: Record<string, Record<string, number>>;
+}> {
+  try {
+    return await grpcClient.getFacets();
+  } catch (error) {
+    console.error("Failed to fetch global facets:", error);
+    return {};
+  }
+}
+
 export async function getFeaturedProducts(
   options?: SearchOptions
 ): Promise<SearchResult> {

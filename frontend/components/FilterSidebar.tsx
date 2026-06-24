@@ -280,7 +280,7 @@ export const FilterSidebar: React.FC<FilterSidebarProps> = ({
         {/* Category */}
         {categoryOptions.length > 0 && (
           <FilterSection title="Kategorija">
-            <div className="max-h-56 overflow-y-auto space-y-2">
+            <div className="max-h-56 overflow-y-auto thin-scrollbar space-y-2">
               {categoryOptions.map(({ name, count }) => (
                 <CheckboxItem
                   key={name}
@@ -298,7 +298,7 @@ export const FilterSidebar: React.FC<FilterSidebarProps> = ({
         {/* Dosage */}
         {dosageOptions.length > 0 && (
           <FilterSection title="Doza" defaultOpen={false}>
-            <div className="max-h-40 overflow-y-auto space-y-2">
+            <div className="max-h-40 overflow-y-auto thin-scrollbar space-y-2">
               {dosageOptions.map(({ name, count }) => (
                 <CheckboxItem
                   key={name}
@@ -316,7 +316,7 @@ export const FilterSidebar: React.FC<FilterSidebarProps> = ({
         {/* Form */}
         {formOptions.length > 0 && (
           <FilterSection title="Oblik" defaultOpen={false}>
-            <div className="max-h-40 overflow-y-auto space-y-2">
+            <div className="max-h-40 overflow-y-auto thin-scrollbar space-y-2">
               {formOptions.map(({ name, count }) => (
                 <CheckboxItem
                   key={name}
@@ -334,7 +334,7 @@ export const FilterSidebar: React.FC<FilterSidebarProps> = ({
         {/* Quantity */}
         {quantityOptions.length > 0 && (
           <FilterSection title="Pakovanje" defaultOpen={false}>
-            <div className="max-h-40 overflow-y-auto space-y-2">
+            <div className="max-h-40 overflow-y-auto thin-scrollbar space-y-2">
               {quantityOptions.map(({ name, count }) => (
                 <CheckboxItem
                   key={name}
@@ -352,7 +352,7 @@ export const FilterSidebar: React.FC<FilterSidebarProps> = ({
         {/* Brands */}
         {brandOptions.length > 0 && (
           <FilterSection title="Brend" defaultOpen={false}>
-            <div className="max-h-48 overflow-y-auto space-y-2">
+            <div className="max-h-48 overflow-y-auto thin-scrollbar space-y-2">
               {brandOptions.map(({ name, count }) => (
                 <CheckboxItem
                   key={name}
@@ -370,7 +370,7 @@ export const FilterSidebar: React.FC<FilterSidebarProps> = ({
         {/* Vendors/Pharmacies */}
         {vendorOptions.length > 0 && (
           <FilterSection title="Apoteka" defaultOpen={false}>
-            <div className="max-h-48 overflow-y-auto space-y-2">
+            <div className="max-h-48 overflow-y-auto thin-scrollbar space-y-2">
               {vendorOptions.map(({ name, count }) => (
                 <CheckboxItem
                   key={name}

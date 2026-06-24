@@ -98,3 +98,29 @@
     @apply px-2 py-1 rounded-full text-xs font-medium bg-health-muted text-health-secondary dark:bg-gray-700 dark:text-health-accent;
   }
 }
+
+@layer utilities {
+  /* Slim, theme-aware scrollbar for the filter facet lists (replaces the chunky
+     default OS scrollbar that looked out of place on the dark sidebar). */
+  .thin-scrollbar {
+    scrollbar-width: thin;
+    scrollbar-color: rgb(203 213 225) transparent; /* slate-300 thumb */
+  }
+  .dark .thin-scrollbar {
+    scrollbar-color: rgb(71 85 105) transparent; /* slate-600 thumb */
+  }
+  .thin-scrollbar::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  .thin-scrollbar::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .thin-scrollbar::-webkit-scrollbar-thumb {
+    background-color: rgb(203 213 225);
+    border-radius: 9999px;
+  }
+  .dark .thin-scrollbar::-webkit-scrollbar-thumb {
+    background-color: rgb(71 85 105);
+  }
+}

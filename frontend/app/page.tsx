@@ -4,7 +4,7 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from "react"
 import Navbar from "@/components/Navbar";
 import HeroSection from "@/components/HeroSection";
 import ProductList from "@/components/ProductList";
-import { searchGroupsStreaming, fetchGroupsPage, getFeaturedProducts, SearchResult, StreamingSearchResult } from "@/lib/api";
+import { searchGroupsStreaming, fetchGroupsPage, getFeaturedProducts, getGlobalFacets, SearchResult, StreamingSearchResult } from "@/lib/api";
 import { convertBackendProductToProduct, convertProductGroupToProducts, ProductGroup } from "@/types/product";
 import { Spinner } from "@/components/ui/spinner";
 import Footer from "@/components/Footer";
@@ -76,6 +76,19 @@ export default function HomePage() {
     }
   }, [filters.groupSimilar]);
 
+  // Catalog-wide facets for the home page, so brand/category are filterable before
+  // any search. Kept while browsing so every option stays selectable.
+  const loadGlobalFacets = useCallback(async () => {
+    try {
+      const res = await getGlobalFacets();
+      if (res?.facets) {
+        setFacets(res.facets as Facets);
+      }
+    } catch {
+      // non-fatal — sidebar just won't show until a search runs
+    }
+  }, []);
+
   const loadFeaturedProducts = useCallback(async () => {
     setIsLoadingFeatured(true);
     try {
@@ -95,34 +108,46 @@ export default function HomePage() {
   }, []);
 
   const handleSearch = useCallback(async (term: string) => {
-    if (!term || !term.trim()) {
+    const trimmed = (term || "").trim();
+    const { brandNames, categories } = backendFiltersRef.current;
+    // Browse = no search term but a brand/category filter is active (home-page
+    // category navigation). The backend treats an empty query + filters as a browse.
+    const browsing = !trimmed && (brandNames.length > 0 || categories.length > 0);
+
+    if (!trimmed && !browsing) {
+      // Home: no term, no filters -> featured products + global facet sidebar.
       setAccumulatedGroups([]);
       setTotalGroups(0);
       setTotalProducts(0);
-      setFacets(undefined);
       setUseApiSearch(false);
       setSearchError(null);
       setHasMore(false);
       setCurrentOffset(0);
       currentSearchTermRef.current = "";
       loadFeaturedProducts();
+      loadGlobalFacets();
       return;
     }
 
-    // Reset state for new search
+    // Reset state for new search / browse
     setIsSearching(true);
     setSearchError(null);
     setAccumulatedGroups([]);
     setCurrentOffset(0);
     setHasMore(false);
-    currentSearchTermRef.current = term;
+    currentSearchTermRef.current = trimmed;
 
     try {
-      await searchGroupsStreaming(term, (result) => {
+      await searchGroupsStreaming(trimmed, (result) => {
         setAccumulatedGroups(result.groups);
         setTotalGroups(result.totalGroups);
         setTotalProducts(result.totalProducts);
-        setFacets(result.facets as Facets | undefined);
+        // On search, use the response facets. On browse, keep the global facets so
+        // every category/brand stays selectable (the browse response only contains
+        // the selected category).
+        if (trimmed) {
+          setFacets(result.facets as Facets | undefined);
+        }
         setUseApiSearch(true);
         setCurrentOffset(result.groups.length);
         setHasMore(result.groups.length < result.totalGroups);
@@ -134,8 +159,8 @@ export default function HomePage() {
       }, {
         offset: 0,
         limit: PAGE_SIZE,
-        brandNames: backendFiltersRef.current.brandNames,
-        categories: backendFiltersRef.current.categories,
+        brandNames,
+        categories,
       });
     } catch (error) {
       console.error("Search error:", error);
@@ -144,11 +169,15 @@ export default function HomePage() {
     } finally {
       setIsSearching(false);
     }
-  }, [loadFeaturedProducts]);
+  }, [loadFeaturedProducts, loadGlobalFacets]);
 
   // Load more groups when scrolling
   const loadMore = useCallback(async () => {
-    if (isLoadingMore || !hasMore || !currentSearchTermRef.current) return;
+    const hasServerFilters =
+      backendFiltersRef.current.brandNames.length > 0 ||
+      backendFiltersRef.current.categories.length > 0;
+    // Paginate when searching OR browsing (browse has an empty term but active filters).
+    if (isLoadingMore || !hasMore || (!currentSearchTermRef.current && !hasServerFilters)) return;
 
     setIsLoadingMore(true);
     // Signature of the search context this page was requested for; if the term or
@@ -241,8 +270,9 @@ export default function HomePage() {
       handleSearch(urlSearchTerm);
     } else {
       loadFeaturedProducts();
+      loadGlobalFacets();
     }
-  }, [handleSearch, loadFeaturedProducts, resetServerFilters]);
+  }, [handleSearch, loadFeaturedProducts, loadGlobalFacets, resetServerFilters]);
 
   useEffect(() => {
     const handleUrlSearchChanged = (event: CustomEvent) => {
@@ -279,9 +309,10 @@ export default function HomePage() {
       skipNextServerFilterSearchRef.current = false;
       return;
     }
-    if (currentSearchTermRef.current) {
-      handleSearch(currentSearchTermRef.current);
-    }
+    // Always re-dispatch on a filter change: handleSearch routes to search (term),
+    // browse (no term + active filters), or featured (no term + no filters — e.g.
+    // the user just deselected the last filter on the home page).
+    handleSearch(currentSearchTermRef.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [backendBrandsKey, backendCategoriesKey]);
 
@@ -371,6 +402,25 @@ export default function HomePage() {
     filters.forms.length +
     (filters.minPrice > priceRange.min || filters.maxPrice < priceRange.max ? 1 : 0);
 
+  // browseActive: home-page navigation by brand/category with no search term.
+  // resultsView: showing search/browse results (vs. the featured grid).
+  // showSidebar: the filter sidebar is available (always on home once global facets load).
+  const browseActive = !searchTerm && (filters.brands.length > 0 || filters.categories.length > 0);
+  const resultsView = useApiSearch || browseActive;
+  const showSidebar = resultsView || !!facets;
+
+  const featuredView = isLoadingFeatured ? (
+    <div className="flex flex-col items-center justify-center py-16">
+      <Spinner size="lg" text="Učitavanje popularnih proizvoda..." />
+    </div>
+  ) : (
+    featuredProducts?.groups && (
+      <ProductList
+        products={featuredProducts.groups.flatMap(group => convertProductGroupToProducts(group))}
+      />
+    )
+  );
+
   return (
     <div className="min-h-screen flex flex-col bg-health-gray dark:bg-gray-900 transition-colors duration-200">
       <Navbar />
@@ -383,7 +433,7 @@ export default function HomePage() {
             <h2 className="text-xl sm:text-2xl font-semibold text-gray-800 dark:text-gray-100 break-words">
               {searchTerm ? `Rezultati za "${searchTerm}"` : "Popularni proizvodi"}
             </h2>
-            {useApiSearch && (
+            {showSidebar && (
               <Button
                 variant="outline"
                 size="sm"
@@ -401,7 +451,7 @@ export default function HomePage() {
             )}
           </div>
 
-          {useApiSearch && (
+          {resultsView && (
             <>
               <ResultsToolbar
                 groupSimilar={filters.groupSimilar}
@@ -420,7 +470,7 @@ export default function HomePage() {
             </>
           )}
 
-          {useApiSearch ? (
+          {showSidebar ? (
             <div className="flex gap-6">
               <aside className="hidden lg:block w-64 flex-shrink-0">
                 <div className="sticky top-4">
@@ -446,6 +496,8 @@ export default function HomePage() {
                     <p className="text-lg text-red-600">Greška pri pretraživanju</p>
                     <p className="text-sm text-red-500 mt-2">{searchError}</p>
                   </div>
+                ) : !resultsView ? (
+                  featuredView
                 ) : displayProducts.length > 0 ? (
                   <>
                     <ProductList products={displayProducts} />
@@ -485,19 +537,7 @@ export default function HomePage() {
               </div>
             </div>
           ) : (
-            <>
-              {isLoadingFeatured ? (
-                <div className="flex flex-col items-center justify-center py-16">
-                  <Spinner size="lg" text="Učitavanje popularnih proizvoda..." />
-                </div>
-              ) : (
-                featuredProducts?.groups && (
-                  <ProductList
-                    products={featuredProducts.groups.flatMap(group => convertProductGroupToProducts(group))}
-                  />
-                )
-              )}
-            </>
+            featuredView
           )}
         </section>
       </main>
