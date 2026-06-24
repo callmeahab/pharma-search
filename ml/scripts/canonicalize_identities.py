@@ -138,15 +138,57 @@ def canonicalize(client: anthropic.Anthropic, target: dict) -> dict:
     return out
 
 
+# Curated protein/sports brand-LINE overrides (normalized core -> canonical), mined
+# + adversarially verified once (see ml/scripts and the workflow that produced it).
+# Keyed by normalized core, NOT product id, so it survives re-scrapes/re-imports.
+LINE_OVERRIDES = ROOT / "ml" / "data" / "line_canonical_overrides.json"
+
+
+def apply_line_overrides(cur) -> int:
+    """Set canonicalIdentity for products whose normalized core matches a curated
+    protein brand-line override (e.g. 'iso sensation isolate' -> 'Ultimate Nutrition
+    Iso Sensation 93'). Collapses redundant descriptors while keeping genuine
+    concentrate/isolate splits. Returns rows updated."""
+    if not LINE_OVERRIDES.exists():
+        return 0
+    ov = json.loads(LINE_OVERRIDES.read_text())
+    # MEASURE GUARD: only canonicalize products that carry a size/strength, so
+    # BuildGroupKey's size/strength suffix keeps different packs apart. Products with
+    # NO measure (a single bar vs a box of bars, sachets/diapers sold by count) would
+    # otherwise all collapse into one group with a misleading price range.
+    cur.execute('''SELECT id, COALESCE("coreProductIdentity", '') FROM "Product"
+                   WHERE COALESCE("volumeValue",0) > 0 OR COALESCE("dosageValue",0) > 0''')
+    pairs = [(pid, ov[d.normalize(core)]) for pid, core in cur.fetchall() if d.normalize(core) in ov]
+    if pairs:
+        execute_values(
+            cur,
+            'UPDATE "Product" p SET "canonicalIdentity" = v.cid FROM (VALUES %s) AS v(id, cid) WHERE p.id = v.id',
+            pairs,
+        )
+    return len(pairs)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--min-size", type=int, default=8, help="min products in a catch-all group to target")
     ap.add_argument("--concurrency", type=int, default=6)
     ap.add_argument("--limit-brands", type=int, default=0, help="cap brands processed (0 = all)")
     ap.add_argument("--dry-run", action="store_true", help="print assignments, do not write")
+    ap.add_argument("--overrides-only", action="store_true",
+                    help="only (re)apply the curated line overrides; skip the LLM pass (no API key needed)")
     args = ap.parse_args()
 
     db_url = os.getenv("DATABASE_URL", "postgres://postgres:docker@localhost:5432/pharma_search?sslmode=disable")
+
+    if args.overrides_only:
+        conn = psycopg2.connect(db_url)
+        cur = conn.cursor()
+        n = apply_line_overrides(cur)
+        conn.commit()
+        conn.close()
+        log.info("line overrides applied: %d products", n)
+        return
+
     if not os.getenv("ANTHROPIC_API_KEY"):
         sys.exit("ANTHROPIC_API_KEY is not set")
 
@@ -184,6 +226,10 @@ def main():
         'UPDATE "Product" p SET "canonicalIdentity" = v.cid FROM (VALUES %s) AS v(id, cid) WHERE p.id = v.id',
         list(pairs.items()),
     )
+    # Apply the curated protein brand-line overrides on top (different products than
+    # the bare-brand catch-alls above, so no conflict).
+    n_ov = apply_line_overrides(cur)
+    log.info("line overrides applied: %d products", n_ov)
     conn.commit()
     cur.execute('SELECT count(*) FROM "Product" WHERE "canonicalIdentity" IS NOT NULL')
     log.info("rows with canonicalIdentity now: %d", cur.fetchone()[0])

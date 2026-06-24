@@ -352,7 +352,16 @@ func BuildGroupKey(in GroupKeyInput) GroupKey {
 	if ci := NormalizeText(in.CanonicalIdentity); ci != "" {
 		hm := in.DosageValue > 0 || NormalizeUnit(in.VolumeUnit) == "g" || NormalizeUnit(in.VolumeUnit) == "kg"
 		parts := append([]string{"core", ci}, suffix()...)
-		return GroupKey{Key: strings.Join(parts, "::"), DisplayName: titleCaseWords(in.CanonicalIdentity), Method: "brand-core", Residual: ci, HasMeasure: hm}
+		// Append the strength/size to the display so size-differentiated lines (e.g.
+		// a protein line at 910 g vs 2.27 kg) don't render as identical-looking cards.
+		disp := titleCaseWords(in.CanonicalIdentity)
+		if _, sDisp := canonicalStrength(in.DosageValue, in.DosageUnit, nil); sDisp != "" {
+			disp += " " + sDisp
+		}
+		if in.VolumeValue > 0 && in.VolumeUnit != "" {
+			disp += " " + formatDisplayMeasure(in.VolumeValue, NormalizeUnit(in.VolumeUnit))
+		}
+		return GroupKey{Key: strings.Join(parts, "::"), DisplayName: disp, Method: "brand-core", Residual: ci, HasMeasure: hm}
 	}
 
 	// Brand-INDEPENDENT line merge applies ONLY to measurable supplement/sports
@@ -428,6 +437,10 @@ func isDistinctiveCore(residual string) bool {
 var residualSynonyms = map[string]string{
 	"caseine": "casein", "kazein": "casein", "kazeina": "casein",
 	"micelarni": "micellar", "micelarna": "micellar",
+	// Serbian/English (and typo) spellings of "isolate" — the SAME word — so a
+	// protein line titled "... Izolat" and "... Isolate" don't split. (We keep
+	// "isolate" as a meaningful token; we only unify its spelling, not strip it.)
+	"izolat": "isolate", "izolata": "isolate", "izolatom": "isolate", "isolat": "isolate",
 }
 
 // residualCore reduces a core identity to its meaningful descriptor tokens
