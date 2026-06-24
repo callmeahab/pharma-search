@@ -40,12 +40,19 @@ async function scrapePage(page: Page, url: string): Promise<Product[]> {
 
           const priceText =
             element.querySelector('.price')?.textContent?.trim() || '';
-          // Serbian format "6.488,00 RSD": "." = thousands sep, "," = decimals.
-          // Take the integer part (before the decimal comma) and drop thousands
-          // separators -> integer RSD. The old `[^\d,]` kept the comma, which the
-          // CSV writer then stripped, fusing ",00" into the integer -> every price
-          // was inflated x100 (e.g. 6488 -> 648800).
-          const price = (priceText.replace(/\s/g, '').match(/([\d.]+)(?:,\d+)?/)?.[1] || '').replace(/\./g, '');
+          // Locale-robust RSD parse. The site renders BOTH "6.488,00" (comma
+          // decimals) and "5382.00" (dot decimals); the old regex treated a dot
+          // decimal as a thousands separator and fused ".00" into the integer ->
+          // every price inflated x100 (5382 -> 538200). Rule: the LAST separator
+          // is the decimal point ONLY if it's followed by 1-2 digits; otherwise
+          // every dot/comma is a thousands separator. Then strip separators.
+          const digits = priceText.replace(/[^\d.,]/g, '');
+          let price = '';
+          if (digits) {
+            const dec = Math.max(digits.lastIndexOf(','), digits.lastIndexOf('.'));
+            const intPart = dec !== -1 && digits.length - dec - 1 <= 2 ? digits.slice(0, dec) : digits;
+            price = intPart.replace(/[.,]/g, '');
+          }
           // Markup is now `a.link-name > h3`, so the link is the .link-name anchor
           // (the old `h3 > a` matched nothing → every product was dropped).
           const link =
