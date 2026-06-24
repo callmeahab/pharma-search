@@ -35,7 +35,7 @@ const allScrapers = [
   'esensa.ts',
   'exYuFitness.ts',
   // 'explode.ts',    // RETIRED 2026-06-22: explode.rs decommissioned (placeholder page)
-  'farmasi.ts',
+  // 'farmasi.ts',  // RETIRED 2026-06-24: file fully commented out; klub.farmasi.rs shop server decommissioned (port 443 filtered) and public farmasi.rs is a JS-only SPA. No viable source.
   'filly.ts',
   'fitLab.ts',
   'fitnessShop.ts',

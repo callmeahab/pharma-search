@@ -10,15 +10,15 @@ const CATEGORIES: Record<string, string> = {
   'bebe-i-deca': '050000', domacinstvo: '060000', ljubimci: '070000', kosa: '110000',
 };
 
+// As of 2026-06: the headline moved into a nested `title` object on tileData.
 interface DmTile {
-  tileHeadline?: string;
-  tileHeadlineLong?: string;
+  title?: { tileHeadlineLong?: string; tileHeadline?: string };
   brandName?: string;
   self?: string;
   images?: Array<{ tileSrc?: string }>;
   price?: { price?: { current?: { value?: string } } };
 }
-interface DmResp { count?: number; totalPages?: number; products?: Array<{ tileData?: DmTile }> }
+interface DmResp { count?: number; totalPages?: number; products?: Array<{ title?: string; tileData?: DmTile }> }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -56,7 +56,7 @@ async function scrape(): Promise<Product[]> {
       for (const p of batch) {
         const t = p.tileData;
         if (!t) continue;
-        const title = (t.tileHeadlineLong || t.tileHeadline || '').trim();
+        const title = (t.title?.tileHeadlineLong || t.title?.tileHeadline || p.title || '').trim();
         const link = t.self ? `https://www.dm.rs${t.self}` : '';
         if (!title || !link || seen.has(link)) continue;
         seen.add(link);
