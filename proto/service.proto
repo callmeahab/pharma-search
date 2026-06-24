@@ -48,6 +48,8 @@ message SearchGroupsRequest {
   string q = 1;
   int32 limit = 2;
   int32 offset = 3;
+  repeated string brand_names = 4;
+  repeated string categories = 5;
 }
 message FacetsRequest {}
 message PriceComparisonRequest { string q = 1; }
@@ -92,6 +94,7 @@ message Product {
   int32 quantity = 13;
   int32 rank = 14;
   string price_updated_at = 15;  // when this offer's price was last retrieved (ISO 8601)
+  string category = 16;          // canonical product category (for display/debug)
 }
 
 message PriceRange {

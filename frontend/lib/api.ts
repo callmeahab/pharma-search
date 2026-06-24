@@ -43,7 +43,7 @@ export async function autocomplete(
 export async function searchGroupsStreaming(
   query: string,
   onResult: (result: StreamingSearchResult) => void,
-  options?: { offset?: number; limit?: number }
+  options?: { offset?: number; limit?: number; brandNames?: string[]; categories?: string[] }
 ): Promise<StreamingSearchResult> {
   return grpcClient.searchGroupsStream(query, onResult, options);
 }
@@ -51,9 +51,10 @@ export async function searchGroupsStreaming(
 export async function fetchGroupsPage(
   query: string,
   offset: number,
-  limit: number
+  limit: number,
+  filters?: { brandNames?: string[]; categories?: string[] }
 ): Promise<StreamingSearchResult> {
-  return grpcClient.fetchGroupsPage(query, offset, limit);
+  return grpcClient.fetchGroupsPage(query, offset, limit, filters);
 }
 
 export async function checkHealth(): Promise<{ status: string }> {

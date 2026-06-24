@@ -102,6 +102,7 @@ func searchProductsDB(db *sql.DB, query string, limit int) ([]map[string]interfa
 			p."volumeValue",
 			COALESCE(p."volumeUnit", '') as volume_unit,
 			COALESCE(p.form, '') as form,
+			COALESCE(p."canonicalCategory", '') as category,
 			p."quantityValue",
 			p."priceScrapedAt"
 		FROM "Product" p
@@ -155,14 +156,14 @@ func searchProductsDB(db *sql.DB, query string, limit int) ([]map[string]interfa
 	var results []map[string]interface{}
 	for rows.Next() {
 		var id, title, vendorId, vendorName, link, thumbnail string
-		var brand, normalizedName, coreProductIdentity, canonicalIdentity, dosageUnit, volumeUnit, form string
+		var brand, normalizedName, coreProductIdentity, canonicalIdentity, dosageUnit, volumeUnit, form, category string
 		var price, dosageValue, volumeValue sql.NullFloat64
 		var quantityValue sql.NullInt64
 		var updatedAt sql.NullTime
 
 		if err := rows.Scan(&id, &title, &price, &vendorId, &vendorName, &link, &thumbnail,
 			&brand, &normalizedName, &coreProductIdentity, &canonicalIdentity,
-			&dosageValue, &dosageUnit, &volumeValue, &volumeUnit, &form, &quantityValue, &updatedAt); err != nil {
+			&dosageValue, &dosageUnit, &volumeValue, &volumeUnit, &form, &category, &quantityValue, &updatedAt); err != nil {
 			return nil, fmt.Errorf("scan error: %w", err)
 		}
 
@@ -192,6 +193,7 @@ func searchProductsDB(db *sql.DB, query string, limit int) ([]map[string]interfa
 			"volumeValue":         volumeValue.Float64,
 			"volumeUnit":          volumeUnit,
 			"form":                form,
+			"category":            category,
 			"quantityValue":       float64(quantityValue.Int64),
 			"updatedAt":           updatedAtStr,
 		}
@@ -351,6 +353,124 @@ func escapeLikePattern(value string) string {
 	return strings.NewReplacer("%", "\\%", "_", "\\_").Replace(value)
 }
 
+// lowerStringSet builds a case-insensitive lookup set, dropping blanks.
+func lowerStringSet(vals []string) map[string]struct{} {
+	if len(vals) == 0 {
+		return nil
+	}
+	set := make(map[string]struct{}, len(vals))
+	for _, v := range vals {
+		if t := strings.ToLower(strings.TrimSpace(v)); t != "" {
+			set[t] = struct{}{}
+		}
+	}
+	if len(set) == 0 {
+		return nil
+	}
+	return set
+}
+
+// filterHitsByBrandCategory keeps hits whose brand/category match the (case-insensitive)
+// filter sets. Empty filters pass everything. Multiple values within a dimension are
+// OR'd; the two dimensions are AND'd. Filtering happens in Go (not SQL) so facets can
+// be computed from the full hit set, keeping every option visible during refinement.
+func filterHitsByBrandCategory(hits []map[string]interface{}, brands, categories []string) []map[string]interface{} {
+	bset := lowerStringSet(brands)
+	cset := lowerStringSet(categories)
+	if bset == nil && cset == nil {
+		return hits
+	}
+	out := make([]map[string]interface{}, 0, len(hits))
+	for _, h := range hits {
+		if bset != nil {
+			if _, ok := bset[strings.ToLower(strings.TrimSpace(getStringAny(h, "brand", "brand_name")))]; !ok {
+				continue
+			}
+		}
+		if cset != nil {
+			if _, ok := cset[strings.ToLower(strings.TrimSpace(getString(h, "category")))]; !ok {
+				continue
+			}
+		}
+		out = append(out, h)
+	}
+	return out
+}
+
+// filterCacheKey folds the active filters into the cache key so a filtered search
+// never reuses the unfiltered result (or a different filter set's result). Values
+// are normalized exactly as filterGroupsByBrandCategory normalizes them and joined
+// with \x1f (which cannot appear in a facet value), so the key can't collide.
+func filterCacheKey(base string, brands, categories []string) string {
+	if len(brands) == 0 && len(categories) == 0 {
+		return base
+	}
+	norm := func(vals []string) string {
+		out := make([]string, 0, len(vals))
+		for _, v := range vals {
+			if t := strings.ToLower(strings.TrimSpace(v)); t != "" {
+				out = append(out, t)
+			}
+		}
+		sort.Strings(out)
+		return strings.Join(out, "\x1f")
+	}
+	return base + "\x1fb=" + norm(brands) + "\x1fc=" + norm(categories)
+}
+
+// flattenGroupProducts collects the (vendor-deduped) member products of every group
+// — used to compute facets on the same basis as the group/product totals.
+func flattenGroupProducts(groups []map[string]interface{}) []map[string]interface{} {
+	products := make([]map[string]interface{}, 0)
+	for _, group := range groups {
+		for _, item := range getSlice(group, "products") {
+			if product, ok := item.(map[string]interface{}); ok {
+				products = append(products, product)
+			}
+		}
+	}
+	return products
+}
+
+// filterGroupsByBrandCategory keeps a GROUP if at least one member product satisfies
+// ALL active filters (brand AND category), preserving ALL members so price range,
+// vendor count and display name stay accurate. Filtering hides non-matching groups;
+// it never surgically prunes individual offers out of a matching group (which would
+// distort the cross-vendor price comparison and relabel groups).
+func filterGroupsByBrandCategory(groups []map[string]interface{}, brands, categories []string) []map[string]interface{} {
+	bset := lowerStringSet(brands)
+	cset := lowerStringSet(categories)
+	if bset == nil && cset == nil {
+		return groups
+	}
+	out := make([]map[string]interface{}, 0, len(groups))
+	for _, g := range groups {
+		matched := false
+		for _, item := range getSlice(g, "products") {
+			p, ok := item.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			if bset != nil {
+				if _, in := bset[strings.ToLower(strings.TrimSpace(getStringAny(p, "brand_name", "brand")))]; !in {
+					continue
+				}
+			}
+			if cset != nil {
+				if _, in := cset[strings.ToLower(strings.TrimSpace(getString(p, "category")))]; !in {
+					continue
+				}
+			}
+			matched = true
+			break
+		}
+		if matched {
+			out = append(out, g)
+		}
+	}
+	return out
+}
+
 func enrichProductsWithGroupKey(hits []map[string]interface{}) []map[string]interface{} {
 	products := make([]map[string]interface{}, 0, len(hits))
 
@@ -407,6 +527,7 @@ func enrichProductsWithGroupKey(hits []map[string]interface{}) []map[string]inte
 			"volume_value":          volumeValue,
 			"volume_unit":           volumeUnit,
 			"form":                  form,
+			"category":              getString(h, "category"),
 			"quantity":              qtyVal,
 			"rank":                  rank,
 		}
@@ -581,20 +702,6 @@ func dedupeProductsByVendor(products []map[string]interface{}) ([]map[string]int
 	})
 
 	return deduped, len(products) - len(deduped)
-}
-
-func flattenGroupProducts(groups []map[string]interface{}) []map[string]interface{} {
-	products := make([]map[string]interface{}, 0)
-	for _, group := range groups {
-		for _, item := range getSlice(group, "products") {
-			product, ok := item.(map[string]interface{})
-			if !ok {
-				continue
-			}
-			products = append(products, product)
-		}
-	}
-	return products
 }
 
 func countVisibleProducts(groups []map[string]interface{}) int {
@@ -875,8 +982,10 @@ func (s *server) Search(ctx context.Context, req *connect.Request[pb.SearchReque
 		return nil, err
 	}
 
-	products := enrichProductsWithGroupKey(hits)
+	// Facets from the full hit set; products from the filtered set.
 	facets := buildFacetsFromHits(hits)
+	filtered := filterHitsByBrandCategory(hits, req.Msg.GetBrandNames(), req.Msg.GetCategories())
+	products := enrichProductsWithGroupKey(filtered)
 
 	// Convert facets to generic map for JSON response
 	facetMap := map[string]interface{}{}
@@ -890,7 +999,7 @@ func (s *server) Search(ctx context.Context, req *connect.Request[pb.SearchReque
 
 	data := map[string]interface{}{
 		"products":         products,
-		"total":            len(hits),
+		"total":            len(filtered),
 		"offset":           0,
 		"limit":            limit,
 		"search_type_used": "postgresql",
@@ -929,6 +1038,9 @@ func (s *server) SearchGroups(ctx context.Context, req *connect.Request[pb.Searc
 	}
 
 	allGroups := convertHitsToGroups(hits, req.Msg.GetQ(), s.db)
+	// Filter at the GROUP level (keep all members of matching groups) so price
+	// ranges / vendor counts stay accurate.
+	allGroups = filterGroupsByBrandCategory(allGroups, req.Msg.GetBrandNames(), req.Msg.GetCategories())
 
 	paginatedGroups := allGroups
 	if len(allGroups) > groupLimit {
@@ -957,11 +1069,15 @@ func (s *server) SearchGroupsStream(ctx context.Context, req *connect.Request[pb
 		requestedLimit = 24 // Default page size
 	}
 
-	// Check cache first
-	cacheKey := matching.NormalizeText(query)
-	if cacheKey == "" {
-		cacheKey = strings.ToLower(query)
+	brandFilter := req.Msg.GetBrandNames()
+	categoryFilter := req.Msg.GetCategories()
+
+	// Check cache first (key includes the active filters)
+	baseKey := matching.NormalizeText(query)
+	if baseKey == "" {
+		baseKey = strings.ToLower(query)
 	}
+	cacheKey := filterCacheKey(baseKey, brandFilter, categoryFilter)
 	cached := s.getSearchCache(cacheKey)
 
 	if cached == nil {
@@ -972,12 +1088,18 @@ func (s *server) SearchGroupsStream(ctx context.Context, req *connect.Request[pb
 		}
 
 		allGroups := convertHitsToGroups(hits, query, s.db)
+		// Facets from the FULL grouped set (vendor-deduped — same basis as the totals)
+		// so every brand/category option stays visible during multi-select refinement
+		// and each option's count matches what selecting it actually yields.
 		facets := buildFacetsFromHits(flattenGroupProducts(allGroups))
+		// Filter at the GROUP level: hide non-matching groups but keep all members of
+		// matching ones, so price range / vendor count / display name stay accurate.
+		displayGroups := filterGroupsByBrandCategory(allGroups, brandFilter, categoryFilter)
 
 		cached = &cachedSearchResult{
-			groups:    allGroups,
+			groups:    displayGroups,
 			facets:    facets,
-			totalHits: countVisibleProducts(allGroups),
+			totalHits: countVisibleProducts(displayGroups),
 			cachedAt:  time.Now(),
 		}
 		s.setSearchCache(cacheKey, cached)
@@ -1079,6 +1201,7 @@ func convertGroupsToProto(groups []map[string]interface{}) *pb.ProductGroupChunk
 				Quantity:       int32(getFloat(pm, "quantity")),
 				Rank:           int32(getFloat(pm, "rank")),
 				PriceUpdatedAt: getString(pm, "price_updated_at"),
+				Category:       getString(pm, "category"),
 			})
 		}
 
@@ -1132,6 +1255,13 @@ func buildFacetsFromHits(hits []map[string]interface{}) map[string]*pb.FacetValu
 				facetCounts["form"] = make(map[string]int)
 			}
 			facetCounts["form"][form]++
+		}
+
+		if category := strings.TrimSpace(getString(hit, "category")); category != "" {
+			if facetCounts["category"] == nil {
+				facetCounts["category"] = make(map[string]int)
+			}
+			facetCounts["category"][category]++
 		}
 
 		if quantity := formatQuantityFacetValue(getFloatAny(hit, "quantityValue", "quantity")); quantity != "" {
@@ -1210,6 +1340,21 @@ func (s *server) GetFacets(ctx context.Context, req *connect.Request[pb.FacetsRe
 		}
 		brandRows.Close()
 		facets["brand"] = brandCounts
+	}
+
+	// Canonical category counts
+	catRows, err := s.db.Query(`SELECT "canonicalCategory", COUNT(*) FROM "Product" WHERE "canonicalCategory" IS NOT NULL AND "canonicalCategory" != '' GROUP BY "canonicalCategory" ORDER BY COUNT(*) DESC`)
+	if err == nil {
+		catCounts := map[string]interface{}{}
+		for catRows.Next() {
+			var cat string
+			var count int
+			if err := catRows.Scan(&cat, &count); err == nil {
+				catCounts[cat] = count
+			}
+		}
+		catRows.Close()
+		facets["category"] = catCounts
 	}
 
 	// Dosage unit counts

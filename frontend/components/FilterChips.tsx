@@ -25,7 +25,7 @@ export const FilterChips: React.FC<FilterChipsProps> = ({
   className,
 }) => {
   const removeFilter = (
-    key: "brands" | "vendors" | "dosages" | "quantities" | "forms",
+    key: "categories" | "brands" | "vendors" | "dosages" | "quantities" | "forms",
     value: string
   ) => {
     onFiltersChange({
@@ -78,6 +78,13 @@ export const FilterChips: React.FC<FilterChipsProps> = ({
       onRemove: clearPriceFilter,
     });
   }
+
+  filters.categories.forEach((category) => {
+    activeChips.push({
+      label: category,
+      onRemove: () => removeFilter("categories", category),
+    });
+  });
 
   filters.brands.forEach((brand) => {
     activeChips.push({

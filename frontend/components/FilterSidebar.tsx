@@ -16,6 +16,7 @@ import { cn } from "@/lib/utils";
 export interface FilterState {
   minPrice: number;
   maxPrice: number;
+  categories: string[];
   brands: string[];
   vendors: string[];
   dosages: string[];
@@ -27,6 +28,7 @@ export interface FilterState {
 export interface Facets {
   vendorName?: Record<string, number>;
   brand?: Record<string, number>;
+  category?: Record<string, number>;
   normalizedName?: Record<string, number>;
   dosageUnit?: Record<string, number>;
   form?: Record<string, number>;
@@ -45,6 +47,7 @@ interface FilterSidebarProps {
 const defaultFilters: FilterState = {
   minPrice: 0,
   maxPrice: 50000,
+  categories: [],
   brands: [],
   vendors: [],
   dosages: [],
@@ -124,7 +127,7 @@ export const FilterSidebar: React.FC<FilterSidebarProps> = ({
   };
 
   const toggleArrayFilter = (
-    key: "brands" | "vendors" | "dosages" | "quantities" | "forms",
+    key: "categories" | "brands" | "vendors" | "dosages" | "quantities" | "forms",
     value: string
   ) => {
     const current = filters[key];
@@ -146,6 +149,7 @@ export const FilterSidebar: React.FC<FilterSidebarProps> = ({
   const hasActiveFilters =
     filters.minPrice > priceRange.min ||
     filters.maxPrice < priceRange.max ||
+    filters.categories.length > 0 ||
     filters.brands.length > 0 ||
     filters.vendors.length > 0 ||
     filters.dosages.length > 0 ||
@@ -158,6 +162,14 @@ export const FilterSidebar: React.FC<FilterSidebarProps> = ({
       maximumFractionDigits: 0,
     }).format(price) + " RSD";
   };
+
+  // Extract canonical categories from facets (broadest filter, shown first)
+  const categoryOptions = facets?.category
+    ? Object.entries(facets.category)
+        .filter(([key]) => key && key.trim() !== "")
+        .sort((a, b) => b[1] - a[1])
+        .map(([key, count]) => ({ name: key, count }))
+    : [];
 
   // Extract dosage units from facets
   const dosageOptions = facets?.dosageUnit
@@ -184,14 +196,21 @@ export const FilterSidebar: React.FC<FilterSidebarProps> = ({
         .map(([key, count]) => ({ name: key, count }))
     : [];
 
-  // Extract brands from facets
-  const brandOptions = facets?.brand
+  // Extract brands from facets (top 15 by count) PLUS any currently-selected brand
+  // that falls outside the top 15, so a selected brand always has a checkbox to untick.
+  const topBrandOptions = facets?.brand
     ? Object.entries(facets.brand)
         .filter(([key]) => key && key.trim() !== "")
         .sort((a, b) => b[1] - a[1])
         .slice(0, 15)
         .map(([key, count]) => ({ name: key, count }))
     : [];
+  const brandOptions = [
+    ...topBrandOptions,
+    ...filters.brands
+      .filter((b) => !topBrandOptions.some((o) => o.name === b))
+      .map((b) => ({ name: b, count: facets?.brand?.[b] ?? 0 })),
+  ];
 
   // Extract vendors from facets
   const vendorOptions = facets?.vendorName
@@ -258,6 +277,24 @@ export const FilterSidebar: React.FC<FilterSidebarProps> = ({
           </div>
         </FilterSection>
 
+        {/* Category */}
+        {categoryOptions.length > 0 && (
+          <FilterSection title="Kategorija">
+            <div className="max-h-56 overflow-y-auto space-y-2">
+              {categoryOptions.map(({ name, count }) => (
+                <CheckboxItem
+                  key={name}
+                  id={`category-${name}`}
+                  label={name}
+                  count={filters.categories.includes(name) ? undefined : count}
+                  checked={filters.categories.includes(name)}
+                  onChange={() => toggleArrayFilter("categories", name)}
+                />
+              ))}
+            </div>
+          </FilterSection>
+        )}
+
         {/* Dosage */}
         {dosageOptions.length > 0 && (
           <FilterSection title="Doza" defaultOpen={false}>
@@ -321,7 +358,7 @@ export const FilterSidebar: React.FC<FilterSidebarProps> = ({
                   key={name}
                   id={`brand-${name}`}
                   label={name}
-                  count={count}
+                  count={filters.brands.includes(name) ? undefined : count}
                   checked={filters.brands.includes(name)}
                   onChange={() => toggleArrayFilter("brands", name)}
                 />

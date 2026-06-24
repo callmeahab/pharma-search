@@ -40,6 +40,14 @@ export default function HomePage() {
   // Ref for infinite scroll detection
   const loadMoreRef = useRef<HTMLDivElement>(null);
   const currentSearchTermRef = useRef<string>("");
+  // Brand + category filter applied SERVER-SIDE (so it filters the whole result
+  // set, not just loaded pages). Kept in a ref so handleSearch/loadMore always read
+  // the latest values without changing their identity.
+  const backendFiltersRef = useRef<{ brandNames: string[]; categories: string[] }>({
+    brandNames: [],
+    categories: [],
+  });
+  backendFiltersRef.current = { brandNames: filters.brands, categories: filters.categories };
 
   // Load display mode preference from localStorage on mount
   useEffect(() => {
@@ -123,7 +131,12 @@ export default function HomePage() {
         if (result.groups.length > 0) {
           setIsSearching(false);
         }
-      }, { offset: 0, limit: PAGE_SIZE });
+      }, {
+        offset: 0,
+        limit: PAGE_SIZE,
+        brandNames: backendFiltersRef.current.brandNames,
+        categories: backendFiltersRef.current.categories,
+      });
     } catch (error) {
       console.error("Search error:", error);
       setSearchError("Greška pri pretraživanju. Pokušajte ponovo.");
@@ -138,12 +151,26 @@ export default function HomePage() {
     if (isLoadingMore || !hasMore || !currentSearchTermRef.current) return;
 
     setIsLoadingMore(true);
+    // Signature of the search context this page was requested for; if the term or
+    // filters change while the request is in flight, discard the stale page.
+    const reqSig = (term: string, f: { brandNames: string[]; categories: string[] }) =>
+      `${term}|${f.brandNames.join(",")}|${f.categories.join(",")}`;
+    const sig = reqSig(currentSearchTermRef.current, backendFiltersRef.current);
     try {
       const result = await fetchGroupsPage(
         currentSearchTermRef.current,
         currentOffset,
-        PAGE_SIZE
+        PAGE_SIZE,
+        {
+          brandNames: backendFiltersRef.current.brandNames,
+          categories: backendFiltersRef.current.categories,
+        }
       );
+
+      // Drop the result if a new search/filter superseded this request.
+      if (reqSig(currentSearchTermRef.current, backendFiltersRef.current) !== sig) {
+        return;
+      }
 
       if (result.groups.length > 0) {
         const nextOffset = currentOffset + result.groups.length;
@@ -164,6 +191,22 @@ export default function HomePage() {
       setIsLoadingMore(false);
     }
   }, [isLoadingMore, hasMore, currentOffset, facets]);
+
+  // Reset filters when a NEW search term runs — a brand/category/vendor facet from
+  // one query doesn't apply to another, and stale server-side brand/category filters
+  // would otherwise silently over-restrict the new results. Clears the server-filter
+  // ref INLINE so the immediately-following search uses the cleared values, and flags
+  // the filter effect to skip the redundant re-search the state change would trigger.
+  const skipNextServerFilterSearchRef = useRef(false);
+  const resetServerFilters = useCallback(() => {
+    backendFiltersRef.current = { brandNames: [], categories: [] };
+    setFilters(prev => {
+      if (prev.brands.length || prev.categories.length) {
+        skipNextServerFilterSearchRef.current = true;
+      }
+      return { ...defaultFilters, groupSimilar: prev.groupSimilar };
+    });
+  }, []);
 
   // Intersection Observer for infinite scroll
   useEffect(() => {
@@ -194,11 +237,12 @@ export default function HomePage() {
     if (urlSearchTerm && urlSearchTerm.trim()) {
       setSearchTerm(urlSearchTerm);
       setUseApiSearch(true);
+      resetServerFilters();
       handleSearch(urlSearchTerm);
     } else {
       loadFeaturedProducts();
     }
-  }, [handleSearch, loadFeaturedProducts]);
+  }, [handleSearch, loadFeaturedProducts, resetServerFilters]);
 
   useEffect(() => {
     const handleUrlSearchChanged = (event: CustomEvent) => {
@@ -206,6 +250,7 @@ export default function HomePage() {
       if (newSearchTerm !== searchTerm) {
         setSearchTerm(newSearchTerm);
         setUseApiSearch(true);
+        resetServerFilters();
         handleSearch(newSearchTerm);
       }
     };
@@ -214,7 +259,31 @@ export default function HomePage() {
     return () => {
       window.removeEventListener("urlSearchChanged", handleUrlSearchChanged as EventListener);
     };
-  }, [searchTerm, handleSearch]);
+  }, [searchTerm, handleSearch, resetServerFilters]);
+
+  // Re-run the search when the SERVER-SIDE filters (brand / category) change, so
+  // the filter applies across the whole catalog instead of only the loaded pages.
+  // A mount guard prevents a duplicate search on initial load (the q-from-URL
+  // effect already kicks off the first search synchronously).
+  const backendBrandsKey = filters.brands.join("|");
+  const backendCategoriesKey = filters.categories.join("|");
+  const serverFiltersInitRef = useRef(false);
+  useEffect(() => {
+    if (!serverFiltersInitRef.current) {
+      serverFiltersInitRef.current = true;
+      return;
+    }
+    // Skip the re-search caused by resetServerFilters() on a new term — the term
+    // handler already kicked off the search with the cleared filters.
+    if (skipNextServerFilterSearchRef.current) {
+      skipNextServerFilterSearchRef.current = false;
+      return;
+    }
+    if (currentSearchTermRef.current) {
+      handleSearch(currentSearchTermRef.current);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [backendBrandsKey, backendCategoriesKey]);
 
   // Calculate actual price range from accumulated groups
   const priceRange = useMemo(() => {
@@ -232,11 +301,9 @@ export default function HomePage() {
 
     let groups = [...accumulatedGroups];
 
-    if (filters.brands.length > 0) {
-      groups = groups.filter(group =>
-        group.products.some(p => filters.brands.includes(p.brand_name || ''))
-      );
-    }
+    // Brand + category are filtered SERVER-SIDE (see backendFiltersRef); the
+    // accumulated groups are already restricted to them. Remaining filters below
+    // are applied client-side over the loaded pages.
 
     if (filters.vendors.length > 0) {
       groups = groups.filter(group =>
@@ -288,6 +355,7 @@ export default function HomePage() {
 
   const hasActiveFilters = filters.minPrice > priceRange.min ||
     filters.maxPrice < priceRange.max ||
+    filters.categories.length > 0 ||
     filters.brands.length > 0 ||
     filters.vendors.length > 0 ||
     filters.dosages.length > 0 ||
@@ -295,6 +363,7 @@ export default function HomePage() {
     filters.forms.length > 0;
 
   const activeFilterCount =
+    filters.categories.length +
     filters.brands.length +
     filters.vendors.length +
     filters.dosages.length +

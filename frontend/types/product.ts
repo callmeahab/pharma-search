@@ -51,6 +51,7 @@ export interface BackendProduct {
   volume_value?: number;
   volume_unit?: string;
   form?: string;
+  category?: string;
   quantity?: number;
   rank: number;
   price_updated_at?: string;

@@ -34,6 +34,7 @@ function convertPbProductToBackend(p: PbProduct): BackendProduct {
     dosage_value: p.dosageValue,
     dosage_unit: p.dosageUnit,
     form: p.form,
+    category: p.category || undefined,
     quantity: p.quantity,
     rank: p.rank,
     price_updated_at: p.priceUpdatedAt || undefined,
@@ -191,7 +192,7 @@ export class GrpcApiClient {
   async searchGroupsStream(
     query: string,
     onChunk: (result: StreamingSearchResult) => void,
-    options?: { offset?: number; limit?: number }
+    options?: { offset?: number; limit?: number; brandNames?: string[]; categories?: string[] }
   ): Promise<StreamingSearchResult> {
     const connectClient = getClient();
     if (!connectClient)
@@ -210,6 +211,8 @@ export class GrpcApiClient {
       q: query,
       offset: options?.offset || 0,
       limit: options?.limit || 24,
+      brandNames: options?.brandNames || [],
+      categories: options?.categories || [],
     });
 
     for await (const chunk of stream) {
@@ -232,7 +235,8 @@ export class GrpcApiClient {
   async fetchGroupsPage(
     query: string,
     offset: number,
-    limit: number
+    limit: number,
+    filters?: { brandNames?: string[]; categories?: string[] }
   ): Promise<StreamingSearchResult> {
     const connectClient = getClient();
     if (!connectClient)
@@ -242,6 +246,8 @@ export class GrpcApiClient {
       q: query,
       offset,
       limit,
+      brandNames: filters?.brandNames || [],
+      categories: filters?.categories || [],
     });
 
     let result: StreamingSearchResult = {

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Full data pipeline, end to end:
-#   (build dicts) -> scrape -> import-csv -> postprocess -> extract -> canonicalize -> (sync)
+#   (build dicts) -> scrape -> import-csv -> postprocess -> extract -> categorize -> canonicalize -> (sync)
 #
 # This is the single command to run the entire workflow. It is what should be
 # SCHEDULED (not `bun start`, which only writes CSVs and never touches the DB).
@@ -11,6 +11,7 @@
 # Env toggles (all optional):
 #   SKIP_SCRAPE=1        reuse existing CSVs (import+postprocess only) — no re-scrape
 #   SKIP_EXTRACT=1       skip the ML entity extraction
+#   SKIP_CATEGORIZE=1    skip the canonical-category assignment
 #   SKIP_CANONICALIZE=1  skip the LLM canonicalIdentity pass
 #   BUILD_DICTS=1        rebuild the shared dictionaries before extracting
 #   SYNC=1               run deploy/sync-data.sh to push the catalog to prod at the end
@@ -50,6 +51,12 @@ fi
 if [ "${SKIP_EXTRACT:-0}" != "1" ]; then
   phase "extract entities (populate_missing_data --all)"
   "$PY" "$REPO_ROOT/ml/populate_missing_data.py" --all || die "extraction failed"
+fi
+
+if [ "${SKIP_CATEGORIZE:-0}" != "1" ]; then
+  phase "assign canonical categories (assign_categories)"
+  # Deterministic (no API key needed); depends on the extracted brand/form/core.
+  "$PY" "$REPO_ROOT/ml/scripts/assign_categories.py" || die "category assignment failed"
 fi
 
 if [ "${SKIP_CANONICALIZE:-0}" != "1" ]; then
