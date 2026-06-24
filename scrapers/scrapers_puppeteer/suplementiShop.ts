@@ -7,8 +7,7 @@ import { ScraperUtils } from './helpers/ScraperUtils';
 // Configure stealth plugin
 puppeteer.use(StealthPlugin());
 
-const scrapedTitles = new Set<string>();
-const baseUrls = ['https://www.ogistra-nutrition-shop.com/2-katalog'];
+const baseUrls = ['https://suplementishop.com/shop'];
 
 // Function to scrape a single page for products
 async function scrapePage(
@@ -23,7 +22,7 @@ async function scrapePage(
     });
 
     // Wait for products to be visible
-    await page.waitForSelector('.item-product', {
+    await page.waitForSelector('.products li', {
       visible: true,
       timeout: 20000,
     });
@@ -40,40 +39,60 @@ async function scrapePage(
 
     // Check if product wrappers exist
     try {
-      await page.waitForSelector('.item-product', { timeout: 10000 });
+      await page.waitForSelector('.products li', { timeout: 10000 });
     } catch (error) {
       console.log('No products found on page');
       return [];
     }
 
     const products = await page.$$eval(
-      '.item-product',
+      '.products li',
       (elements, categoryArg) => {
-        return elements.map((element) => {
-          const titleElement = element.querySelector('h3');
-          const title = titleElement?.textContent?.trim() || '';
+        return elements
+          .map((element) => {
+            // Check if product is out of stock
+            if (element.querySelector('.ty-qty-out-of-stock')) {
+              return null;
+            }
 
-          const price =
-            element.querySelector('.price')?.textContent?.trim() || '';
-          const linkElement = element.querySelector(
-            '.img_block > a',
-          ) as HTMLAnchorElement;
-          const link = linkElement?.href || '';
+            const titleElement = element.querySelector('h2');
+            const title = titleElement?.textContent?.trim() || '';
 
-          const imgElement = element.querySelector(
-            '.img_block > a > img',
-          ) as HTMLImageElement;
-          const img = imgElement?.src || '';
+            let price = '';
+            const priceElement = element.querySelector('.price');
+            const newPriceElement = priceElement?.querySelector(
+              'ins .woocommerce-Price-amount',
+            );
 
-          return {
-            title,
-            price,
-            link,
-            thumbnail: img,
-            photos: img,
-            category: categoryArg,
-          };
-        });
+            if (newPriceElement) {
+              price = newPriceElement.textContent?.trim() || '';
+            } else {
+              price =
+                priceElement
+                  ?.querySelector('.woocommerce-Price-amount')
+                  ?.textContent?.trim() || '';
+            }
+
+            const linkElement = element.querySelector(
+              '.woocommerce-LoopProduct-link',
+            ) as HTMLAnchorElement;
+            const link = linkElement?.href || '';
+
+            const imgElement = element.querySelector(
+              '.ct-media-container > img',
+            ) as HTMLImageElement;
+            const img = imgElement?.src || '';
+
+            return {
+              title,
+              price,
+              link,
+              thumbnail: img,
+              photos: img,
+              category: categoryArg,
+            };
+          })
+          .filter((product) => product !== null); // Filter out null products (out of stock)
       },
       category,
     );
@@ -101,12 +120,15 @@ const browser = await puppeteer.launch({
     let allScrapedProducts: Product[] = [];
 
     for (const baseUrl of baseUrls) {
+      // Extract category from URL by taking the segment after domain
+      const category = 'suplementi';
+
       let pageNumber = 1;
       while (true) {
-        const pageUrl = `${baseUrl}?page=${pageNumber}`;
+        const pageUrl = `${baseUrl}/page/${pageNumber}`;
         console.log(`Scraping page: ${pageUrl}`);
 
-        const products = await scrapePage(page, pageUrl, 'suplementi');
+        const products = await scrapePage(page, pageUrl, category);
         if (products.length === 0) {
           console.log(`No products found on page ${pageNumber}, stopping...`);
           break;
@@ -134,7 +156,7 @@ async function main() {
     
 
   if (allProducts.length > 0) {
-    await insertData(allProducts, 'Ogistra');
+    await insertData(allProducts, 'Suplementi Shop');
   } else {
     console.log('No products found.');
   }

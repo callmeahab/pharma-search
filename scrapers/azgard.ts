@@ -4,7 +4,7 @@
 // dev sandbox at rewrite time).
 import { runApiScraper, scrapeShopify } from './helpers/apiScrapers';
 
-runApiScraper(() => scrapeShopify('https://azgard.rs', 'Azgard'), 'Azgard')
+runApiScraper(() => scrapeShopify('https://azgardnutrition.rs/', 'Azgard'), 'Azgard')
   .then(() => process.exit(0))
   .catch((error) => {
     console.error('Azgard scraper failed:', error);

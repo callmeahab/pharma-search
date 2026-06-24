@@ -48,15 +48,15 @@ async function scrapePage(page: Page, category: string): Promise<Product[]> {
         items.map((item) => {
           const title =
             item
-              .querySelector('.text-base.truncate-title-2')
+              .querySelector('a.truncate-title-2')
               ?.textContent?.trim() || '';
           const price =
             item
-              .querySelector('.flex.font-medium.text-body-l')
+              .querySelector('span.text-body-l')
               ?.textContent?.trim() || '';
-          const link = item.querySelector('a')?.href || '';
-          const thumbnail = item.querySelector('img')?.src || '';
-          const photos = item.querySelector('img')?.src || '';
+          const link = (item.querySelector('a.product-item-photo') as HTMLAnchorElement)?.href || '';
+          const thumbnail = item.querySelector('img.product-image-photo')?.src || '';
+          const photos = item.querySelector('img.product-image-photo')?.src || '';
 
           return {
             title,

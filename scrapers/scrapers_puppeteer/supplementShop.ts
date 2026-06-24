@@ -8,7 +8,27 @@ import { ScraperUtils } from './helpers/ScraperUtils';
 puppeteer.use(StealthPlugin());
 
 const scrapedTitles = new Set<string>();
-const baseUrls = ['https://www.ogistra-nutrition-shop.com/2-katalog'];
+const baseUrls = [
+  'https://supplementshop.rs/kategorija-proizvoda/aminokiseline/',
+  'https://supplementshop.rs/kategorija-proizvoda/antioksidansi/',
+  'https://supplementshop.rs/kategorija-proizvoda/elektroliti/',
+  'https://supplementshop.rs/kategorija-proizvoda/sejkeri-flasice-termosi/',
+  'https://supplementshop.rs/kategorija-proizvoda/kreatin/',
+  'https://supplementshop.rs/kategorija-proizvoda/post-workout/',
+  'https://supplementshop.rs/kategorija-proizvoda/pre-workout-i-no-reaktori/',
+  'https://supplementshop.rs/kategorija-proizvoda/proteini/',
+  'https://supplementshop.rs/kategorija-proizvoda/proteinske-i-energetske-cokoladice/',
+  'https://supplementshop.rs/kategorija-proizvoda/imunitet-vitamini-i-minerali/',
+  'https://supplementshop.rs/kategorija-proizvoda/suplementi-za-kosti-i-zglobove/',
+  'https://supplementshop.rs/kategorija-proizvoda/suplementi-za-misicnu-masu/',
+  'https://supplementshop.rs/kategorija-proizvoda/suplementi-za-muskarce/',
+  'https://supplementshop.rs/kategorija-proizvoda/suplementi-za-regulaciju-telesne-tezine/',
+  'https://supplementshop.rs/kategorija-proizvoda/suplementi-za-snagu-i-izdrzljivost/',
+  'https://supplementshop.rs/kategorija-proizvoda/suplementi-za-vegane/',
+  'https://supplementshop.rs/kategorija-proizvoda/suplementi-za-vegetarijance/',
+  'https://supplementshop.rs/kategorija-proizvoda/suplementi-za-zene/',
+  'https://supplementshop.rs/kategorija-proizvoda/ugljeni-hidrati/',
+];
 
 // Function to scrape a single page for products
 async function scrapePage(
@@ -18,18 +38,9 @@ async function scrapePage(
 ): Promise<Product[]> {
   try {
     await page.goto(url, {
-      waitUntil: 'domcontentloaded',
-      timeout: 30000,
+      waitUntil: 'networkidle0',
+      timeout: 60000,
     });
-
-    // Wait for products to be visible
-    await page.waitForSelector('.item-product', {
-      visible: true,
-      timeout: 20000,
-    });
-
-    // Add a small delay to ensure dynamic content loads
-    await ScraperUtils.delay(2000);
 
     // Check for CAPTCHA
     if (await page.$('.captcha-container')) {
@@ -40,28 +51,41 @@ async function scrapePage(
 
     // Check if product wrappers exist
     try {
-      await page.waitForSelector('.item-product', { timeout: 10000 });
+      await page.waitForSelector('.product-wrapper', { timeout: 10000 });
     } catch (error) {
       console.log('No products found on page');
       return [];
     }
 
     const products = await page.$$eval(
-      '.item-product',
+      '.product-wrapper',
       (elements, categoryArg) => {
         return elements.map((element) => {
           const titleElement = element.querySelector('h3');
           const title = titleElement?.textContent?.trim() || '';
 
-          const price =
-            element.querySelector('.price')?.textContent?.trim() || '';
+          let price = '';
+          const priceElement = element.querySelector('.price');
+          const newPriceElement = priceElement?.querySelector(
+            'ins .woocommerce-Price-amount',
+          );
+
+          if (newPriceElement) {
+            price = newPriceElement.textContent?.trim() || '';
+          } else {
+            price =
+              priceElement
+                ?.querySelector('.woocommerce-Price-amount')
+                ?.textContent?.trim() || '';
+          }
+
           const linkElement = element.querySelector(
-            '.img_block > a',
+            '.product-image-link',
           ) as HTMLAnchorElement;
           const link = linkElement?.href || '';
 
           const imgElement = element.querySelector(
-            '.img_block > a > img',
+            '.product-image-link img',
           ) as HTMLImageElement;
           const img = imgElement?.src || '';
 
@@ -103,10 +127,10 @@ const browser = await puppeteer.launch({
     for (const baseUrl of baseUrls) {
       let pageNumber = 1;
       while (true) {
-        const pageUrl = `${baseUrl}?page=${pageNumber}`;
+        const pageUrl = `${baseUrl}page/${pageNumber}/?per_page=24`;
         console.log(`Scraping page: ${pageUrl}`);
 
-        const products = await scrapePage(page, pageUrl, 'suplementi');
+        const products = await scrapePage(page, pageUrl, 'pharmacy');
         if (products.length === 0) {
           console.log(`No products found on page ${pageNumber}, stopping...`);
           break;
@@ -134,7 +158,7 @@ async function main() {
     
 
   if (allProducts.length > 0) {
-    await insertData(allProducts, 'Ogistra');
+    await insertData(allProducts, 'Supplement Shop');
   } else {
     console.log('No products found.');
   }

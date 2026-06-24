@@ -4,16 +4,27 @@ import { insertData, Product , initializeDatabase, closeDatabase } from './helpe
 import { Page } from 'puppeteer';
 import { ScraperUtils } from './helpers/ScraperUtils';
 
-// Configure stealth plugin
 puppeteer.use(StealthPlugin());
 
 const scrapedTitles = new Set<string>();
-const baseUrls = ['https://www.eapoteka.rs/sr/svi-proizvodi/'];
+const baseUrls = [
+  'https://apotekaproffarm.com/product-category/kozmetika/page/',
+  'https://apotekaproffarm.com/product-category/dekorativa/page/',
+  'https://apotekaproffarm.com/product-category/higijena/page/',
+  'https://apotekaproffarm.com/product-category/dijetetika/page/',
+  'https://apotekaproffarm.com/product-category/bebi-program/page/',
+  'https://apotekaproffarm.com/product-category/medicinska-kozmetika/page/',
+  'https://apotekaproffarm.com/product-category/lokalna-primena/page/',
+  'https://apotekaproffarm.com/product-category/medicinska-sredstva/page/',
+  'https://apotekaproffarm.com/product-category/ostalo/page/',
+];
 
-async function scrapePage(page: Page, url: string): Promise<Product[]> {
+async function scrapePage(
+  page: Page,
+  url: string,
+  category: string,
+): Promise<Product[]> {
   const allProducts: Product[] = [];
-  // Category is always "svi-proizvodi" for this scraper (single base URL)
-  const category = 'svi-proizvodi';
 
   try {
     await Promise.all([
@@ -21,52 +32,53 @@ async function scrapePage(page: Page, url: string): Promise<Product[]> {
       page.waitForNavigation({ waitUntil: 'networkidle2' }).catch(() => {}),
     ]);
 
+    // Check for empty message first
+    const emptyMessage = await page.$('.message.info.empty');
+    if (emptyMessage) {
+      console.log(`No more products available on ${url}`);
+      return [];
+    }
+
     await page
-      .waitForSelector('.product-preview-item', {
+      .waitForSelector('.product-block', {
         timeout: 5000,
       })
       .catch(() => console.log('No products found on page'));
 
     await new Promise((resolve) => setTimeout(resolve, 1000));
 
-    const products = await page.$$eval('.product-preview-item', (elements) => {
+    const products = await page.$$eval('.product-block', (elements) => {
       return elements
         .map((element) => {
           const title = element.querySelector('h3')?.textContent?.trim() || '';
-          const offStockElement = element.querySelector('.aaa');
+          const offStockElement = element.querySelector(
+            '.prod-price-on-request',
+          );
 
           if (offStockElement) {
+            console.log(`Out of stock: ${title}`);
             return null;
           }
 
-          // Price structure: <span class="price">2.399<span class="price_decimal">00</span> <span class="price_currency">RSD</span></span>
-          // We need only the integer part from .price, ignoring child .price_decimal span.
-          const priceEl = element.querySelector('.price');
-          let price = '';
-          if (priceEl) {
-            // Get only the direct text node (before the decimal span), or use data attribute
-            const amountEl = priceEl.cloneNode(true) as HTMLElement;
-            // Remove child spans to get just the main price digits
-            amountEl.querySelectorAll('span').forEach(s => s.remove());
-            const rawPrice = amountEl.textContent?.trim() || '';
-            // rawPrice is like "2.399" (Serbian thousands separator) -> remove dots
-            price = rawPrice.replace(/\./g, '').replace(/[^\d]/g, '');
+          const priceElement = element.querySelector('.price');
+          let price =
+            priceElement
+              ?.querySelector('ins .woocommerce-Price-amount')
+              ?.textContent?.trim() || '';
+          if (!price) {
+            price =
+              priceElement
+                ?.querySelector('.woocommerce-Price-amount')
+                ?.textContent?.trim() || '';
           }
-          // Markup is now `a.link-name > h3`, so the link is the .link-name anchor
-          // (the old `h3 > a` matched nothing → every product was dropped).
-          const link =
-            element.querySelector('a.link-name')?.getAttribute('href') ||
-            element.querySelector('a[href]')?.getAttribute('href') ||
-            '';
-          const imageElement = element.querySelector('.image-wrapper img');
-          let img =
-            imageElement?.getAttribute('data-src') ||
-            imageElement?.getAttribute('src') ||
-            '';
 
-          if (img.startsWith('data:image')) {
-            img = imageElement?.getAttribute('data-original') || img;
-          }
+          const link =
+            element.querySelector('h3 > a')?.getAttribute('href') || '';
+          const imgElement = element.querySelector('.product-image > img');
+          let img =
+            imgElement?.getAttribute('data-src') ||
+            imgElement?.getAttribute('src') ||
+            '';
 
           return { title, price, link, img };
         })
@@ -107,12 +119,13 @@ const browser = await puppeteer.launch({
     let allScrapedProducts: Product[] = [];
 
     for (const baseUrl of baseUrls) {
-      let pageNumber = 1;
-      let consecutiveFailures = 0;
-      const maxConsecutiveFailures = 2;
+      const category =
+        baseUrl.split('?')[0].split('/').filter(Boolean).slice(-2, -1)[0] || '';
 
-      while (consecutiveFailures < maxConsecutiveFailures) {
-        const pageUrl = `${baseUrl}${pageNumber}?limit=48`;
+      let pageNum = 1;
+
+      while (true) {
+        const pageUrl = `${baseUrl}${pageNum}`;
         console.log(`Scraping page: ${pageUrl}`);
 
         let retryCount = 0;
@@ -120,9 +133,8 @@ const browser = await puppeteer.launch({
         let products: Product[] = [];
 
         while (retryCount < maxRetries) {
-          console.log(`Attempt ${retryCount + 1}`);
           try {
-            products = await scrapePage(page, pageUrl);
+            products = await scrapePage(page, pageUrl, category);
             if (products.length > 0) break;
           } catch (error) {
             console.error(`Error on attempt ${retryCount + 1}:`, error);
@@ -132,32 +144,25 @@ const browser = await puppeteer.launch({
         }
 
         if (products.length === 0) {
-          consecutiveFailures++;
           console.log(
-            `No products found on page ${pageNumber} (${consecutiveFailures}/${maxConsecutiveFailures} consecutive failures)`,
+            `No products found on page ${pageNum} of ${baseUrl}, stopping...`,
           );
-
-          if (consecutiveFailures >= maxConsecutiveFailures) {
-            console.log(
-              `Stopping after ${maxConsecutiveFailures} consecutive empty pages`,
-            );
-            break;
-          }
-        } else {
-          consecutiveFailures = 0;
-          allScrapedProducts = [...allScrapedProducts, ...products];
-          // Pagination continues until a page returns no products
-          // (consecutiveFailures). The old `.fa.fa-angle-right` next-page check
-          // matched nothing in the live markup, so it stopped after page 1 —
-          // capturing only ~48 of ~9,800 products.
+          break;
         }
 
-        pageNumber++;
-        if (pageNumber > 400) break; // safety cap
+        allScrapedProducts = [...allScrapedProducts, ...products];
+        pageNum++;
+
+        // Add small delay between pages
         await new Promise((resolve) => setTimeout(resolve, 2000));
       }
+
+      console.log(`Finished scraping ${baseUrl}`);
     }
 
+    console.log(
+      `Scraping completed. Total products found: ${allScrapedProducts.length}`,
+    );
     return allScrapedProducts;
   } finally {
     await ScraperUtils.cleanup();
@@ -165,7 +170,6 @@ const browser = await puppeteer.launch({
   }
 }
 
-// Execute the scraper
 async function main() {
   try {
     // Initialize database connection
@@ -175,7 +179,7 @@ async function main() {
     
 
   if (allProducts.length > 0) {
-    await insertData(allProducts, 'eApoteka');
+    await insertData(allProducts, 'Prof Farm');
     console.log(`Successfully stored ${allProducts.length} products`);
   } else {
     console.log('No products found.');

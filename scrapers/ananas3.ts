@@ -2,7 +2,7 @@ import { runAnanasScraper } from './helpers/ananasHelper';
 
 // Ananas Scraper Part 3 - Categories 61-90 (Hair, Shaving, Depilation, Intimate)
 const categoryUrls = [
-  'https://ananas.rs/kategorije/lepota-i-nega/sminka/neseseri-i-kozmeticki-koferi/neseseri',
+  'https://ananas.rs/kategorije/lepota-i-nega/sminka/cetkice-za-sminkanje-i-dodaci/neseseri',
   'https://ananas.rs/kategorije/lepota-i-nega/nega-kose/samponi-za-kosu',
   'https://ananas.rs/kategorije/lepota-i-nega/nega-kose/regeneratori-za-kosu',
   'https://ananas.rs/kategorije/lepota-i-nega/nega-kose/maske-za-kosu',
@@ -13,7 +13,6 @@ const categoryUrls = [
   'https://ananas.rs/kategorije/lepota-i-nega/nega-kose/preparati-za-kosu',
   'https://ananas.rs/kategorije/lepota-i-nega/brijanje-i-depilacija/depilacija/vosak-za-depilaciju',
   'https://ananas.rs/kategorije/lepota-i-nega/brijanje-i-depilacija/depilacija/topilice-za-vosak',
-  'https://ananas.rs/kategorije/lepota-i-nega/brijanje-i-depilacija/depilacija/prasak-za-depilaciju',
   'https://ananas.rs/kategorije/lepota-i-nega/brijanje-i-depilacija/depilacija/krema-za-depilaciju',
   'https://ananas.rs/kategorije/lepota-i-nega/brijanje-i-depilacija/depilacija/nega-posle-depilacije',
   'https://ananas.rs/kategorije/lepota-i-nega/brijanje-i-depilacija/depilacija/trake-za-depilaciju',

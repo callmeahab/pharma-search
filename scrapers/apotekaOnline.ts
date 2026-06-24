@@ -9,10 +9,6 @@ puppeteer.use(StealthPlugin());
 
 const scrapedTitles = new Set<string>();
 const baseUrls = [
-  'https://www.apoteka-online.rs/catalog/mame-i-bebe-novogodisnja-ponuda-125',
-  'https://www.apoteka-online.rs/catalog/zdravlje-novogodisnja-ponuda-124',
-  'https://www.apoteka-online.rs/catalog/nega-lica-tela-i-kose-novogodisnja-ponuda-123',
-  'https://www.apoteka-online.rs/catalog/promo-paketi-novogodisnja-ponuda-126',
   'https://www.apoteka-online.rs/catalog/dermo-kozmetika-33',
   'https://www.apoteka-online.rs/catalog/nega-lica-69',
   'https://www.apoteka-online.rs/catalog/ublazite-znake-starenja-30',

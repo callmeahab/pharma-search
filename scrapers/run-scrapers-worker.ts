@@ -20,8 +20,8 @@ const allScrapers = [
   'apotekaValerijana.ts',
   'apotekaZivanovic.ts',
   'apothecary.ts',
-  // 'atpSport.ts',  // RETIRED 2026-06-22: atpsport.rs has no DNS (no A/NS records) — domain dead
-  // 'azgard.ts',    // RETIRED 2026-06-22: azgard.rs has no DNS (no A/NS records) — domain dead
+  'atpSport.ts',
+  'azgard.ts',
   'bazzar.ts',
   'benu.ts',
   'biofarm.ts',
@@ -35,7 +35,7 @@ const allScrapers = [
   'esensa.ts',
   'exYuFitness.ts',
   // 'explode.ts',    // RETIRED 2026-06-22: explode.rs decommissioned (placeholder page)
-  // 'farmasi.ts',  // RETIRED 2026-06-24: file fully commented out; klub.farmasi.rs shop server decommissioned (port 443 filtered) and public farmasi.rs is a JS-only SPA. No viable source.
+  'farmasi.ts',
   'filly.ts',
   'fitLab.ts',
   'fitnessShop.ts',
@@ -94,7 +94,7 @@ const CONCURRENCY = parsePositiveInt(process.env.SCRAPER_CONCURRENCY, 6);
 const MAX_RETRIES = parsePositiveInt(process.env.SCRAPER_RETRIES, 1);
 const SCRAPER_TIMEOUT_MS = parsePositiveInt(
   process.env.SCRAPER_TIMEOUT_MS,
-  15 * 60 * 1000,
+  60 * 60 * 1000,
 );
 const RUN_DB_CLEANUP = process.env.SCRAPER_RUN_DB_CLEANUP === '1';
 const RUN_DEDUPE = process.env.SCRAPER_RUN_DEDUPE !== '0';
@@ -203,6 +203,7 @@ function extractProductCount(output: string) {
     /Successfully processed (\d+) products/i,
     /Successfully wrote (\d+) products/i,
     /Successfully stored (\d+) products/i,
+    /Successfully inserted (\d+) products/i,
     /Total products for .*: (\d+)/i,
   ];
 
