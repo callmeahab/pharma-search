@@ -8,7 +8,7 @@ import { ScraperUtils } from './helpers/ScraperUtils';
 puppeteer.use(StealthPlugin());
 
 const scrapedTitles = new Set<string>();
-const baseUrls = ['https://www.ogistra-nutrition-shop.com/2-katalog'];
+const baseUrls = ['https://amgsport.net/shop/?per_page=-1'];
 
 // Function to scrape a single page for products
 async function scrapePage(
@@ -22,14 +22,29 @@ async function scrapePage(
       timeout: 30000,
     });
 
-    // Wait for products to be visible
-    await page.waitForSelector('.item-product', {
+    // Wait for initial products to be visible
+    await page.waitForSelector('.product-wrapper', {
       visible: true,
       timeout: 20000,
     });
 
-    // Add a small delay to ensure dynamic content loads
-    await ScraperUtils.delay(2000);
+    // Scroll to the bottom of the page in increments to load all images
+    let previousHeight = 0;
+    while (true) {
+      const currentHeight = await page.evaluate(
+        () => document.body.scrollHeight,
+      );
+      if (currentHeight === previousHeight) {
+        break;
+      }
+      await page.evaluate('window.scrollTo(0, document.body.scrollHeight)');
+      await ScraperUtils.delay(500);
+      previousHeight = currentHeight;
+    }
+
+    // Scroll back to top
+    await page.evaluate('window.scrollTo(0, 0)');
+    await ScraperUtils.delay(1000);
 
     // Check for CAPTCHA
     if (await page.$('.captcha-container')) {
@@ -40,28 +55,41 @@ async function scrapePage(
 
     // Check if product wrappers exist
     try {
-      await page.waitForSelector('.item-product', { timeout: 10000 });
+      await page.waitForSelector('.product-wrapper', { timeout: 10000 });
     } catch (error) {
       console.log('No products found on page');
       return [];
     }
 
     const products = await page.$$eval(
-      '.item-product',
+      '.product-wrapper',
       (elements, categoryArg) => {
         return elements.map((element) => {
           const titleElement = element.querySelector('h3');
           const title = titleElement?.textContent?.trim() || '';
 
-          const price =
-            element.querySelector('.price')?.textContent?.trim() || '';
+          let price = '';
+          const priceElement = element.querySelector('.price');
+          const newPriceElement = priceElement?.querySelector(
+            'ins .woocommerce-Price-amount',
+          );
+
+          if (newPriceElement) {
+            price = newPriceElement.textContent?.trim() || '';
+          } else {
+            price =
+              priceElement
+                ?.querySelector('.woocommerce-Price-amount')
+                ?.textContent?.trim() || '';
+          }
+
           const linkElement = element.querySelector(
-            '.img_block > a',
+            '.product-image-link',
           ) as HTMLAnchorElement;
           const link = linkElement?.href || '';
 
           const imgElement = element.querySelector(
-            '.img_block > a > img',
+            '.product-image-link > img',
           ) as HTMLImageElement;
           const img = imgElement?.src || '';
 
@@ -87,7 +115,7 @@ async function scrapePage(
   }
 }
 
-// Main scraping function with pagination
+// Main scraping function without pagination
 async function scrapeMultipleBaseUrls(): Promise<Product[]> {
 const browser = await puppeteer.launch({
     headless: ScraperUtils.IS_HEADLESS,
@@ -101,20 +129,11 @@ const browser = await puppeteer.launch({
     let allScrapedProducts: Product[] = [];
 
     for (const baseUrl of baseUrls) {
-      let pageNumber = 1;
-      while (true) {
-        const pageUrl = `${baseUrl}?page=${pageNumber}`;
-        console.log(`Scraping page: ${pageUrl}`);
+      const category = 'suplementi';
+      console.log(`Scraping: ${baseUrl}`);
 
-        const products = await scrapePage(page, pageUrl, 'suplementi');
-        if (products.length === 0) {
-          console.log(`No products found on page ${pageNumber}, stopping...`);
-          break;
-        }
-
-        allScrapedProducts = [...allScrapedProducts, ...products];
-        pageNumber++;
-      }
+      const products = await scrapePage(page, baseUrl, category);
+      allScrapedProducts = [...allScrapedProducts, ...products];
     }
 
     return allScrapedProducts;
@@ -134,7 +153,7 @@ async function main() {
     
 
   if (allProducts.length > 0) {
-    await insertData(allProducts, 'Ogistra');
+    await insertData(allProducts, 'AMG Sport');
   } else {
     console.log('No products found.');
   }
