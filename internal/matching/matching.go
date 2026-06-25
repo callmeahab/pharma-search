@@ -405,7 +405,18 @@ func BuildGroupKey(in GroupKeyInput) GroupKey {
 	// stay separate. Cosmetics are topical and fall through to the brand-sku path
 	// below (brand kept separate from a descriptive residual).
 	if !topical {
-		if identity := identityCore(core); isDistinctiveCore(identity) {
+		identity := identityCore(core)
+		// A single-token core below the generic-word length threshold is STILL a real
+		// identity when it equals the product's own brand AND the product has a pharma
+		// form (kapsule / tablete / sprej / kapi / sirup) — a short brand like "Ferin" /
+		// "Liv" / "Autan" is then a single-product line, so every vendor's "Ferin 30
+		// kapsula" groups instead of dropping to a per-offer singleton. The form gate is
+		// what keeps this safe: multi-product COSMETIC / BABY / DEVICE brands (Aura makeup,
+		// Nuk bottles, Hipp baby food, Elfi utensils) whose distinguishing token is stripped
+		// as noise carry NO pharma form, so they stay separate instead of over-merging into
+		// one bare-brand bucket.
+		bareBrandLine := identity != "" && identity == NormalizeText(in.Brand) && NormalizeForm(in.Form) != ""
+		if isDistinctiveCore(identity) || bareBrandLine {
 			parts := append([]string{"core", identity}, suffix()...)
 			// The form/size are part of the KEY (so a syrup, a spray and a lozenge of the
 			// same line are distinct groups) — surface them in the DISPLAY too, otherwise
