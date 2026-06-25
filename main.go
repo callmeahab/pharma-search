@@ -12,7 +12,6 @@ import (
 	"os"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"connectrpc.com/connect"
@@ -31,16 +30,8 @@ type server struct {
 	db              *sql.DB
 	featuredCache   []FeaturedGroup
 	featuredCacheAt time.Time
-	// Search results cache for scroll-based pagination
-	searchCache   map[string]*cachedSearchResult
-	searchCacheMu sync.RWMutex
-}
-
-type cachedSearchResult struct {
-	groups    []map[string]interface{}
-	facets    map[string]*pb.FacetValues
-	totalHits int
-	cachedAt  time.Time
+	// Bounded LRU of grouped search results (shared by the unary + streaming handlers).
+	searchCache *searchResultCache
 }
 
 func connectDB() (*sql.DB, error) {
@@ -66,8 +57,13 @@ const productSelectCols = `
 	p."quantityValue", p."priceScrapedAt"`
 
 // fuzzyFallbackMin: only run the (slower) fuzzy trigram pass when the precise,
-// index-served path returns fewer than this many hits (i.e. a typo'd/alias query).
-const fuzzyFallbackMin = 8
+// index-served path returns fewer than this many hits — i.e. a query that found almost
+// nothing exact (a typo / unknown spelling). Kept low: when the precise pass already
+// found a coherent set, fuzzy expansion only pollutes it with weak trigram neighbours
+// that share a prefix but are different products (searching "fervex" must not dredge up
+// Ferin / Ferrolin / Fervance / Salvit Fervit, whose similarity ~0.3 is barely below a
+// real typo's ~0.44, so a similarity threshold can't separate them — the count gate can).
+const fuzzyFallbackMin = 3
 
 func scanProductRows(rows *sql.Rows) ([]map[string]interface{}, error) {
 	defer rows.Close()
@@ -1096,26 +1092,21 @@ func (s *server) SearchGroups(ctx context.Context, req *connect.Request[pb.Searc
 		groupLimit = 20
 	}
 
-	// Filters double as the BROWSE selector when q is empty (home-page navigation);
-	// when q is non-empty they're applied group-level below.
-	hits, err := searchProductsDB(s.db, req.Msg.GetQ(), 5000, req.Msg.GetBrandNames(), req.Msg.GetCategories())
+	// Shared cached path: filters double as the BROWSE selector when q is empty
+	// (home-page navigation) and are applied group-level inside on a cache miss.
+	cached, err := s.cachedGroupedSearch(req.Msg.GetQ(), req.Msg.GetBrandNames(), req.Msg.GetCategories())
 	if err != nil {
 		return nil, err
 	}
 
-	allGroups := convertHitsToGroups(hits, req.Msg.GetQ(), s.db)
-	// Filter at the GROUP level (keep all members of matching groups) so price
-	// ranges / vendor counts stay accurate. No-op for browse (already SQL-filtered).
-	allGroups = filterGroupsByBrandCategory(allGroups, req.Msg.GetBrandNames(), req.Msg.GetCategories())
-
-	paginatedGroups := allGroups
-	if len(allGroups) > groupLimit {
-		paginatedGroups = allGroups[:groupLimit]
+	paginatedGroups := cached.groups
+	if len(paginatedGroups) > groupLimit {
+		paginatedGroups = paginatedGroups[:groupLimit]
 	}
 
 	data := map[string]interface{}{
 		"groups":           paginatedGroups,
-		"total":            len(allGroups),
+		"total":            len(cached.groups),
 		"offset":           0,
 		"limit":            groupLimit,
 		"search_type_used": "postgresql",
@@ -1138,39 +1129,10 @@ func (s *server) SearchGroupsStream(ctx context.Context, req *connect.Request[pb
 	brandFilter := req.Msg.GetBrandNames()
 	categoryFilter := req.Msg.GetCategories()
 
-	// Check cache first (key includes the active filters)
-	baseKey := matching.NormalizeText(query)
-	if baseKey == "" {
-		baseKey = strings.ToLower(query)
-	}
-	cacheKey := filterCacheKey(baseKey, brandFilter, categoryFilter)
-	cached := s.getSearchCache(cacheKey)
-
-	if cached == nil {
-		// Cache miss - fetch all products from PostgreSQL and group them
-		// Filters double as the BROWSE selector when query is empty (home-page
-		// navigation); when query is non-empty they're applied group-level below.
-		hits, err := searchProductsDB(s.db, query, 5000, brandFilter, categoryFilter)
-		if err != nil {
-			return err
-		}
-
-		allGroups := convertHitsToGroups(hits, query, s.db)
-		// Facets from the FULL grouped set (vendor-deduped — same basis as the totals)
-		// so every brand/category option stays visible during multi-select refinement
-		// and each option's count matches what selecting it actually yields.
-		facets := buildFacetsFromHits(flattenGroupProducts(allGroups))
-		// Filter at the GROUP level: hide non-matching groups but keep all members of
-		// matching ones, so price range / vendor count / display name stay accurate.
-		displayGroups := filterGroupsByBrandCategory(allGroups, brandFilter, categoryFilter)
-
-		cached = &cachedSearchResult{
-			groups:    displayGroups,
-			facets:    facets,
-			totalHits: countVisibleProducts(displayGroups),
-			cachedAt:  time.Now(),
-		}
-		s.setSearchCache(cacheKey, cached)
+	// Shared cached path (skips the 5000-row fetch + grouping on a hit).
+	cached, err := s.cachedGroupedSearch(query, brandFilter, categoryFilter)
+	if err != nil {
+		return err
 	}
 
 	// Return the requested slice of groups
@@ -1207,37 +1169,60 @@ func (s *server) SearchGroupsStream(ctx context.Context, req *connect.Request[pb
 	return stream.Send(chunk)
 }
 
-// Cache helper methods
-func (s *server) getSearchCache(key string) *cachedSearchResult {
-	s.searchCacheMu.RLock()
-	defer s.searchCacheMu.RUnlock()
-	cached, ok := s.searchCache[key]
-	if !ok {
-		return nil
-	}
-	// Cache expires after 5 minutes
-	if time.Since(cached.cachedAt) > 5*time.Minute {
-		return nil
-	}
-	return cached
-}
+// Cache helper methods (thin wrappers over the bounded LRU).
+func (s *server) getSearchCache(key string) *cachedSearchResult { return s.searchCache.get(key) }
 
 func (s *server) setSearchCache(key string, result *cachedSearchResult) {
-	s.searchCacheMu.Lock()
-	defer s.searchCacheMu.Unlock()
-	s.searchCache[key] = result
+	s.searchCache.put(key, result)
+}
+
+// cachedGroupedSearch is the single grouped-search path shared by the unary and
+// streaming handlers: on a cache hit it returns the prebuilt, filtered, faceted result
+// (skipping the 5000-row fetch + grouping + folding passes entirely); on a miss it
+// builds and caches it. The cache key is (normalized query + sorted brand/category
+// filters), independent of limit/offset, so pagination reuses one entry.
+func (s *server) cachedGroupedSearch(query string, brands, categories []string) (*cachedSearchResult, error) {
+	base := matching.NormalizeText(query)
+	if base == "" {
+		base = strings.ToLower(query)
+	}
+	key := filterCacheKey(base, brands, categories)
+	if c := s.getSearchCache(key); c != nil {
+		return c, nil
+	}
+	hits, err := searchProductsDB(s.db, query, 5000, brands, categories)
+	if err != nil {
+		return nil, err
+	}
+	allGroups := convertHitsToGroups(hits, query, s.db)
+	// Facets from the FULL grouped set (vendor-deduped) so every option stays visible
+	// during multi-select refinement and its count matches what selecting it yields.
+	facets := buildFacetsFromHits(flattenGroupProducts(allGroups))
+	// Group-level filter: hide non-matching groups but keep all members of matching ones
+	// so price range / vendor count / display name stay accurate.
+	displayGroups := filterGroupsByBrandCategory(allGroups, brands, categories)
+	visible := countVisibleProducts(displayGroups)
+	res := &cachedSearchResult{
+		groups:    displayGroups,
+		facets:    facets,
+		totalHits: visible,
+		products:  visible, // memory unit for the LRU budget
+		cachedAt:  time.Now(),
+	}
+	s.setSearchCache(key, res)
+	return res, nil
 }
 
 func (s *server) cleanupSearchCache() {
 	ticker := time.NewTicker(1 * time.Minute)
 	for range ticker.C {
-		s.searchCacheMu.Lock()
-		for key, cached := range s.searchCache {
-			if time.Since(cached.cachedAt) > 5*time.Minute {
-				delete(s.searchCache, key)
-			}
+		s.searchCache.sweepExpired()
+		st := s.searchCache.stats()
+		total := st.hits + st.misses
+		if total > 0 {
+			log.Printf("searchcache: %d entries, %d products held, %.0f%% hit rate (%d hits / %d misses)",
+				st.entries, st.products, 100*float64(st.hits)/float64(total), st.hits, st.misses)
 		}
-		s.searchCacheMu.Unlock()
 	}
 }
 
@@ -1811,10 +1796,16 @@ func runConnectServer() {
 		defer db.Close()
 	}
 
-	// Create the Connect handler
+	// Create the Connect handler. The search cache is bounded by total member-products
+	// held (default 50k ≈ ~75MB worst case) so a burst of distinct queries can't OOM the
+	// box, with a 5-minute freshness TTL. Both tunable via env; SEARCH_CACHE_TTL=0 disables.
+	cacheTTL := 5 * time.Minute
+	if v := getEnvDuration("SEARCH_CACHE_TTL"); v != 0 || os.Getenv("SEARCH_CACHE_TTL") != "" {
+		cacheTTL = v
+	}
 	srv := &server{
 		db:          db,
-		searchCache: make(map[string]*cachedSearchResult),
+		searchCache: newSearchResultCache(getEnvInt("SEARCH_CACHE_MAX_PRODUCTS", 50000), cacheTTL),
 	}
 
 	// Prefetch featured products on startup

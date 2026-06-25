@@ -266,6 +266,23 @@ type GroupKey struct {
 	HasMeasure  bool   // a dosage or g/kg weight is present
 }
 
+// appendDisplaySuffix appends the human-readable distinguishers (strength, then size,
+// then form) that are part of a brand-core group key, so two groups of the same line
+// that differ only by those don't render as identical cards — e.g. "Fervex Phyto" syrup
+// vs spray, or a protein line at 910 g vs 2.27 kg. Each piece is only added when present.
+func appendDisplaySuffix(base string, in GroupKeyInput) string {
+	if _, sDisp := canonicalStrength(in.DosageValue, in.DosageUnit, nil); sDisp != "" {
+		base += " " + sDisp
+	}
+	if in.VolumeValue > 0 && in.VolumeUnit != "" {
+		base += " " + formatDisplayMeasure(in.VolumeValue, NormalizeUnit(in.VolumeUnit))
+	}
+	if f := NormalizeForm(in.Form); f != "" {
+		base += " " + titleCaseWords(f)
+	}
+	return base
+}
+
 // BuildGroupKey implements the grouping policy:
 //
 //	Track A (merge across brand / pack / form): the offer has a whitelisted
@@ -309,15 +326,9 @@ func BuildGroupKey(in GroupKeyInput) GroupKey {
 	if ci := NormalizeText(in.CanonicalIdentity); ci != "" {
 		hm := in.DosageValue > 0 || NormalizeUnit(in.VolumeUnit) == "g" || NormalizeUnit(in.VolumeUnit) == "kg"
 		parts := append([]string{"core", ci}, suffix()...)
-		// Append the strength/size to the display so size-differentiated lines (e.g.
-		// a protein line at 910 g vs 2.27 kg) don't render as identical-looking cards.
-		disp := titleCaseWords(in.CanonicalIdentity)
-		if _, sDisp := canonicalStrength(in.DosageValue, in.DosageUnit, nil); sDisp != "" {
-			disp += " " + sDisp
-		}
-		if in.VolumeValue > 0 && in.VolumeUnit != "" {
-			disp += " " + formatDisplayMeasure(in.VolumeValue, NormalizeUnit(in.VolumeUnit))
-		}
+		// Append the strength/size/form to the display so distinguished lines (a protein
+		// line at 910 g vs 2.27 kg, or a syrup vs spray) don't render as identical cards.
+		disp := appendDisplaySuffix(titleCaseWords(in.CanonicalIdentity), in)
 		return GroupKey{Key: strings.Join(parts, "::"), DisplayName: disp, Method: "brand-core", Residual: ci, HasMeasure: hm}
 	}
 
@@ -396,7 +407,11 @@ func BuildGroupKey(in GroupKeyInput) GroupKey {
 	if !topical {
 		if identity := identityCore(core); isDistinctiveCore(identity) {
 			parts := append([]string{"core", identity}, suffix()...)
-			return GroupKey{Key: strings.Join(parts, "::"), DisplayName: titleCaseWords(identity), Method: "brand-core", Residual: identity, HasMeasure: hasMeasure}
+			// The form/size are part of the KEY (so a syrup, a spray and a lozenge of the
+			// same line are distinct groups) — surface them in the DISPLAY too, otherwise
+			// all three render as the identical card (e.g. three "Fervex Phyto").
+			disp := appendDisplaySuffix(titleCaseWords(identity), in)
+			return GroupKey{Key: strings.Join(parts, "::"), DisplayName: disp, Method: "brand-core", Residual: identity, HasMeasure: hasMeasure}
 		}
 	}
 

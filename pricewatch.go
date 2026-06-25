@@ -7,7 +7,10 @@ import (
 	"net/url"
 	"os"
 	"strconv"
+	"strings"
 	"time"
+
+	"github.com/callmeahab/pharma-search/internal/matching"
 )
 
 // groupSnapshot is the cheapest current offer for a product group.
@@ -17,16 +20,35 @@ type groupSnapshot struct {
 	OfferCount int
 }
 
-// loadAllProductsForGrouping loads every in-stock product with the fields the
-// grouping pipeline needs (same map shape as searchProductsDB rows).
-func loadAllProductsForGrouping(db *sql.DB) ([]map[string]interface{}, error) {
+// liteOffer is the MINIMAL per-product state the snapshot needs. The whole catalog
+// (~184k rows) is held at once, so this must stay lean: the old map[string]interface{}
+// representation spiked RSS to ~855MB and crash-looped the backend on the 2GB box.
+// Only the fields that the folding passes and the cheapest-offer reduction read are
+// kept; everything else (title, brand, dosage, …) is consumed when the key is computed
+// and then dropped. vendorID/vendorName/method are interned (≤80 vendors, ~5 methods).
+type liteOffer struct {
+	price      float64
+	vendorID   string
+	vendorName string
+	key        string
+	method     string
+	residual   string
+	hasMeasure bool
+}
+
+// computeGroupSnapshots groups the whole catalog the same way the search API does
+// (matching.BuildGroupKey + the sizeless/formless folding passes) and reduces each
+// group to its current cheapest offer. The keys it produces are identical to what the
+// frontend stored as a watch's groupKey — including canonicalIdentity, which the search
+// path uses, so canonicalIdentity-grouped products (protein/probiotik lines) match too.
+func computeGroupSnapshots(db *sql.DB) (map[string]groupSnapshot, error) {
 	rows, err := db.Query(`
-		SELECT p.id, p.title, p.price, p."vendorId", v.name,
-		       p.link, COALESCE(p.thumbnail,''), COALESCE(p."extractedBrand",''),
-		       COALESCE(p."normalizedName",''), COALESCE(p."coreProductIdentity",''),
+		SELECT p.price, p."vendorId", v.name, p.title,
+		       COALESCE(p."extractedBrand",''), COALESCE(p."coreProductIdentity",''),
+		       COALESCE(p."canonicalIdentity",''),
 		       p."dosageValue", COALESCE(p."dosageUnit",''),
 		       p."volumeValue", COALESCE(p."volumeUnit",''),
-		       COALESCE(p.form,''), p."quantityValue"
+		       COALESCE(p.form,''), p."quantityValue", p.id
 		FROM "Product" p JOIN "Vendor" v ON v.id = p."vendorId"
 		WHERE p.price > 0`)
 	if err != nil {
@@ -34,72 +56,153 @@ func loadAllProductsForGrouping(db *sql.DB) ([]map[string]interface{}, error) {
 	}
 	defer rows.Close()
 
-	var out []map[string]interface{}
+	pool := map[string]string{}
+	intern := func(s string) string {
+		if v, ok := pool[s]; ok {
+			return v
+		}
+		pool[s] = s
+		return s
+	}
+
+	offers := make([]liteOffer, 0, 200000)
 	for rows.Next() {
-		var id, title, vendorID, vendorName, link, thumbnail string
-		var brand, normalizedName, core, dosageUnit, volumeUnit, form string
 		var price, dosageValue, volumeValue sql.NullFloat64
 		var quantityValue sql.NullInt64
-		if err := rows.Scan(&id, &title, &price, &vendorID, &vendorName, &link, &thumbnail,
-			&brand, &normalizedName, &core, &dosageValue, &dosageUnit,
-			&volumeValue, &volumeUnit, &form, &quantityValue); err != nil {
+		var vendorID, vendorName, title, brand, core, canonical, dosageUnit, volumeUnit, form, id string
+		if err := rows.Scan(&price, &vendorID, &vendorName, &title, &brand, &core, &canonical,
+			&dosageValue, &dosageUnit, &volumeValue, &volumeUnit, &form, &quantityValue, &id); err != nil {
 			return nil, err
 		}
-		out = append(out, map[string]interface{}{
-			"id": id, "title": title, "price": nullF(price), "vendorId": vendorID,
-			"vendorName": vendorName, "link": link, "thumbnail": thumbnail,
-			"brand": brand, "normalizedName": normalizedName, "coreProductIdentity": core,
-			"dosageValue": dosageValue.Float64, "dosageUnit": dosageUnit,
-			"volumeValue": volumeValue.Float64, "volumeUnit": volumeUnit,
-			"form": form, "quantityValue": float64(quantityValue.Int64),
+		gk := matching.BuildGroupKey(matching.GroupKeyInput{
+			Core:              core,
+			CanonicalIdentity: canonical,
+			Brand:             brand,
+			Title:             title,
+			ProductID:         strings.ReplaceAll(id, "product_", ""),
+			DosageValue:       dosageValue.Float64,
+			DosageUnit:        dosageUnit,
+			VolumeValue:       volumeValue.Float64,
+			VolumeUnit:        volumeUnit,
+			Quantity:          float64(quantityValue.Int64),
+			Form:              form,
+		})
+		offers = append(offers, liteOffer{
+			price:      price.Float64,
+			vendorID:   intern(vendorID),
+			vendorName: intern(vendorName),
+			key:        gk.Key,
+			method:     intern(gk.Method),
+			residual:   gk.Residual,
+			hasMeasure: gk.HasMeasure,
 		})
 	}
-	return out, rows.Err()
-}
-
-func nullF(v sql.NullFloat64) float64 {
-	if v.Valid {
-		return v.Float64
-	}
-	return 0
-}
-
-// computeGroupSnapshots runs the exact same grouping pipeline the search API uses
-// (BuildGroupKey + the sizeless/formless folding passes) over the whole catalog,
-// then reduces each group to its current cheapest offer. The keys it produces are
-// identical to what the frontend stored as a watch's groupKey.
-func computeGroupSnapshots(db *sql.DB) (map[string]groupSnapshot, error) {
-	hits, err := loadAllProductsForGrouping(db)
-	if err != nil {
+	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	products := enrichProductsWithGroupKey(hits)
-	attachSizelessToLines(products)
-	attachFormlessToDominantForm(products)
 
-	snap := make(map[string]groupSnapshot, len(products)/2)
-	for _, p := range products {
-		gk := getString(p, "group_key")
-		if gk == "" {
+	foldSizelessToLines(offers)
+	foldFormlessToDominantForm(offers)
+
+	snap := make(map[string]groupSnapshot, len(offers)/2)
+	for i := range offers {
+		o := &offers[i]
+		if o.key == "" || o.price <= 0 {
 			continue
 		}
-		price := getFloat(p, "price")
-		if price <= 0 {
-			continue
-		}
-		cur, ok := snap[gk]
+		cur, ok := snap[o.key]
 		if !ok {
-			snap[gk] = groupSnapshot{MinPrice: price, Vendor: getString(p, "vendor_name"), OfferCount: 1}
+			snap[o.key] = groupSnapshot{MinPrice: o.price, Vendor: o.vendorName, OfferCount: 1}
 			continue
 		}
 		cur.OfferCount++
-		if price < cur.MinPrice {
-			cur.MinPrice = price
-			cur.Vendor = getString(p, "vendor_name")
+		if o.price < cur.MinPrice {
+			cur.MinPrice = o.price
+			cur.Vendor = o.vendorName
 		}
-		snap[gk] = cur
+		snap[o.key] = cur
 	}
 	return snap, nil
+}
+
+// foldSizelessToLines is the lean-struct twin of attachSizelessToLines (main.go): a
+// sizeless brand-sku/single offer whose 2+-token residual matches a brand-LINE residual
+// folds into that line's brand-independent prod:: key.
+func foldSizelessToLines(offers []liteOffer) {
+	lineResiduals := map[string]bool{}
+	for i := range offers {
+		if offers[i].method == "brand-line" && offers[i].residual != "" {
+			lineResiduals[offers[i].residual] = true
+		}
+	}
+	if len(lineResiduals) == 0 {
+		return
+	}
+	for i := range offers {
+		m := offers[i].method
+		if m != "brand-sku" && m != "single" {
+			continue
+		}
+		if offers[i].hasMeasure {
+			continue // has a size/strength of its own — keep it
+		}
+		r := offers[i].residual
+		if r == "" || !lineResiduals[r] || len(strings.Fields(r)) < 2 {
+			continue
+		}
+		offers[i].key = "prod::" + r
+	}
+}
+
+// foldFormlessToDominantForm is the lean-struct twin of attachFormlessToDominantForm
+// (main.go): a form-unknown ingredient group folds into the most-stocked form variant
+// of the same ingredient+strength.
+func foldFormlessToDominantForm(offers []liteOffer) {
+	const sep = "::form:"
+	baseForms := map[string]map[string]map[string]struct{}{}
+	for i := range offers {
+		if offers[i].method != "ingredient" {
+			continue
+		}
+		k := offers[i].key
+		idx := strings.Index(k, sep)
+		if idx < 0 {
+			continue // formless — counted as a target only, not a form variant
+		}
+		base := k[:idx]
+		if baseForms[base] == nil {
+			baseForms[base] = map[string]map[string]struct{}{}
+		}
+		if baseForms[base][k] == nil {
+			baseForms[base][k] = map[string]struct{}{}
+		}
+		baseForms[base][k][offers[i].vendorID] = struct{}{}
+	}
+	if len(baseForms) == 0 {
+		return
+	}
+	dominant := make(map[string]string, len(baseForms))
+	for base, forms := range baseForms {
+		bestKey, bestN := "", -1
+		for fk, vendors := range forms {
+			if n := len(vendors); n > bestN || (n == bestN && fk < bestKey) {
+				bestN, bestKey = n, fk
+			}
+		}
+		dominant[base] = bestKey
+	}
+	for i := range offers {
+		if offers[i].method != "ingredient" {
+			continue
+		}
+		k := offers[i].key
+		if strings.Contains(k, sep) {
+			continue // already has a form
+		}
+		if dk, ok := dominant[k]; ok {
+			offers[i].key = dk
+		}
+	}
 }
 
 type watchRow struct {
@@ -116,11 +219,12 @@ func (s *server) runPriceWatch() error {
 	}
 	start := time.Now()
 
-	snap, err := computeGroupSnapshots(s.db)
-	if err != nil {
-		return fmt.Errorf("snapshot: %w", err)
-	}
-
+	// Load the watches FIRST. computeGroupSnapshots groups the entire catalog
+	// (~105k groups) into memory and is expensive (seconds + a large transient
+	// allocation) — doing it before checking for watchers meant a box with ZERO
+	// watches still paid that cost on every run, and the memory spike tripped pm2's
+	// max_memory_restart, crash-looping the backend. With no watches there is nothing
+	// to price, so return before touching the catalog.
 	rows, err := s.db.Query(`
 		SELECT w.id, w."userId", u.email, COALESCE(w."displayName",''), w."groupKey",
 		       w."targetPrice", w."lastPrice"
@@ -138,6 +242,16 @@ func (s *server) runPriceWatch() error {
 		watches = append(watches, wr)
 	}
 	rows.Close()
+
+	if len(watches) == 0 {
+		log.Printf("pricewatch: 0 watches, skipped snapshot in %v", time.Since(start).Round(time.Millisecond))
+		return nil
+	}
+
+	snap, err := computeGroupSnapshots(s.db)
+	if err != nil {
+		return fmt.Errorf("snapshot: %w", err)
+	}
 
 	historyDone := map[string]bool{}
 	alerts := 0

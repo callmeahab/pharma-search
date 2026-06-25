@@ -200,7 +200,9 @@ module.exports = {
       out_file: '/var/log/pharma-search/backend/out.log',
       time: true,
       autorestart: true,
-      max_memory_restart: '256M'
+      // The price-watch snapshot transiently groups the whole catalog; 256M tripped
+      // max_memory_restart and crash-looped the backend. 768M gives headroom on the 2GB box.
+      max_memory_restart: '768M'
     }
   ]
 };
