@@ -11,6 +11,7 @@ import (
 	"net/smtp"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -32,6 +33,8 @@ type server struct {
 	featuredCacheAt time.Time
 	// Bounded LRU of grouped search results (shared by the unary + streaming handlers).
 	searchCache *searchResultCache
+	// Small TTL'd LRU of autocomplete suggestions (per-keystroke, common prefixes repeat).
+	autocompleteCache *autocompleteCache
 }
 
 func connectDB() (*sql.DB, error) {
@@ -281,75 +284,73 @@ func autocompleteDB(db *sql.DB, query string, limit int) ([]*pb.AutocompleteSugg
 	if normalizedQuery == "" {
 		normalizedQuery = strings.ToLower(rawQuery)
 	}
-
-	rawLikePattern := "%" + escapeLikePattern(rawQuery) + "%"
+	if normalizedQuery == "" {
+		return []*pb.AutocompleteSuggestion{}, nil
+	}
 	required, _ := matching.SearchConcepts(rawQuery)
-	allowFuzzy := len(required) <= 1
 
-	rows, err := db.Query(`
-		WITH q AS (
-			SELECT
-				$1::text   AS raw_like,
-				$2::text   AS norm_query,
-				$3::text[] AS required,
-				$4::bool   AS allow_fuzzy
-		)
-		SELECT * FROM (
-			SELECT DISTINCT ON (lower(p.title))
-				p.id, p.title, p.price, v.name as vendor_name,
-				GREATEST(
-					similarity(p.title, q.norm_query),
-					similarity(COALESCE(p."normalizedName", ''), q.norm_query),
-					similarity(COALESCE(p."coreProductIdentity", ''), q.norm_query),
-					word_similarity(q.norm_query, p.title)
-				) as sim
-			FROM "Product" p
-			JOIN "Vendor" v ON v.id = p."vendorId"
-			CROSS JOIN q
-			WHERE p.price > 0
-			  AND (
-				(cardinality(q.required) > 0 AND COALESCE(p."searchTokens", ARRAY[]::text[]) @> q.required)
-				OR p.title ILIKE q.raw_like
-				OR COALESCE(p."normalizedName", '') ILIKE q.raw_like
-				OR COALESCE(p."coreProductIdentity", '') ILIKE q.raw_like
-				OR (q.allow_fuzzy AND COALESCE(p."coreProductIdentity", '') % q.norm_query)
-				OR (q.allow_fuzzy AND p.title % q.norm_query)
-				-- typo tolerance: word_similarity vs the best word in the title
-				-- (catches one-char brand typos). See migration 010.
-				OR (q.allow_fuzzy AND q.norm_query <% p.title)
-				OR (q.allow_fuzzy AND q.norm_query <% COALESCE(p."normalizedName", ''))
-			  )
-			ORDER BY lower(p.title), sim DESC
-		) sub
-		ORDER BY sub.sim DESC
-		LIMIT $5
-	`, rawLikePattern, normalizedQuery, pq.Array(required), allowFuzzy, limit)
+	// Autocomplete is latency-critical (fires per keystroke). The previous query
+	// seq-scanned the catalog and computed FOUR similarity() functions plus a DISTINCT-ON
+	// sort over the entire match set (~18k rows for a 3-char prefix) → ~4s per keystroke.
+	// Instead: filter with the GIN-indexed word-similarity operator (%>) and order by the
+	// word-similarity distance (<<->), both served by idx_product_title_trgm — milliseconds.
+	// The %> threshold (pg_trgm default 0.6 is too strict for short prefixes) is lowered to
+	// 0.3 via SET LOCAL so the pooled connection's other queries keep their own threshold.
+	tx, err := db.BeginTx(context.Background(), &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec("SET LOCAL pg_trgm.word_similarity_threshold = 0.3"); err != nil {
+		return nil, err
+	}
+
+	// Over-fetch (limit*6) then de-dup distinct titles in Go, preserving the KNN relevance
+	// order (SQL DISTINCT ON would force an alphabetical sort and lose the ranking).
+	rows, err := tx.Query(`
+		SELECT p.id, p.title, p.price, v.name
+		FROM "Product" p
+		JOIN "Vendor" v ON v.id = p."vendorId"
+		WHERE p.price > 0
+		  AND (
+			(cardinality($2::text[]) > 0 AND p."searchTokens" @> $2::text[])
+			OR p.title %> $1::text
+		  )
+		ORDER BY p.title <<-> $1::text
+		LIMIT $3
+	`, normalizedQuery, pq.Array(required), limit*6)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
+	seen := make(map[string]bool, limit)
 	var suggestions []*pb.AutocompleteSuggestion
 	for rows.Next() {
 		var id, title, vendorName string
 		var price sql.NullFloat64
-		var sim float64
-
-		if err := rows.Scan(&id, &title, &price, &vendorName, &sim); err != nil {
+		if err := rows.Scan(&id, &title, &price, &vendorName); err != nil {
 			return nil, err
 		}
+		key := strings.ToLower(strings.TrimSpace(title))
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
 
 		priceVal := 0.0
 		if price.Valid {
 			priceVal = price.Float64
 		}
-
 		suggestions = append(suggestions, &pb.AutocompleteSuggestion{
 			Id:         id,
 			Title:      title,
 			Price:      priceVal,
 			VendorName: vendorName,
 		})
+		if len(suggestions) >= limit {
+			break
+		}
 	}
 
 	return suggestions, nil
@@ -1021,10 +1022,15 @@ func (s *server) Autocomplete(ctx context.Context, req *connect.Request[pb.Autoc
 	if limit <= 0 {
 		limit = 8
 	}
+	cacheKey := matching.NormalizeText(req.Msg.GetQ()) + "\x1f" + strconv.Itoa(limit)
+	if cached, ok := s.autocompleteCache.get(cacheKey); ok {
+		return connect.NewResponse(&pb.AutocompleteResponse{Suggestions: cached, Query: req.Msg.GetQ(), Limit: req.Msg.GetLimit()}), nil
+	}
 	suggestions, err := autocompleteDB(s.db, req.Msg.GetQ(), limit)
 	if err != nil {
 		return nil, err
 	}
+	s.autocompleteCache.put(cacheKey, suggestions)
 	return connect.NewResponse(&pb.AutocompleteResponse{Suggestions: suggestions, Query: req.Msg.GetQ(), Limit: req.Msg.GetLimit()}), nil
 }
 
@@ -1804,8 +1810,9 @@ func runConnectServer() {
 		cacheTTL = v
 	}
 	srv := &server{
-		db:          db,
-		searchCache: newSearchResultCache(getEnvInt("SEARCH_CACHE_MAX_PRODUCTS", 50000), cacheTTL),
+		db:                db,
+		searchCache:       newSearchResultCache(getEnvInt("SEARCH_CACHE_MAX_PRODUCTS", 50000), cacheTTL),
+		autocompleteCache: newAutocompleteCache(getEnvInt("AUTOCOMPLETE_CACHE_MAX", 2000), cacheTTL),
 	}
 
 	// Prefetch featured products on startup

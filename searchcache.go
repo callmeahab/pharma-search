@@ -146,3 +146,72 @@ func getEnvInt(key string, def int) int {
 	}
 	return def
 }
+
+// --- autocomplete cache ---
+// Autocomplete fires per keystroke and short prefixes ("vit", "mag", "pro") are both the
+// slowest (largest match set to rank) AND the most-repeated queries, so a tiny TTL'd LRU
+// keyed by the normalized query makes the common case instant. Entries are tiny (≤N
+// suggestions), so this is bounded by entry count rather than a product budget.
+type autocompleteCache struct {
+	mu    sync.Mutex
+	ll    *list.List
+	items map[string]*list.Element
+	max   int
+	ttl   time.Duration
+	hits  atomic.Uint64
+	misses atomic.Uint64
+}
+
+type acItem struct {
+	key  string
+	sugg []*pb.AutocompleteSuggestion
+	at   time.Time
+}
+
+func newAutocompleteCache(max int, ttl time.Duration) *autocompleteCache {
+	return &autocompleteCache{ll: list.New(), items: make(map[string]*list.Element), max: max, ttl: ttl}
+}
+
+func (c *autocompleteCache) get(key string) ([]*pb.AutocompleteSuggestion, bool) {
+	if c == nil || c.ttl <= 0 {
+		return nil, false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	el, ok := c.items[key]
+	if !ok {
+		c.misses.Add(1)
+		return nil, false
+	}
+	it := el.Value.(*acItem)
+	if time.Since(it.at) > c.ttl {
+		c.ll.Remove(el)
+		delete(c.items, it.key)
+		c.misses.Add(1)
+		return nil, false
+	}
+	c.ll.MoveToFront(el)
+	c.hits.Add(1)
+	return it.sugg, true
+}
+
+func (c *autocompleteCache) put(key string, sugg []*pb.AutocompleteSuggestion) {
+	if c == nil || c.ttl <= 0 {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if el, ok := c.items[key]; ok {
+		el.Value.(*acItem).sugg = sugg
+		el.Value.(*acItem).at = time.Now()
+		c.ll.MoveToFront(el)
+		return
+	}
+	el := c.ll.PushFront(&acItem{key: key, sugg: sugg, at: time.Now()})
+	c.items[key] = el
+	for c.ll.Len() > c.max {
+		back := c.ll.Back()
+		c.ll.Remove(back)
+		delete(c.items, back.Value.(*acItem).key)
+	}
+}
