@@ -142,6 +142,7 @@ const SearchBar: React.FC<SearchBarProps> = ({
         image: product.thumbnail || '/medicine-placeholder.svg',
         prices: [{
           store: product.vendor_name,
+          vendorId: product.vendor_id,
           price: product.price,
           inStock: true,
           link: product.link

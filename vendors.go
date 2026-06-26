@@ -21,7 +21,8 @@ func (s *server) handleVendorList(w http.ResponseWriter, r *http.Request) {
 		       COALESCE(v.phone,''), COALESCE(v.email,''), COALESCE(v.address,''),
 		       COALESCE(v.city,''), COALESCE(v.hours,''), COALESCE(v."mapsUrl",''),
 		       v.latitude, v.longitude,
-		       (SELECT count(*) FROM "Product" p WHERE p."vendorId" = v.id AND p.price > 0) AS product_count
+		       (SELECT count(*) FROM "Product" p WHERE p."vendorId" = v.id AND p.price > 0) AS product_count,
+		       (SELECT count(*) FROM "VendorPlace" vp WHERE vp."vendorId" = v.id) AS location_count
 		FROM "Vendor" v
 		WHERE EXISTS (
 			SELECT 1 FROM "Product" p WHERE p."vendorId" = v.id AND p.price > 0
@@ -37,16 +38,16 @@ func (s *server) handleVendorList(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var id, name, website, logo, phone, email, address, city, hours, mapsURL string
 		var lat, lng interface{}
-		var productCount int
+		var productCount, locationCount int
 		if err := rows.Scan(&id, &name, &website, &logo, &phone, &email, &address,
-			&city, &hours, &mapsURL, &lat, &lng, &productCount); err != nil {
+			&city, &hours, &mapsURL, &lat, &lng, &productCount, &locationCount); err != nil {
 			continue
 		}
 		vendors = append(vendors, map[string]interface{}{
 			"id": id, "name": name, "website": website, "logo": logo,
 			"phone": phone, "email": email, "address": address, "city": city,
 			"hours": hours, "maps_url": mapsURL, "latitude": lat, "longitude": lng,
-			"product_count": productCount,
+			"product_count": productCount, "location_count": locationCount,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"vendors": vendors})
@@ -54,4 +55,5 @@ func (s *server) handleVendorList(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) registerVendorRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/vendors", s.handleVendorList)
+	mux.HandleFunc("/api/vendor-places", s.handleVendorPlaces)
 }

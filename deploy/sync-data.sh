@@ -45,6 +45,7 @@ if [[ "$SKIP_SCHEMA" == false ]]; then
         --no-owner \
         --no-privileges \
         --table='"Vendor"' \
+        --table='"VendorPlace"' \
         --table='"Product"' \
         --table='"ProductStandardization"' \
         -f "$SCHEMA_FILE"
@@ -70,6 +71,7 @@ set -e
 # that would wipe every registered user, watchlist and price-history record.
 echo "  Dropping catalog tables (preserving accounts/watchlists)..."
 sudo -u postgres psql -d pharma_search -c '
+DROP TABLE IF EXISTS "VendorPlace" CASCADE;
 DROP TABLE IF EXISTS "ProductStandardization" CASCADE;
 DROP TABLE IF EXISTS "Product" CASCADE;
 DROP TABLE IF EXISTS "Vendor" CASCADE;
@@ -122,13 +124,14 @@ fi
 echo "[2/4] Dumping local database..."
 
 # Dump with COPY format (fast) and --disable-triggers (adds ALTER TABLE DISABLE/ENABLE TRIGGER)
-# Include Vendor to preserve IDs that match Product.vendorId
+# Include Vendor to preserve IDs that match Product.vendorId and VendorPlace.vendorId
 pg_dump "$LOCAL_DB_URL" \
     --data-only \
     --no-owner \
     --no-privileges \
     --disable-triggers \
     --table='"Vendor"' \
+    --table='"VendorPlace"' \
     --table='"Product"' \
     --table='"ProductStandardization"' \
     -f "$DUMP_FILE"
@@ -167,6 +170,8 @@ echo ""
 echo "  Table counts:"
 sudo -u postgres psql -d pharma_search -t -c "
 SELECT 'Vendor: ' || COUNT(*) FROM \"Vendor\"
+UNION ALL
+SELECT 'VendorPlace: ' || COUNT(*) FROM \"VendorPlace\"
 UNION ALL
 SELECT 'Product: ' || COUNT(*) FROM \"Product\"
 UNION ALL

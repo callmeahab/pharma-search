@@ -65,6 +65,43 @@ cd scrapers && bun run pipeline
 go run ./cmd/importcsv
 ```
 
+### Fetching Pharmacy Locations Locally
+
+Foursquare Places data is fetched from the dev machine and stored in the local
+PostgreSQL database; nothing is scheduled or run on the production server.
+
+```bash
+# Preview one vendor without writing rows
+VENDOR=Benu DRY_RUN=1 make fetch-places
+
+# Fetch places for every vendor with priced products
+make fetch-places
+
+# Useful local knobs
+MAX_VENDORS=5 make fetch-places
+CONTINUE_ON_ERROR=1 make fetch-places
+NEAR="Serbia" LIMIT=50 SLEEP=250ms make fetch-places
+```
+
+The command loads `.env`, applies migrations, then runs `go run ./cmd/fetchplaces`.
+It requires `FOURSQUARE_API_KEY` for the current Foursquare Places API.
+By default it asks Foursquare for the Pharmacy and Drugstore categories only,
+then prunes any cached places outside those categories. It also uses
+Foursquare's default response fields so it can import basic location data without
+requesting paid/premium fields. If your Foursquare account has credits enabled,
+request richer fields locally:
+
+```bash
+FIELDS=fsq_place_id,name,latitude,longitude,categories,location,tel,website,hours make fetch-places
+```
+
+To deliberately import another Foursquare category locally, override the category
+allowlist:
+
+```bash
+CATEGORY_IDS=4bf58dd8d48988d10f951735,5745c2e4498e11e7bccabdbd make fetch-places
+```
+
 ## Project Structure
 
 ```

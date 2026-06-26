@@ -22,6 +22,13 @@ export interface SearchOptions {
 
 export type { ProductGroup, SearchResult, BackendProduct as Product };
 
+function jsonApiBase(): string {
+  if (typeof window === "undefined") return "";
+  return process.env.NODE_ENV === "production"
+    ? window.location.origin
+    : "http://localhost:50051";
+}
+
 export interface AutocompleteResult {
   suggestions: {
     id: string;
@@ -173,6 +180,20 @@ export async function getPriceComparison(
   groupId: string
 ): Promise<PriceComparisonResult> {
   return grpcClient.getPriceComparison(groupId);
+}
+
+export interface PriceHistoryPoint {
+  min_price: number;
+  recorded_at: string;
+}
+
+export async function getPriceHistory(groupKey: string): Promise<PriceHistoryPoint[]> {
+  const res = await fetch(`${jsonApiBase()}/api/watch/history?groupKey=${encodeURIComponent(groupKey)}`);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(data.error || `Greška (${res.status})`);
+  }
+  return (data.points || []) as PriceHistoryPoint[];
 }
 
 export async function processProducts(

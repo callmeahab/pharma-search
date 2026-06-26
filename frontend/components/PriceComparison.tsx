@@ -4,6 +4,7 @@ import { cn, formatPrice } from "@/lib/utils";
 import { ExternalLink } from "lucide-react";
 import { trackStoreClick } from "@/utils/analytics";
 import { PriceComparisonProduct } from "@/lib/api";
+import NearestPharmacyButton from "./NearestPharmacyButton";
 
 interface PriceComparisonProps {
   prices?: Price[];
@@ -15,6 +16,7 @@ interface PriceComparisonProps {
 interface PriceDataItem {
   title: string;
   store: string;
+  vendorId?: string;
   price: number;
   inStock: boolean;
   link?: string;
@@ -35,6 +37,7 @@ export const PriceComparison: React.FC<PriceComparisonProps> = ({
     ? products.map(product => ({
       title: product.title,
       store: product.vendor.name,
+      vendorId: undefined,
       price: product.price,
       inStock: true,
       link: product.link,
@@ -52,6 +55,7 @@ export const PriceComparison: React.FC<PriceComparisonProps> = ({
   // Sort prices from lowest to highest
   const sortedPrices = [...priceData].sort((a, b) => a.price - b.price);
   const lowestPrice = sortedPrices[0]?.price || 0;
+  const cheapestPrice = sortedPrices[0];
 
   const handleStoreClick = (price: PriceDataItem) => {
     // Track store link click
@@ -68,6 +72,15 @@ export const PriceComparison: React.FC<PriceComparisonProps> = ({
       <h4 className="text-lg font-medium mb-3 dark:text-gray-200">
         Poređenje cena
       </h4>
+      {cheapestPrice && (
+        <NearestPharmacyButton
+          vendorId={cheapestPrice.vendorId}
+          vendorName={cheapestPrice.store}
+          productName={productName}
+          price={cheapestPrice.price}
+          className="mb-3"
+        />
+      )}
       <div className="space-y-2">
         {sortedPrices.map((price, index) => (
           <button

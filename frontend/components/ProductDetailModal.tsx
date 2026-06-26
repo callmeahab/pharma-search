@@ -24,6 +24,7 @@ import { Button } from "@/components/ui/button";
 import { Product } from "@/types/product";
 import { PriceComparison } from "./PriceComparison";
 import { PriceHistoryChart } from "./PriceHistoryChart";
+import NearestPharmacyButton from "./NearestPharmacyButton";
 import { Store, Percent, X, Heart, ExternalLink } from "lucide-react";
 import { useWishlist } from "@/contexts/WishlistContext";
 import { formatPrice, formatVendorCount } from "@/lib/utils";
@@ -59,7 +60,12 @@ const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
 }) => {
   const { isInWishlist, toggleWishlist } = useWishlist();
   const [imageError, setImageError] = useState(false);
+  const [activeTab, setActiveTab] = useState<"comparison" | "history">("comparison");
   const isDesktop = useMediaQuery("(min-width: 640px)");
+
+  useEffect(() => {
+    if (isOpen) setActiveTab("comparison");
+  }, [isOpen, product?.id]);
 
   if (!product) return null;
 
@@ -141,6 +147,13 @@ const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
             <ExternalLink size={16} className="mr-2" />
             Kupi
           </Button>
+          <NearestPharmacyButton
+            vendorId={product.prices[0].vendorId}
+            vendorName={product.prices[0].store}
+            productName={product.name}
+            price={product.prices[0].price}
+            className="mt-2"
+          />
         </>
       ) : (
         // Multiple products mobile layout
@@ -276,6 +289,13 @@ const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
                   <ExternalLink size={16} className="mr-2" />
                   Kupi na {singlePrice.store}
                 </Button>
+                <NearestPharmacyButton
+                  vendorId={singlePrice.vendorId}
+                  vendorName={singlePrice.store}
+                  productName={product.name}
+                  price={singlePrice.price}
+                  className="mt-2"
+                />
               </div>
             </div>
           </div>
@@ -367,7 +387,11 @@ const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
             </div>
 
             <div className="flex flex-col">
-              <DialogTabs defaultValue="comparison" className="w-full flex flex-col">
+              <DialogTabs
+                value={activeTab}
+                onValueChange={(value) => setActiveTab(value as "comparison" | "history")}
+                className="w-full flex flex-col"
+              >
                 <DialogTabList className="grid w-full grid-cols-2">
                   <DialogTabTrigger value="comparison">Trenutne cene</DialogTabTrigger>
                   <DialogTabTrigger value="history">Istorija cena</DialogTabTrigger>
@@ -383,7 +407,9 @@ const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
                 </DialogTabContent>
                 <DialogTabContent value="history">
                   <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded-xl shadow-md border border-gray-200 dark:border-gray-700">
-                    <PriceHistoryChart prices={product.prices} isInCard={false} />
+                    {activeTab === "history" && (
+                      <PriceHistoryChart groupKey={product.historyGroupKey || product.id} isInCard={false} />
+                    )}
                   </div>
                 </DialogTabContent>
               </DialogTabs>

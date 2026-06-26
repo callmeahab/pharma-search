@@ -7,6 +7,7 @@ import { AuthProvider } from "../contexts/AuthContext";
 import CookieConsent from "../components/CookieConsent";
 import { Analytics } from "../components/Analytics";
 import { Providers } from "../components/Providers";
+import "maplibre-gl/dist/maplibre-gl.css";
 import "./globals.css";
 import type { Metadata } from "next";
 

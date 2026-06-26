@@ -21,6 +21,12 @@ export default function PharmacyCard({ pharmacy }: { pharmacy: Pharmacy }) {
         )}
       </div>
 
+      {p.location_count > 0 && (
+        <p className="text-xs text-gray-500 dark:text-gray-400">
+          {p.location_count.toLocaleString("sr-RS")} lokacija iz imenika
+        </p>
+      )}
+
       {!hasContact && (
         <p className="text-sm text-gray-400 dark:text-gray-500 italic">Kontakt podaci nisu dostupni.</p>
       )}

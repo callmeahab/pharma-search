@@ -6,7 +6,7 @@ import ThemeToggle from "./ThemeToggle";
 import SearchBar from "./SearchBar";
 import { usePathname, useRouter } from "next/navigation";
 import { trackSearch } from "@/utils/analytics";
-import { User } from "lucide-react";
+import { MapPin, User } from "lucide-react";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useAuth } from "@/contexts/AuthContext";
 import Link from "next/link";
@@ -103,6 +103,15 @@ const Navbar = () => {
 
             {isMobile && (
               <div className="flex items-center">
+                <Button
+                  variant="outline"
+                  className="ml-2 border-gray-300 text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700"
+                  onClick={() => router.push("/apoteke")}
+                  aria-label="Lokacije"
+                >
+                  <MapPin className="h-4 w-4" />
+                </Button>
+
                 <ThemeToggle />
 
                 {isLoggedIn ? (
@@ -131,13 +140,25 @@ const Navbar = () => {
           </div>
 
           {!isMobile && (
-            <div className="hidden md:flex items-center mt-4 md:mt-0">
+            <div className="hidden md:flex items-center gap-3 mt-4 md:mt-0">
+              <Link
+                href="/apoteke"
+                className={`inline-flex items-center gap-2 rounded-md border px-3 py-2 text-sm font-medium transition-colors ${
+                  pathname === "/apoteke"
+                    ? "border-health-primary bg-health-light text-health-secondary dark:border-health-accent dark:bg-gray-700 dark:text-health-accent"
+                    : "border-gray-300 text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700"
+                }`}
+              >
+                <MapPin className="h-4 w-4" />
+                Lokacije
+              </Link>
+
               <ThemeToggle />
 
               {isLoggedIn ? (
                 <Button
                   variant="outline"
-                  className="ml-4 border-health-primary text-health-primary hover:bg-health-light dark:border-health-accent dark:text-health-accent dark:hover:bg-gray-700"
+                  className="border-health-primary text-health-primary hover:bg-health-light dark:border-health-accent dark:text-health-accent dark:hover:bg-gray-700"
                   onClick={() => router.push("/profil")}
                 >
                   <User className="mr-2 h-4 w-4" />
@@ -146,7 +167,7 @@ const Navbar = () => {
               ) : (
                 <Button
                   variant="outline"
-                  className="ml-4 border-health-primary text-health-primary hover:bg-health-light dark:border-health-accent dark:text-health-accent dark:hover:bg-gray-700"
+                  className="border-health-primary text-health-primary hover:bg-health-light dark:border-health-accent dark:text-health-accent dark:hover:bg-gray-700"
                   onClick={() => router.push("/prijava")}
                 >
                   Prijava

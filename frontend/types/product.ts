@@ -1,5 +1,6 @@
 export interface Price {
   store: string;
+  vendorId?: string;
   price: number;
   inStock: boolean;
   link?: string;
@@ -32,6 +33,7 @@ export interface Product {
   displayMode?: "group" | "offer";
   primaryOffer?: Price;
   comparisonContext?: ComparisonContext;
+  historyGroupKey?: string;
   priceUpdatedAt?: string; // when the displayed (lowest) price was last retrieved
 }
 
@@ -96,6 +98,7 @@ import { formatPrice, humanizeTitle, pluralizeSr } from "@/lib/utils";
 function toPrices(group: ProductGroup): Price[] {
   return group.products.map((product) => ({
     store: product.vendor_name,
+    vendorId: product.vendor_id,
     price: product.price,
     inStock: true,
     link: product.link,
@@ -180,6 +183,7 @@ export function convertBackendProductToProduct(
   const comparisonContext = buildComparisonContext(group, backendProduct);
   const primaryOffer: Price = {
     store: backendProduct.vendor_name,
+    vendorId: backendProduct.vendor_id,
     price: backendProduct.price,
     inStock: true,
     link: backendProduct.link,
@@ -198,6 +202,7 @@ export function convertBackendProductToProduct(
     displayMode: "offer",
     primaryOffer,
     comparisonContext,
+    historyGroupKey: backendProduct.group_key || group.id,
     priceUpdatedAt: backendProduct.price_updated_at,
   };
 }
@@ -223,6 +228,7 @@ export function convertProductGroupToProducts(group: ProductGroup): Product[] {
     productCount: group.product_count,
     displayMode: "group",
     comparisonContext,
+    historyGroupKey: group.id || firstProduct?.group_key,
     // cheapest offer is products[0]; show when its price was retrieved
     priceUpdatedAt: group.products[0]?.price_updated_at,
   };

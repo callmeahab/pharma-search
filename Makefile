@@ -1,4 +1,4 @@
-.PHONY: help update-mappings test-grouping update-and-test clean server migrate import-csv
+.PHONY: help update-mappings test-grouping update-and-test clean server migrate import-csv fetch-places fetch-places-dry-run
 
 # Default target
 help:
@@ -10,6 +10,8 @@ help:
 	@echo "  make server             - Start the Go backend"
 	@echo "  make migrate            - Apply PostgreSQL schema migrations via Go wrapper"
 	@echo "  make import-csv         - Import scraped CSVs into PostgreSQL via Go wrapper"
+	@echo "  make fetch-places       - Fetch Foursquare places for local vendors"
+	@echo "  make fetch-places-dry-run VENDOR=Benu - Preview Foursquare matches locally"
 	@echo "  make clean              - Remove temporary files"
 	@echo ""
 	@echo "After scraping new products, run:"
@@ -56,6 +58,12 @@ clean:
 import-csv:
 	@echo "📥 Importing scraper CSVs..."
 	@go run ./cmd/importcsv
+
+fetch-places:
+	@bash scripts/fetch-places-local.sh
+
+fetch-places-dry-run:
+	@DRY_RUN=1 bash scripts/fetch-places-local.sh
 
 # Development helpers
 dev-test:
