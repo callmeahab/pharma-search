@@ -46,8 +46,16 @@ async function scrapePage(
             .replace(/\s+/g, ' ')
             .replace(' RSD', '')
             .trim();
+          // The product-detail link is the title anchor (`h3 > a` -> /sr/proizvod/<slug>).
+          // Fall back to any product anchor in the card if the title link didn't
+          // render, so the per-product slug is still captured (a bare /sr/proizvod
+          // with no slug is useless for the buy-link / price-watch key).
           const link =
-            element.querySelector('h3 > a')?.getAttribute('href') || '';
+            element.querySelector('h3 > a')?.getAttribute('href') ||
+            element
+              .querySelector('a[href*="/sr/proizvod/"]')
+              ?.getAttribute('href') ||
+            '';
           const imageElement = element.querySelector('.image-wrapper img');
           let img =
             imageElement?.getAttribute('data-src') ||

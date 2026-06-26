@@ -88,11 +88,18 @@ async function scrapePage(
 
     for (const product of products) {
       if (!scrapedTitles.has(product.title)) {
+        // Only prepend the base origin for RELATIVE hrefs. Shopmania's product
+        // anchors are sometimes already absolute (e.g. `https://www.shopmania.rs/redirect?d=...`);
+        // blindly concatenating produced malformed double-prefixed links like
+        // `https://www.shopmania.rshttps://www.shopmania.rs/...`.
+        const link = product.link.startsWith('http')
+          ? product.link
+          : baseUrl + product.link;
         allProducts.push({
           title: product.title,
           price: product.price,
           category,
-          link: baseUrl + product.link,
+          link,
           thumbnail: product.img,
           photos: product.img,
         });

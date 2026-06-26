@@ -10,6 +10,11 @@ puppeteer.use(StealthPlugin());
 const scrapedTitles = new Set<string>();
 const baseUrls = ['https://www.eapoteka.rs/sr/svi-proizvodi/'];
 
+// eapoteka.rs listing cards show a truncated <h3> title with a trailing ellipsis
+// ("… 150…"), which drops the size/dosage. The product image's `alt` attribute carries
+// the FULL untruncated title, so we read it from the listing directly (see the $$eval
+// in scrapePage) — no per-product detail-page fetch needed.
+
 async function scrapePage(page: Page, url: string): Promise<Product[]> {
   const allProducts: Product[] = [];
   // Category is always "svi-proizvodi" for this scraper (single base URL)
@@ -32,7 +37,12 @@ async function scrapePage(page: Page, url: string): Promise<Product[]> {
     const products = await page.$$eval('.product-preview-item', (elements) => {
       return elements
         .map((element) => {
-          const title = element.querySelector('h3')?.textContent?.trim() || '';
+          // The listing <h3> is truncated with a trailing ellipsis ("… 150…"), which
+          // drops the size/dosage. The product image's `alt` carries the FULL title, so
+          // use it whenever the h3 looks truncated — no slow detail-page fetch needed.
+          const h3 = element.querySelector('h3')?.textContent?.trim() || '';
+          const alt = element.querySelector('img')?.getAttribute('alt')?.trim() || '';
+          const title = (h3.endsWith('...') || h3.endsWith('…')) && alt ? alt : h3;
           const offStockElement = element.querySelector('.aaa');
 
           if (offStockElement) {
@@ -72,6 +82,8 @@ async function scrapePage(page: Page, url: string): Promise<Product[]> {
         })
         .filter((p): p is NonNullable<typeof p> => p !== null);
     });
+
+    // (Full titles now come from the image `alt` in the $$eval above — no detail fetch.)
 
     for (const product of products) {
       if (!scrapedTitles.has(product.title)) {

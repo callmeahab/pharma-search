@@ -249,6 +249,12 @@ CURATED_FORMS = [
     "bombone", "bombona", "gumene", "gumeni", "gumenih", "gumena", "gumedica",
     "gumedice", "pektinske", "pektinska", "pektinski", "gummy", "gummies",
     "zvakace", "zvakaca", "drazeje", "drazeja",
+    # vaginal / rectal insert form words — stripped from the core so the SAME product
+    # titled "vaginalete" / "supozitorije" / "globule" / "ovule" collapses to one core
+    # (then the extracted form="supozitorija" re-attaches the route in the key).
+    "supozitorija", "supozitorije", "suppository", "cepic", "cepici",
+    "vaginaleta", "vaginalete", "vagitorija", "vagitorije", "vaginalna", "vaginalne",
+    "vaginalnih", "ovula", "ovule", "globula", "globule", "pesar",
 ]
 
 

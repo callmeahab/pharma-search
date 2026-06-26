@@ -3,7 +3,13 @@
 // JSON-LD/OpenGraph from each product page — no Puppeteer, full-catalog coverage.
 import { runSitemapScraper } from './helpers/sitemapScraper';
 
-runSitemapScraper('https://www.apotekamilica.rs', 'Milica', { concurrency: 8 })
+// Milica's sitemap also lists taxonomy pages (/category/, /tag-proizvoda/) which
+// have no single price and parsed to 0 (≈490 junk rows). Keep only real product
+// pages — WooCommerce products live under /product/<slug>.
+runSitemapScraper('https://www.apotekamilica.rs', 'Milica', {
+  concurrency: 8,
+  productUrlPattern: /\/product\//,
+})
   .then(() => process.exit(0))
   .catch((error) => {
     console.error('Milica scraper failed:', error);

@@ -90,8 +90,17 @@ BRAND_KEEP: Set[str] = {normalize(b) for b in _brands["keep"] if normalize(b)}
 # group identity. Sub-tokens (>=5 chars) catch partial matches like detect_brand
 # returning "roche posay" for the "la roche posay" entry.
 COSMETIC_BRANDS: Set[str] = {normalize(b) for b in _brands.get("cosmetic", []) if normalize(b)}
+# Common words that appear inside MULTI-WORD cosmetic brand names ("natural care",
+# "opi nature strong", "avene xeracalm nutrition") but are far too generic to mark a
+# whole brand cosmetic on their own — without this denylist, is_cosmetic_brand wrongly
+# flags supplement brands like "Natural Wealth" / "Strong Nature" / "7 Nutrition".
+_COSMETIC_TOKEN_DENY: Set[str] = {
+    "natural", "nature", "strong", "nutrition", "health", "active", "vitamin",
+    "complex", "formula", "pharma", "plus", "care", "beauty", "gold", "premium",
+}
 _COSMETIC_BRAND_TOKENS: Set[str] = {
-    tok for b in COSMETIC_BRANDS for tok in b.split() if len(tok) >= 5
+    tok for b in COSMETIC_BRANDS for tok in b.split()
+    if len(tok) >= 5 and tok not in _COSMETIC_TOKEN_DENY
 }
 
 

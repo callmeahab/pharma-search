@@ -1,6 +1,7 @@
 import { HTTPRequest, Page } from 'puppeteer';
 import { createWorker } from 'tesseract.js';
 import puppeteer from 'puppeteer-extra';
+import { resolveChromeExecutable } from './chrome';
 
 export class ScraperUtils {
   private static worker: Awaited<ReturnType<typeof createWorker>>;
@@ -232,6 +233,9 @@ export class ScraperUtils {
       headless: this.IS_HEADLESS,
       defaultViewport: null,
       args: this.getBrowserArgs(),
+      // Prefer a system Chrome (env override or auto-detected) over puppeteer's bundled
+      // "Chrome for Testing", which fails to launch on some hosts. undefined = bundled.
+      executablePath: resolveChromeExecutable(),
     });
   }
 

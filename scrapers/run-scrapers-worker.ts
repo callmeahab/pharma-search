@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { appendFile, mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { resolveChromeExecutable } from './helpers/chrome';
 
 const allScrapers = [
   'ananas1.ts',
@@ -435,6 +436,19 @@ async function runPostProcessing(logFile: string) {
 
 async function main() {
   const globalStartTime = Date.now();
+
+  // Make every spawned scraper use a working Chrome. Puppeteer's bundled "Chrome for
+  // Testing" can fail to launch on some hosts; resolve a system Chrome (or an explicit
+  // PUPPETEER_EXECUTABLE_PATH) once here and export it so all child processes inherit it
+  // — both puppeteer.launch() scrapers and ScraperUtils-based ones read this env.
+  if (!process.env.PUPPETEER_EXECUTABLE_PATH) {
+    const chrome = resolveChromeExecutable();
+    if (chrome) {
+      process.env.PUPPETEER_EXECUTABLE_PATH = chrome;
+      console.log(`🌐 Using Chrome: ${chrome}`);
+    }
+  }
+
   const scrapers = getSelectedScrapers();
 
   if (scrapers.length === 0) {

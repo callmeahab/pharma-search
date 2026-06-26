@@ -75,9 +75,14 @@ export function parsePrice(priceString: string): number {
     (commaCount === 1 &&
       p.includes(".") &&
       p.indexOf(",") > p.indexOf(".")) || // e.g., 33.746,30
-    // Handle cases where dot is used as thousand separator
+    // Handle cases where dot is used as thousand separator.
+    // A thousands separator NEVER leaves more than 3 digits in the leading
+    // group, so "1.445" / "23.911" are thousands but "1445.312" is NOT — it is
+    // a 3-decimal value (Magento OpenGraph emits e.g. 1445.312 for 1445,31 RSD).
+    // Requiring leadingGroup.length <= 3 stops that fusing into 1445312.
     (dotCount === 1 &&
       commaCount === 0 &&
+      p.split(".")[0].length <= 3 &&
       (p.split(".")[1].length === 3 || // e.g., 23.911 or 1.390
         (p.endsWith("000") && p.split(".")[0].length > 0))) || // e.g., 1.000
     // Handle multiple dots as thousand separators

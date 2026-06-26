@@ -63,6 +63,15 @@ var formAliases = map[string]string{
 	"rastvor": "rastvor", "solution": "rastvor", "suspenzija": "suspenzija",
 	"kesica": "kesice", "kesice": "kesice", "ampula": "ampule", "ampule": "ampule",
 	"prah": "prah", "powder": "prah",
+	// Vaginal / rectal inserts: vendors title the SAME product (e.g. Cicatridina,
+	// Propovag) as suppository / vaginalette / ovule / globule interchangeably, so they
+	// collapse to ONE form and group. Distinct products stay apart via brand+core; the
+	// route (rectal vs vaginal) isn't keyed separately because the brand already implies it.
+	"supozitorija": "supozitorija", "supozitorije": "supozitorija", "suppository": "supozitorija",
+	"cepic": "supozitorija", "cepici": "supozitorija",
+	"vaginaleta": "supozitorija", "vaginalete": "supozitorija", "vagitorija": "supozitorija",
+	"vagitorije": "supozitorija", "vaginalna": "supozitorija", "vaginalne": "supozitorija",
+	"ovula": "supozitorija", "ovule": "supozitorija", "pesar": "supozitorija",
 	// gummy / jelly vitamins -> one "bombone" form
 	"bombone": "bombone", "bombona": "bombone", "gumene": "bombone", "gumeni": "bombone",
 	"gumenih": "bombone", "gumena": "bombone", "gumedica": "bombone", "gumedice": "bombone",
@@ -432,7 +441,11 @@ func BuildGroupKey(in GroupKeyInput) GroupKey {
 	// multi-word brand whose line token also survives in the core doesn't duplicate
 	// in the key/display ("Vichy Dercos Dercos", "Esi Aloe Aloe Vera"). General fix
 	// for all such brands — no per-brand list needed.
-	if brand := NormalizeText(in.Brand); brand != "" && residual != "" {
+	// Group when there's a descriptive residual OR (residual empty but) a form — the
+	// latter handles a bare-brand topical/insert product (Cicatridina supozitorija/mast,
+	// where residualCore strips the brand to nothing): brand+form groups it across
+	// vendors instead of dropping each listing to a per-offer singleton.
+	if brand := NormalizeText(in.Brand); brand != "" && (residual != "" || NormalizeForm(in.Form) != "") {
 		skuResidual := removeTokens(residual, strings.Fields(brand))
 		parts := append([]string{"sku", brand, skuResidual}, suffix()...)
 		return GroupKey{Key: strings.Join(parts, "::"), DisplayName: buildSKUDisplay(in, skuResidual), Method: "brand-sku", Residual: skuResidual, HasMeasure: hasMeasure}
@@ -504,6 +517,10 @@ func residualCore(core string) string {
 			break
 		}
 	}
+	// Sort the residual so the SAME product titled in a different word order
+	// ("Vedo digitalni" vs "digitalni Vedo") yields one key instead of splitting. The
+	// Track-B residual is an identity token-SET, not a phrase, so order carries no meaning.
+	sort.Strings(out)
 	return strings.Join(out, " ")
 }
 
@@ -542,7 +559,13 @@ func identityCore(core string) string {
 			continue
 		}
 		if numberOnlyPattern.MatchString(t) {
-			continue
+			// Keep a standalone single digit (a stage/step marker: Femibion 0/1/2,
+			// Aptamil/Novalac 1/2/3) so the stages stay distinct groups instead of all
+			// collapsing to the bare brand. Larger numbers (dosages, pack counts, ages)
+			// are not identity and are still dropped.
+			if len(t) != 1 {
+				continue
+			}
 		}
 		if alphaNumPattern.MatchString(t) {
 			continue

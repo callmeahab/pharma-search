@@ -11,7 +11,7 @@
  */
 
 import { gunzipSync } from 'node:zlib';
-import { insertData, Product, initializeDatabase, closeDatabase } from './database';
+import { insertData, Product, initializeDatabase, closeDatabase, parsePrice } from './database';
 // Full entity decode (named Serbian Latin + numeric/hex). The old local version only
 // handled &amp;/&lt;/… so &scaron;/&rsquo; leaked into titles as mojibake.
 import { decodeEntities } from './hygiene';
@@ -22,6 +22,7 @@ const UA =
 export interface SitemapOpts {
   productSitemaps?: string[]; // explicit product sitemap URLs (skip discovery)
   productUrlPattern?: RegExp; // keep only product URLs matching this (for mixed sitemaps)
+  excludeUrlPattern?: RegExp; // drop URLs matching this (e.g. manufacturer/category listing pages)
   concurrency?: number; // parallel page fetches (default 6)
   maxUrls?: number; // cap (for testing)
 }
@@ -100,6 +101,9 @@ export async function discoverProductUrls(baseUrl: string, opts: SitemapOpts = {
     } else {
       for (const u of locs) {
         if (opts.productUrlPattern && !opts.productUrlPattern.test(u)) continue;
+        // Drop non-product listing pages (e.g. /proizvodjaci/<brand>/ manufacturer
+        // pages on Proteinbox) that some sitemaps include alongside real products.
+        if (opts.excludeUrlPattern && opts.excludeUrlPattern.test(u)) continue;
         productUrls.add(u);
       }
     }
@@ -179,13 +183,31 @@ export function parseProductPage(html: string, url: string): Product | null {
     title = raw.replace(/\s*[|–—]\s*[^|–—]{1,40}\s*$/, '').replace(/,\s*$/, '').trim() || raw;
   }
   if (!image) image = metaContent(html, 'og:image');
+
+  // WooCommerce: the rendered display price is authoritative. Some WooCommerce
+  // SEO plugins (Yoast/RankMath) misconfigure RSD decimals and emit the price
+  // divided by 100 in JSON-LD/OpenGraph (e.g. "16.15" for a 1.615,35 RSD item).
+  // The on-page <span class="woocommerce-Price-amount"> shows the true value, so
+  // when it parses to a real (>0) amount it OVERRIDES the structured price.
+  // Guard on >0: some WooCommerce themes render a placeholder "0,00" span while
+  // the JSON-LD price is correct — never let that zero clobber a good price.
+  const wooPrice = woocommercePrice(html);
+  if (wooPrice && parsePrice(wooPrice) > 0) {
+    price = wooPrice;
+  }
+
   if (!price) {
+    // Prefer the precise Magento/microdata price BEFORE OpenGraph: Magento's
+    // OpenGraph product:price:amount can carry a 3-decimal, mis-rounded value
+    // (Krsenkovic emits "1445.312" while data-price-amount/itemprop hold the
+    // correct "1445.31"). The 3-decimal form is ambiguous to parsePrice (it can
+    // look like a 1.445.312 thousands group), so we take the clean source first.
     price =
+      magentoPrice(html) ||
+      microdataPrice(html) ||
       metaContent(html, 'product:price:amount') ||
       metaContent(html, 'og:price:amount') ||
-      metaContent(html, 'price') ||
-      microdataPrice(html) ||
-      magentoPrice(html);
+      metaContent(html, 'price');
   }
 
   if (!title) return null;
@@ -205,6 +227,18 @@ function microdataPrice(html: string): string {
 function magentoPrice(html: string): string {
   const m = html.match(/data-price-amount=["']([0-9][0-9.]*)["']/i);
   return m ? m[1] : '';
+}
+
+// WooCommerce rendered price. The product's own price is the FIRST
+// <span class="woocommerce-Price-amount amount">…</span> on the page (later ones
+// are cross-sell / related products). Returns the raw localized string
+// (e.g. "1.615,35") for parsePrice() to normalize — do NOT pre-strip separators
+// here, that is parsePrice's job. Returns '' for non-WooCommerce pages.
+function woocommercePrice(html: string): string {
+  const m = html.match(
+    /class=["'][^"']*woocommerce-Price-amount[^"']*["'][^>]*>\s*(?:<bdi>)?\s*([0-9][0-9.,]*)/i,
+  );
+  return m ? m[1].trim() : '';
 }
 
 export async function scrapeSitemapVendor(baseUrl: string, shopName: string, opts: SitemapOpts = {}): Promise<Product[]> {

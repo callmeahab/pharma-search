@@ -12,6 +12,37 @@ const scrapedTitles = new Set<string>();
 const baseUrls = ['https://bazzar.rs/c/lepota-i-nega?page='];
 const baseUrl = 'https://bazzar.rs';
 
+// A listing title is truncated when the site cut it mid-word and appended an
+// ellipsis ("..." / "…"). Those are the only rows we re-fetch from the detail page.
+function isTruncatedTitle(title: string): boolean {
+  const t = (title || '').trim();
+  return t.endsWith('...') || t.endsWith('…');
+}
+
+// Read the FULL product title from a Bazzar detail page. og:title carries the
+// complete, untruncated name (verified: the listing <h3>, page <title> and the
+// CSS-clamped card are truncated, but og:title and the <h1> are not). Falls back
+// to <h1>. Returns '' on any failure so the caller keeps the (truncated) listing
+// title rather than dropping the product.
+async function fetchFullTitle(page: Page, link: string): Promise<string> {
+  try {
+    await page.goto(link, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    return await page.evaluate(() => {
+      const og = document
+        .querySelector('meta[property="og:title"]')
+        ?.getAttribute('content')
+        ?.trim();
+      if (og) return og;
+      return document.querySelector('h1')?.textContent?.trim() || '';
+    });
+  } catch (error) {
+    console.error(
+      `Failed to fetch full title from ${link}: ${(error as Error).message}`,
+    );
+    return '';
+  }
+}
+
 async function scrapePage(
   page: Page,
   url: string,
@@ -74,6 +105,32 @@ async function scrapePage(
       baseUrl,
       category,
     );
+
+    // Bazzar's listing card <h3> hard-truncates the title to ~100 chars (cut
+    // mid-word, with a literal "..." appended by the site), which drops the
+    // second product / size in bundle titles. When a listing title looks
+    // truncated, fetch the full, untruncated title from the product detail page
+    // (og:title, with <h1> fallback) so grouping/search keep the size & dosage.
+    // CRITICAL: re-fetch on SEPARATE pages, not `page` (which is mid-pagination on the
+    // listing — navigating it to a detail URL detaches its frame and drops the rest of
+    // the catalog). Limited concurrency keeps it quick.
+    const truncated = products.filter((p) => isTruncatedTitle(p.title) && p.link);
+    const POOL = 6;
+    for (let i = 0; i < truncated.length; i += POOL) {
+      await Promise.all(
+        truncated.slice(i, i + POOL).map(async (product) => {
+          const detailPage = await page.browser().newPage();
+          try {
+            const full = await fetchFullTitle(detailPage, product.link);
+            if (full) product.title = full;
+          } catch {
+            /* keep the truncated listing title on failure */
+          } finally {
+            await detailPage.close();
+          }
+        }),
+      );
+    }
 
     // Filter duplicates
     const allProducts: Product[] = [];

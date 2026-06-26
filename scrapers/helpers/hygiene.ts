@@ -78,8 +78,28 @@ export function cleanTitle(input: string): string {
 // (category/condition landing pages) — they are filtered from search anyway, so we
 // keep them out of the DB entirely. (The import's per-vendor delist ratio guard
 // prevents a broken price selector from mass-delisting an otherwise good vendor.)
+// Titles that are obviously test/placeholder rows, not real products.
+const JUNK_TITLE_RE = /^(test\b|testtest|placeholder|lorem ipsum|undefined|null|n\/a)$/i;
+
 export function isLikelyProduct(title: string, price: number): boolean {
-  if (!Number.isFinite(price) || price <= 0) return false;
+  // price <= 1 RSD is a sentinel for an unpriced/placeholder product (scrapers emit "1"
+  // when they fail to read a price) — drop it like price 0 rather than show a 1-dinar item.
+  if (!Number.isFinite(price) || price <= 1) return false;
   if (!title || title.trim().length < 3) return false;
+  if (JUNK_TITLE_RE.test(title.trim())) return false;
+  return true;
+}
+
+// isResolvableProductLink rejects category/listing/brand URLs (not a product detail page)
+// and malformed double-prefixed links, so a vendor whose scraper emits the wrong href
+// doesn't strand many products on one dead/category URL (Herba, E-Apoteka, Shopmania).
+export function isResolvableProductLink(link: string | undefined | null): boolean {
+  if (!link) return true; // missing link is handled elsewhere; don't drop the product here
+  const l = link.trim();
+  // double-prefixed host (shopmania bug): "https://x.rshttps://x.rs/..."
+  if ((l.match(/https?:\/\//g) || []).length > 1) return false;
+  // bare category/brand listing pages with no product slug
+  if (/\/sr\/(cajevi|brendovi|kozmetika|lekovi|proizvod)\/?$/i.test(l)) return false;
+  if (/\/proizvodjaci\//i.test(l)) return false;
   return true;
 }

@@ -59,7 +59,23 @@ async function scrapePage(
                 ?.textContent?.trim() || '';
           }
 
-          const link = element.querySelector('a')?.getAttribute('href') || '';
+          // The product-detail permalink is the WooCommerce loop link (the title
+          // and image anchors point at it). The old `element.querySelector('a')`
+          // grabbed the FIRST anchor in the card, which is a category/brand badge
+          // (e.g. /sr/cajevi/, /sr/brendovi/mueller/) — so every product linked to
+          // a listing page instead of its own detail page. Prefer the product
+          // permalink anchor, then fall back to the title link, then any anchor.
+          const link =
+            element
+              .querySelector('a.woocommerce-LoopProduct-link')
+              ?.getAttribute('href') ||
+            element
+              .querySelector('.woocommerce-loop-product__title')
+              ?.closest('a')
+              ?.getAttribute('href') ||
+            element.querySelector('h2 a')?.getAttribute('href') ||
+            element.querySelector('a')?.getAttribute('href') ||
+            '';
           const imageElement = element.querySelector('img');
           let img =
             imageElement?.getAttribute('data-src') ||

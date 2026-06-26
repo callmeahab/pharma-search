@@ -60,7 +60,8 @@ QUANTITY_UNIT_PATTERN = (
 FORM_PATTERN = re.compile(
     r"\b(tablete|tableta|tabl|tab|kapsule|kapsula|kaps|capsules|capsule|caps|softgel|softgels|cps|"
     r"sirup|sprej|spray|kapi|drops|gel|gela|krema|krem|cream|mast|losion|lotion|serum|"
-    r"rastvor|solution|suspenzija|kesice|kesica|ampule|ampula|"
+    r"rastvor|suspenzija|kesice|kesica|ampule|ampula|"
+    r"supozitorija|supozitorije|suppository|cepic|cepici|vaginaleta|vaginalete|vagitorija|vagitorije|vaginalne|vaginalnih|ovula|ovule|globula|globule|pesar|"
     r"bombone|bombona|gumene|gumeni|gumenih|gumena|gumedica|gumedice|pektinske|pektinska|pektinski|gummy|gummies)\b",
     re.IGNORECASE,
 )
@@ -416,6 +417,19 @@ def _extract_core_ingredient(title: str, brand: Optional[str] = None) -> Optiona
 
     core = " ".join(parts).strip()
     if len(core) < 2:
+        # Don't strand a real NON-COSMETIC product with an empty identity (it becomes
+        # un-groupable and weak in search). Fall back to the brand plus any retained
+        # protein descriptor — e.g. "Maximalium Whey Protein, Vanila" → "Maximalium Whey"
+        # instead of "" (all of whey/protein/vanila are noise). Cosmetics keep returning
+        # None: their brand is shown separately by the Go brand-sku display.
+        if brand and not dictionaries.is_cosmetic_brand(brand):
+            nb = dictionaries.normalize(brand)
+            bset = set(nb.split())
+            extra = [t for t in dictionaries.normalize(title).split()
+                     if t in ("whey", "vegan", "izolat", "isolate", "protein") and t not in bset]
+            fb = (nb + " " + " ".join(dict.fromkeys(extra))).strip()
+            if len(fb) >= 2:
+                return fb.title()
         return None
     return core.title()
 

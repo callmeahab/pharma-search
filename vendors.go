@@ -12,6 +12,10 @@ func (s *server) handleVendorList(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusServiceUnavailable, "database not connected")
 		return
 	}
+	// Only list vendors that actually have priced products. Broken scrapers (e.g.
+	// dead/replatformed sites, Cloudflare-blocked vendors) leave a Vendor row with
+	// zero products; surfacing them in the public directory just shows empty
+	// pharmacies. They reappear automatically once their scraper produces offers.
 	rows, err := s.db.Query(`
 		SELECT v.id, v.name, COALESCE(v.website,''), COALESCE(v.logo,''),
 		       COALESCE(v.phone,''), COALESCE(v.email,''), COALESCE(v.address,''),
@@ -19,6 +23,9 @@ func (s *server) handleVendorList(w http.ResponseWriter, r *http.Request) {
 		       v.latitude, v.longitude,
 		       (SELECT count(*) FROM "Product" p WHERE p."vendorId" = v.id AND p.price > 0) AS product_count
 		FROM "Vendor" v
+		WHERE EXISTS (
+			SELECT 1 FROM "Product" p WHERE p."vendorId" = v.id AND p.price > 0
+		)
 		ORDER BY v.name ASC`)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "could not load vendors")

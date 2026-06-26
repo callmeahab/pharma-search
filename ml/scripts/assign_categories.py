@@ -27,6 +27,7 @@ import collections
 import json
 import logging
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -95,6 +96,20 @@ def ingredient_category(text: str):
     return None
 
 
+# A topical dosage form is a COSMETIC even when the title names an active (a "krema za
+# lice coenzyme Q10" is skincare, not a Q10 supplement) — so this gate must beat the
+# ingredient signal. Excludes "gel"/"mast": medicinal gels/ointments (Voltaren) are OTC.
+COSMETIC_FORMS = {"krema", "serum", "losion", "maska"}
+# Sports nutrition signal (whey isn't a Track-A ingredient, so it would otherwise fall to
+# the vendor's generic OTC bucket). Checked after ingredient detection so a vitamin that
+# merely mentions "protein" still classifies by its ingredient.
+SPORTS_RE = re.compile(
+    r"\b(whey|sirutka|izolat|isolate|protein|proteini|kreatin|creatine|kazein|casein|"
+    r"gainer|bcaa|eaa|maltodekstrin|aminokiselin)\w*\b",
+    re.IGNORECASE,
+)
+
+
 def assign(raw_category: str, brand: str, core: str, title: str, form: str):
     raw = (raw_category or "").strip()
     # 0. genuinely non-product vendor bucket -> uncategorized (skip heuristics)
@@ -104,18 +119,27 @@ def assign(raw_category: str, brand: str, core: str, title: str, form: str):
     # 1. explicit vendor label for a domain heuristics can't see
     if c_raw in SPECIFIC:
         return c_raw
-    # 2. known cosmetic brand
-    if d.is_cosmetic_brand(brand):
+    nform = d.normalize(form)
+    # 2. TOPICAL form wins over the ingredient signal: a cream/serum/lotion/mask is a
+    #    cosmetic even if it lists an active (fixes ~585 creams mislabeled Supplements).
+    if nform in COSMETIC_FORMS:
         return "Cosmetics & Skincare"
-    # 3. detected supplement / OTC ingredient
+    # 3. detected supplement / OTC ingredient (now BEFORE the cosmetic-brand fallback, so a
+    #    vitamin from a brand wrongly in the cosmetic dict still classifies as Supplements).
     c_ing = ingredient_category(core or title)
     if c_ing:
         return c_ing
-    # 4. vendor's general bucket
+    # 4. sports nutrition (whey/protein/kreatin/...) before the generic vendor bucket.
+    if SPORTS_RE.search(title or ""):
+        return "Sports Nutrition"
+    # 5. known cosmetic brand (fallback for makeup with no topical form / detectable active)
+    if d.is_cosmetic_brand(brand):
+        return "Cosmetics & Skincare"
+    # 6. vendor's general bucket
     if c_raw in GENERAL:
         return c_raw
-    # 5. form fallback
-    c_form = FORM_CATEGORY.get(d.normalize(form))
+    # 7. form fallback
+    c_form = FORM_CATEGORY.get(nform)
     if c_form:
         return c_form
     return None  # uncategorized

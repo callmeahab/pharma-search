@@ -12,7 +12,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { createDbPool, loadVendors } from './helpers/db';
 import { parsePrice } from './helpers/database';
-import { cleanTitle, isLikelyProduct } from './helpers/hygiene';
+import { cleanTitle, isLikelyProduct, isResolvableProductLink } from './helpers/hygiene';
 
 const OUTPUT_DIR = path.join(process.cwd(), 'output');
 
@@ -90,6 +90,9 @@ function parseCSV(content: string): ProductRow[] {
       const title = cleanTitle(values[0]);
       const price = parsePrice(values[1]);
       if (!isLikelyProduct(title, price)) continue;
+      // Drop products whose link is a category/listing/brand page or a malformed
+      // double-prefixed URL — a wrong href strands the product on a dead page.
+      if (!isResolvableProductLink(values[3])) continue;
       rows.push({
         title,
         price,
@@ -169,9 +172,19 @@ async function importCSVFiles() {
     let totalErrors = 0;
 
     for (const [vendorId, { vendorName, rows }] of perVendor) {
-      // Dedupe within the vendor's combined snapshot by title (last wins).
+      // Dedupe within the vendor's combined snapshot by CASE-INSENSITIVE title, keeping
+      // the LOWEST price. The DB unique constraint is (title, vendorId) and case-sensitive,
+      // so "...10ml" and "...10ML" would otherwise both insert as separate rows for the
+      // same product (inflating that vendor's coverage count and showing two prices).
       const deduped = Array.from(
-        rows.reduce((map, p) => map.set(p.title, p), new Map<string, ProductRow>()).values(),
+        rows
+          .reduce((map, p) => {
+            const key = p.title.trim().toLowerCase();
+            const prev = map.get(key);
+            if (!prev || p.price < prev.price) map.set(key, p);
+            return map;
+          }, new Map<string, ProductRow>())
+          .values(),
       );
 
       const client = await pool.connect();
