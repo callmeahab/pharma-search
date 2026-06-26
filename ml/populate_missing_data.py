@@ -9,6 +9,7 @@ Updates both Product and ProductStandardization tables.
 
 import os
 import re
+import json
 import logging
 import argparse
 from pathlib import Path
@@ -28,6 +29,20 @@ from matching_utils import (
 import dictionaries
 
 load_dotenv()
+
+# Category concept detectors: (token, compiled_regex). A product whose title matches a
+# category's regex gets that category's unified token in searchTokens, so category-intent
+# queries ("krema za suncanje") recall all members. Mined + precision-validated; the data
+# file is the single source of truth shared with build_dictionaries.py (which adds the
+# matching query aliases). See ml/data/category_concepts.json.
+_CATEGORY_CONCEPTS_FILE = Path(__file__).parent / "data" / "category_concepts.json"
+CATEGORY_PATTERNS = []
+if _CATEGORY_CONCEPTS_FILE.exists():
+    for _c in json.loads(_CATEGORY_CONCEPTS_FILE.read_text())["categories"]:
+        try:
+            CATEGORY_PATTERNS.append((_c["token"], re.compile(_c["detectRegex"], re.IGNORECASE)))
+        except re.error:
+            pass
 
 # Configuration
 BATCH_SIZE = 500
@@ -922,6 +937,13 @@ def process_products(conn, limit: int = 0, update_all: bool = False,
             for c in canon:
                 extra_tokens.append(dictionaries.canonical_compact(c))
                 extra_tokens.extend(c.split())
+            # Category concept tokens (sun care, hand cream, shampoo, ...): a precise
+            # per-category regex over the raw title writes ONE unified token (e.g.
+            # "suncare") so a category-intent query ("krema za suncanje") resolves to it
+            # and recalls all members, regardless of how each product is titled.
+            for tok, pat in CATEGORY_PATTERNS:
+                if pat.search(product["title"]):
+                    extra_tokens.append(tok)
             if extra_tokens:
                 seen = set(search_tokens)
                 search_tokens = list(search_tokens) + [t for t in extra_tokens if t and t not in seen]

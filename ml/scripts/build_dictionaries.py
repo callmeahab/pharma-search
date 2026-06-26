@@ -243,6 +243,13 @@ CURATED_SEARCH_CONCEPTS = [
     ]},
 ]
 
+# NOTE: category concepts (ml/data/category_concepts.json) are deliberately NOT added to
+# ingredients.json. They must not enter the ingredient pipeline (Python core extraction /
+# Go grouping) or they'd pollute product cores and over-merge (e.g. "Ladival" -> a
+# "suncare" core). They are loaded SEPARATELY: Go matching embeds the file for query-side
+# SearchConcepts resolution (category "searchcat", excluded from Track-A grouping), and
+# populate_missing_data.py's CATEGORY_PATTERNS writes the detection token to searchTokens.
+
 # Gummy / jelly delivery form words (normalized to "bombone" elsewhere) — kept out
 # of the residual so gummy vitamins don't fragment on these descriptors.
 CURATED_FORMS = [
@@ -395,6 +402,12 @@ def main():
     (OUT_DIR / "ingredients.json").write_text(json.dumps(ingredients, ensure_ascii=False, indent=1) + "\n")
     (OUT_DIR / "brands.json").write_text(json.dumps(brands, ensure_ascii=False, indent=1) + "\n")
     (OUT_DIR / "stopwords.json").write_text(json.dumps(stopwords, ensure_ascii=False, indent=1) + "\n")
+    # Sync the mined category concepts (source: ml/data) into the Go embed dir so the
+    # matching package's SearchConcepts resolves category-intent queries. Kept OUT of
+    # ingredients.json on purpose (see CURATED_SEARCH_CONCEPTS note).
+    _cat_src = ROOT / "ml" / "data" / "category_concepts.json"
+    if _cat_src.exists():
+        (OUT_DIR / "category_concepts.json").write_text(_cat_src.read_text())
 
     track_a = sum(1 for e in ingredients["ingredients"] if e["category"] in CATEGORY_TRACK_A)
     print(f"ingredients.json : {len(ingredients['ingredients'])} canonicals "

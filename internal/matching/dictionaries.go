@@ -17,10 +17,18 @@ var brandsJSON []byte
 //go:embed data/stopwords.json
 var stopwordsJSON []byte
 
+//go:embed data/category_concepts.json
+var categoryConceptsJSON []byte
+
 type ingredientEntry struct {
 	Canonical string   `json:"canonical"`
 	Category  string   `json:"category"`
 	Aliases   []string `json:"aliases"`
+}
+
+type categoryConcept struct {
+	Token        string   `json:"token"`
+	QueryAliases []string `json:"queryAliases"`
 }
 
 type aliasEntry struct {
@@ -120,6 +128,40 @@ func loadDictionaries() {
 					fuzzyTokenAliases = append(fuzzyTokenAliases, fuzzyAlias{a, canon})
 				}
 			}
+		}
+	}
+
+	// Category concepts: query-side ONLY. Their aliases ("krema za suncanje", "spf",
+	// "zastita od sunca") resolve to a single category token so SearchConcepts recalls all
+	// members. Category "searchcat" is NOT in trackACategory, so SupplementIngredients (the
+	// grouping route) ignores them — and they are deliberately absent from ingredients.json,
+	// so the Python core extractor never sees them either. Exact-match only (no fuzzy, to
+	// avoid a typo drifting a query into a whole category).
+	var catDoc struct {
+		Categories []categoryConcept `json:"categories"`
+	}
+	if err := json.Unmarshal(categoryConceptsJSON, &catDoc); err != nil {
+		log.Printf("matching: failed to parse category_concepts.json: %v", err)
+	}
+	for _, c := range catDoc.Categories {
+		tok := NormalizeText(c.Token)
+		if tok == "" {
+			continue
+		}
+		canonicalCategory[tok] = "searchcat"
+		for _, alias := range append([]string{c.Token}, c.QueryAliases...) {
+			a := NormalizeText(alias)
+			if a == "" {
+				continue
+			}
+			n := len(strings.Fields(a))
+			if n > maxAliasTokens {
+				maxAliasTokens = n
+			}
+			if _, exists := aliasIndex[a]; !exists {
+				aliasIndex[a] = aliasEntry{canonical: tok, category: "searchcat", nTokens: n}
+			}
+			canonicalAliases[tok] = append(canonicalAliases[tok], a)
 		}
 	}
 
