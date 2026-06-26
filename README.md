@@ -65,17 +65,28 @@ cd scrapers && bun run pipeline
 go run ./cmd/importcsv
 ```
 
-### Fetching Pharmacy Locations Locally
+### Fetching Pharmacy/Shop Locations Locally
 
-Foursquare Places data is fetched from the dev machine and stored in the local
-PostgreSQL database; nothing is scheduled or run on the production server.
+Place data is fetched from the dev machine and stored in the local PostgreSQL
+database; nothing is scheduled or run on the production server. The importer can
+combine OpenStreetMap/Overpass, TomTom Search, and Foursquare Places, then stores
+normalized rows in `VendorPlace`.
 
 ```bash
 # Preview one vendor without writing rows
 VENDOR=Benu DRY_RUN=1 make fetch-places
 
-# Fetch places for every vendor with priced products
+# Fetch places for every vendor with priced products using the default sources
 make fetch-places
+
+# Run only free OSM/Overpass matching
+SOURCES=osm make fetch-places
+
+# Try TomTom for one vendor without writing rows
+SOURCES=tomtom VENDOR=Benu DRY_RUN=1 make fetch-places
+
+# Use all local sources explicitly
+SOURCES=osm,tomtom,foursquare make fetch-places
 
 # Useful local knobs
 MAX_VENDORS=5 make fetch-places
@@ -84,19 +95,33 @@ COVERAGE_BOUNDS="42.2322,18.8170,46.1900,23.0063" MAX_SPLIT_DEPTH=8 LIMIT=50 SLE
 ```
 
 The command loads `.env`, applies migrations, then runs `go run ./cmd/fetchplaces`.
-It requires `FOURSQUARE_API_KEY` for the current Foursquare Places API.
-By default it searches by vendor name across Serbia using recursive Foursquare
+`PLACE_SOURCES` defaults to `osm,tomtom,foursquare`. OSM does not need an API
+key. TomTom uses `TOMTOM_API_KEY`; Foursquare uses `FOURSQUARE_API_KEY`. If a
+paid source is selected without a key and another source is available, the run
+logs a warning and continues. Set `PLACE_REQUIRE_ALL_SOURCES=true` to fail fast
+instead.
+
+OSM is fetched with one Serbia administrative-area Overpass query, cached at
+`cache/osm-places-serbia-v2.json`, then matched locally against every vendor.
+Set `OSM_REFRESH=1` to force a fresh Overpass pull.
+
+TomTom searches by vendor name across Serbia with `countrySet=RS`, the Serbia
+bounds, `limit=100`, paged offsets, and `openingHours=nextSevenDays` when
+available. Increase `TOMTOM_MAX_PAGES` if a vendor reports capped TomTom
+results.
+
+Foursquare searches by vendor name across Serbia using recursive Foursquare
 bounding boxes. If a box returns Foursquare's 50-result maximum, the importer
-splits the box and searches again, then deduplicates by Foursquare place id.
-If any smallest box still hits the limit, the run exits with an error so stale
-locations are not treated as complete. Successful complete vendor sweeps prune
-stale cached locations for that vendor.
+splits the box and searches again, then deduplicates by Foursquare place id. If
+any smallest box still hits the limit, the source is treated as incomplete so
+stale locations are not trusted as complete. Successful complete vendor sweeps
+prune stale cached locations for that vendor/source.
 
 The importer keeps pharmacies, drugstores, and relevant supplement/health shops,
 then prunes cached places that no longer look relevant. It also requests the
 place photos field and stores Foursquare's full-resolution photo URL metadata
 locally with the pharmacy/shop record. If you want to override the requested
-fields, include `photos` to keep place images available:
+Foursquare fields, include `photos` to keep place images available:
 
 ```bash
 FIELDS=fsq_place_id,name,latitude,longitude,categories,location,tel,website,hours,photos make fetch-places

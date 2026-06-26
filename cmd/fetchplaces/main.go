@@ -30,6 +30,14 @@ const (
 	foursquareVersion             = "2025-06-17"
 	foursquarePharmacyCategoryID  = "4bf58dd8d48988d10f951735"
 	foursquareDrugstoreCategoryID = "5745c2e4498e11e7bccabdbd"
+	placeSourceFoursquare         = "foursquare"
+	placeSourceOSM                = "osm"
+	placeSourceTomTom             = "tomtom"
+	defaultPlaceSources           = "osm,tomtom,foursquare"
+	defaultOSMOverpassURL         = "https://overpass-api.de/api/interpreter"
+	defaultOSMCacheFile           = "cache/osm-places-serbia-v2.json"
+	defaultTomTomBaseURL          = "https://api.tomtom.com"
+	defaultTomTomCountrySet       = "RS"
 	defaultSerbiaCoverageBounds   = "42.2322,18.8170,46.1900,23.0063"
 )
 
@@ -50,9 +58,22 @@ type importStats struct {
 	PlacesSaved        int
 	PlacesPruned       int
 	FoursquareRequests int
+	OSMRequests        int
+	OSMCacheHits       int
+	TomTomRequests     int
+	TomTomLimitHits    int
 	CoverageSplits     int
 	CoverageLimitHits  int
 	Errors             int
+	SoftErrors         int
+}
+
+type placeProcessResult struct {
+	Seen     int
+	Matched  int
+	Skipped  int
+	Saved    int
+	SavedIDs map[string]bool
 }
 
 type coverageBounds struct {
@@ -73,11 +94,147 @@ type coverageReport struct {
 	LimitHitCells int
 }
 
+type osmLoadResult struct {
+	Places   []foursquarePlace
+	Requests int
+	CacheHit bool
+}
+
+type osmOverpassResponse struct {
+	Elements []osmElement `json:"elements"`
+}
+
+type osmElement struct {
+	Type   string            `json:"type"`
+	ID     int64             `json:"id"`
+	Lat    float64           `json:"lat"`
+	Lon    float64           `json:"lon"`
+	Center *osmCenter        `json:"center"`
+	Tags   map[string]string `json:"tags"`
+	Raw    json.RawMessage   `json:"-"`
+}
+
+type osmCenter struct {
+	Lat float64 `json:"lat"`
+	Lon float64 `json:"lon"`
+}
+
+func (e *osmElement) UnmarshalJSON(data []byte) error {
+	type alias osmElement
+	var decoded alias
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	*e = osmElement(decoded)
+	e.Raw = append(e.Raw[:0], data...)
+	return nil
+}
+
+type tomTomSearchResponse struct {
+	Summary tomTomSummary  `json:"summary"`
+	Results []tomTomResult `json:"results"`
+}
+
+type tomTomSummary struct {
+	NumResults   int `json:"numResults"`
+	TotalResults int `json:"totalResults"`
+	Offset       int `json:"offset"`
+}
+
+type tomTomResult struct {
+	ID       string         `json:"id"`
+	Type     string         `json:"type"`
+	POI      tomTomPOI      `json:"poi"`
+	Address  tomTomAddress  `json:"address"`
+	Position tomTomPosition `json:"position"`
+	Viewport *struct {
+		TopLeftPoint  tomTomPosition `json:"topLeftPoint"`
+		BtmRightPoint tomTomPosition `json:"btmRightPoint"`
+	} `json:"viewport"`
+	Raw json.RawMessage `json:"-"`
+}
+
+type tomTomPOI struct {
+	Name            string                 `json:"name"`
+	Phone           string                 `json:"phone"`
+	URL             string                 `json:"url"`
+	Brands          []tomTomBrand          `json:"brands"`
+	Categories      []string               `json:"categories"`
+	CategorySet     []tomTomCategory       `json:"categorySet"`
+	Classifications []tomTomClassification `json:"classifications"`
+	OpeningHours    *tomTomOpeningHours    `json:"openingHours"`
+	TimeZone        *tomTomTimeZone        `json:"timeZone"`
+}
+
+type tomTomBrand struct {
+	Name string `json:"name"`
+}
+
+type tomTomCategory struct {
+	ID int `json:"id"`
+}
+
+type tomTomClassification struct {
+	Code  string `json:"code"`
+	Names []struct {
+		Name string `json:"name"`
+	} `json:"names"`
+}
+
+type tomTomOpeningHours struct {
+	Mode       string            `json:"mode"`
+	TimeRanges []tomTomTimeRange `json:"timeRanges"`
+}
+
+type tomTomTimeRange struct {
+	StartTime tomTomTimePoint `json:"startTime"`
+	EndTime   tomTomTimePoint `json:"endTime"`
+}
+
+type tomTomTimePoint struct {
+	Date   string `json:"date"`
+	Hour   int    `json:"hour"`
+	Minute int    `json:"minute"`
+}
+
+type tomTomTimeZone struct {
+	IANAID string `json:"ianaId"`
+}
+
+type tomTomAddress struct {
+	StreetNumber            string `json:"streetNumber"`
+	StreetName              string `json:"streetName"`
+	Municipality            string `json:"municipality"`
+	MunicipalitySubdivision string `json:"municipalitySubdivision"`
+	CountrySubdivision      string `json:"countrySubdivision"`
+	CountrySubdivisionName  string `json:"countrySubdivisionName"`
+	PostalCode              string `json:"postalCode"`
+	CountryCode             string `json:"countryCode"`
+	FreeformAddress         string `json:"freeformAddress"`
+}
+
+type tomTomPosition struct {
+	Lat float64 `json:"lat"`
+	Lon float64 `json:"lon"`
+}
+
+func (r *tomTomResult) UnmarshalJSON(data []byte) error {
+	type alias tomTomResult
+	var decoded alias
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	*r = tomTomResult(decoded)
+	r.Raw = append(r.Raw[:0], data...)
+	return nil
+}
+
 type foursquareSearchResponse struct {
 	Results []foursquarePlace `json:"results"`
 }
 
 type foursquarePlace struct {
+	Source      string             `json:"-"`
 	FSQID       string             `json:"fsq_id"`
 	FSQPlaceID  string             `json:"fsq_place_id"`
 	Name        string             `json:"name"`
@@ -158,6 +315,7 @@ func main() {
 	repoFlag := flag.String("repo", "", "Path to the pharma-search repository root")
 	dbURLFlag := flag.String("database-url", "", "PostgreSQL connection string")
 	vendorFlag := flag.String("vendor", "", "Import one vendor by id, exact name, or case-insensitive name fragment")
+	sourcesFlag := flag.String("sources", envDefault("PLACE_SOURCES", defaultPlaceSources), "Comma-separated place sources to import locally: osm,tomtom,foursquare")
 	nearFlag := flag.String("near", envDefault("FOURSQUARE_NEAR", "Serbia"), "Foursquare near parameter")
 	versionFlag := flag.String("api-version", envDefault("FOURSQUARE_API_VERSION", foursquareVersion), "Foursquare Places API version header")
 	fieldsFlag := flag.String("fields", envDefault("FOURSQUARE_FIELDS", defaultFoursquareFields), "Comma-separated Foursquare response fields; default includes photos for full-resolution place images")
@@ -165,11 +323,21 @@ func main() {
 	coverageBoundsFlag := flag.String("coverage-bounds", envDefault("FOURSQUARE_COVERAGE_BOUNDS", defaultSerbiaCoverageBounds), "south,west,north,east bounds for exhaustive recursive coverage; use 'near' to disable")
 	maxSplitDepthFlag := flag.Int("max-split-depth", envInt("FOURSQUARE_MAX_SPLIT_DEPTH", 8), "Maximum recursive splits for Foursquare cells that hit the per-request limit")
 	limitFlag := flag.Int("limit", envInt("FOURSQUARE_SEARCH_LIMIT", 50), "Foursquare places per vendor, maximum 50")
+	osmOverpassURLFlag := flag.String("osm-overpass-url", envDefault("OSM_OVERPASS_URL", defaultOSMOverpassURL), "Overpass API endpoint for OpenStreetMap place import")
+	osmTimeoutFlag := flag.Int("osm-timeout", envInt("OSM_OVERPASS_TIMEOUT", 180), "Overpass query timeout in seconds")
+	osmCacheFlag := flag.String("osm-cache", envDefault("OSM_CACHE_FILE", defaultOSMCacheFile), "Local cache path for the Serbia-wide OSM response; blank disables cache")
+	osmRefreshFlag := flag.Bool("osm-refresh", envBool("OSM_REFRESH", false), "Ignore any local OSM cache and fetch fresh Overpass data")
+	tomTomBaseURLFlag := flag.String("tomtom-base-url", envDefault("TOMTOM_BASE_URL", defaultTomTomBaseURL), "TomTom Search API base URL")
+	tomTomCountrySetFlag := flag.String("tomtom-country-set", envDefault("TOMTOM_COUNTRY_SET", defaultTomTomCountrySet), "TomTom Search countrySet filter")
+	tomTomLimitFlag := flag.Int("tomtom-limit", envInt("TOMTOM_SEARCH_LIMIT", 100), "TomTom results per page, maximum 100")
+	tomTomMaxPagesFlag := flag.Int("tomtom-max-pages", envInt("TOMTOM_MAX_PAGES", 20), "Maximum TomTom pages per vendor query before treating the source as capped")
+	tomTomOpeningHoursFlag := flag.Bool("tomtom-opening-hours", envBool("TOMTOM_OPENING_HOURS", true), "Request TomTom next-seven-days opening hours where available")
 	maxVendorsFlag := flag.Int("max-vendors", 0, "Stop after this many vendors; 0 imports all matching vendors")
 	sleepFlag := flag.Duration("sleep", envDuration("FOURSQUARE_REQUEST_SLEEP", 250*time.Millisecond), "Delay between Foursquare requests")
 	strictFlag := flag.Bool("strict-match", true, "Skip places whose name/domain does not match the vendor")
 	pruneDisallowedFlag := flag.Bool("prune-disallowed", envBool("FOURSQUARE_PRUNE_DISALLOWED", true), "Delete cached VendorPlace rows that do not look like pharmacies or relevant shops")
 	pruneStaleFlag := flag.Bool("prune-stale", envBool("FOURSQUARE_PRUNE_STALE", true), "After a complete coverage fetch, delete cached VendorPlace rows not returned for that vendor")
+	requireAllSourcesFlag := flag.Bool("require-all-sources", envBool("PLACE_REQUIRE_ALL_SOURCES", false), "Exit non-zero if any selected source fails even when another source imported rows")
 	continueOnErrorFlag := flag.Bool("continue-on-error", envBool("FOURSQUARE_CONTINUE_ON_ERROR", false), "Keep processing vendors after a Foursquare/API/save error")
 	dryRunFlag := flag.Bool("dry-run", false, "Fetch and print matches without writing to the database")
 	flag.Parse()
@@ -180,10 +348,29 @@ func main() {
 	}
 	loadDotEnv(filepath.Join(repoRoot, ".env"))
 
-	apiKey := strings.TrimSpace(os.Getenv("FOURSQUARE_API_KEY"))
-	if apiKey == "" {
-		log.Fatal("FOURSQUARE_API_KEY is not set")
+	sources, err := parseSourceList(*sourcesFlag)
+	if err != nil {
+		log.Fatalf("invalid sources: %v", err)
 	}
+	sourceSet := sourceSet(sources)
+	apiKey := strings.TrimSpace(os.Getenv("FOURSQUARE_API_KEY"))
+	if sourceSet[placeSourceFoursquare] && apiKey == "" && (len(sources) == 1 || *requireAllSourcesFlag) {
+		log.Fatal("FOURSQUARE_API_KEY is not set")
+	} else if sourceSet[placeSourceFoursquare] && apiKey == "" {
+		log.Printf("FOURSQUARE_API_KEY is not set; skipping Foursquare and using the other selected sources")
+		delete(sourceSet, placeSourceFoursquare)
+	}
+	tomTomAPIKey := strings.TrimSpace(os.Getenv("TOMTOM_API_KEY"))
+	if sourceSet[placeSourceTomTom] && tomTomAPIKey == "" && (len(sources) == 1 || *requireAllSourcesFlag) {
+		log.Fatal("TOMTOM_API_KEY is not set")
+	} else if sourceSet[placeSourceTomTom] && tomTomAPIKey == "" {
+		log.Printf("TOMTOM_API_KEY is not set; skipping TomTom and using the other selected sources")
+		delete(sourceSet, placeSourceTomTom)
+	}
+	if len(sourceSet) == 0 {
+		log.Fatal("no enabled place sources; set PLACE_SOURCES or -sources to osm, tomtom, foursquare, or a combination")
+	}
+	log.Printf("Using place sources: %s", strings.Join(sortedSourceNames(sourceSet), ", "))
 
 	limit := *limitFlag
 	if limit <= 0 || limit > 50 {
@@ -198,8 +385,8 @@ func main() {
 		log.Fatalf("invalid coverage bounds: %v", err)
 	}
 	if coverage != nil {
-		log.Printf("Using recursive Foursquare coverage bounds %s with max split depth %d", coverage.String(), maxSplitDepth)
-	} else {
+		log.Printf("Using coverage bounds %s; Foursquare max split depth %d", coverage.String(), maxSplitDepth)
+	} else if sourceSet[placeSourceFoursquare] {
 		log.Printf("Using one broad Foursquare near search per vendor near %q", *nearFlag)
 	}
 
@@ -227,88 +414,214 @@ func main() {
 	client := &http.Client{Timeout: 30 * time.Second}
 	stats := importStats{Vendors: len(vendors)}
 	var fatalErr error
+	activeSourceCount := len(sourceSet)
+	softSourceErrors := !*requireAllSourcesFlag && activeSourceCount > 1
+	foursquareDisabled := false
+	tomTomDisabled := false
+
+	var osmPlaces []foursquarePlace
+	osmAvailable := false
+	if sourceSet[placeSourceOSM] {
+		osmCoverage := coverage
+		if osmCoverage == nil {
+			osmCoverage, err = parseCoverageBounds(defaultSerbiaCoverageBounds)
+			if err != nil {
+				log.Fatalf("invalid default OSM coverage bounds: %v", err)
+			}
+		}
+		log.Printf("Loading OSM/Overpass places for Serbia bounds %s", osmCoverage.String())
+		osmResult, err := loadOSMPlaces(ctx, client, repoRoot, *osmOverpassURLFlag, osmCoverage, *osmTimeoutFlag, *osmCacheFlag, *osmRefreshFlag)
+		if err != nil {
+			log.Printf("  OSM error: %v", err)
+			if softSourceErrors {
+				stats.SoftErrors++
+			} else {
+				stats.Errors++
+			}
+			if !softSourceErrors && !*continueOnErrorFlag {
+				fatalErr = err
+			}
+		} else {
+			osmPlaces = osmResult.Places
+			osmAvailable = true
+			stats.OSMRequests += osmResult.Requests
+			if osmResult.CacheHit {
+				stats.OSMCacheHits++
+			}
+			log.Printf("  OSM candidates: %d (requests=%d cache_hit=%t)", len(osmPlaces), osmResult.Requests, osmResult.CacheHit)
+		}
+	}
 
 	for i, vendor := range vendors {
+		if fatalErr != nil {
+			break
+		}
 		if i > 0 && *sleepFlag > 0 {
 			time.Sleep(*sleepFlag)
 		}
 
-		log.Printf("[%d/%d] Searching Foursquare for %s", i+1, len(vendors), vendor.Name)
-		places, report, err := searchFoursquareForVendor(ctx, client, apiKey, *versionFlag, *fieldsFlag, *categoryIDsFlag, vendor.Name, *nearFlag, limit, coverage, maxSplitDepth, *sleepFlag)
-		stats.FoursquareRequests += report.Requests
-		stats.CoverageSplits += report.SplitCells
-		stats.CoverageLimitHits += report.LimitHitCells
-		if err != nil {
-			stats.Errors++
-			log.Printf("  error: %v", err)
-			if !*continueOnErrorFlag {
-				fatalErr = err
-				break
+		log.Printf("[%d/%d] Matching places for %s", i+1, len(vendors), vendor.Name)
+		if osmAvailable {
+			result := processVendorPlaces(ctx, db, vendor, placeSourceOSM, osmPlaces, *strictFlag, allowedCategoryIDs, *dryRunFlag)
+			stats.PlacesSeen += result.Seen
+			stats.PlacesSkipped += result.Skipped
+			stats.PlacesMatched += result.Matched
+			stats.PlacesSaved += result.Saved
+			if result.Matched > 0 || result.Saved > 0 {
+				log.Printf("  OSM: matched=%d saved=%d", result.Matched, result.Saved)
 			}
-			continue
-		}
-		if coverage != nil {
-			log.Printf("  coverage: unique=%d requests=%d split_cells=%d limit_hit_cells=%d", len(places), report.Requests, report.SplitCells, report.LimitHitCells)
-		}
-
-		stats.PlacesSeen += len(places)
-		savedPlaceIDs := map[string]bool{}
-		for _, place := range places {
-			if !hasCoordinates(place) || placeID(place) == "" {
-				stats.PlacesSkipped++
-				continue
-			}
-			if *strictFlag && !looksLikeVendor(vendor, place) {
-				stats.PlacesSkipped++
-				log.Printf("  skipped: %s did not look like %s", place.Name, vendor.Name)
-				continue
-			}
-			if !isAllowedVendorPlace(vendor, place, allowedCategoryIDs) {
-				stats.PlacesSkipped++
-				log.Printf("  skipped: %s is not an allowed pharmacy/shop place", place.Name)
-				continue
-			}
-
-			stats.PlacesMatched++
-			if *dryRunFlag {
-				log.Printf("  match: %s (%s)", place.Name, formatAddress(place.Location))
-				continue
-			}
-			if err := upsertVendorPlace(ctx, db, vendor, place); err != nil {
+			if result.Saved < result.Matched && !*dryRunFlag {
 				stats.Errors++
-				log.Printf("  save error for %s: %v", place.Name, err)
-				if !*continueOnErrorFlag {
-					fatalErr = err
+				if !*continueOnErrorFlag && !softSourceErrors {
+					fatalErr = fmt.Errorf("failed to save all OSM matches for %s", vendor.Name)
 					break
 				}
-				continue
 			}
-			stats.PlacesSaved++
-			savedPlaceIDs[placeID(place)] = true
-		}
-		if fatalErr != nil {
-			break
-		}
-		if report.LimitHitCells > 0 {
-			stats.Errors++
-			log.Printf("  incomplete: %d coverage cells still hit Foursquare's %d result limit; increase MAX_SPLIT_DEPTH before trusting this vendor as complete", report.LimitHitCells, limit)
-			if !*continueOnErrorFlag {
-				fatalErr = fmt.Errorf("%s still has saturated Foursquare coverage cells", vendor.Name)
-				break
+			if !*dryRunFlag && *pruneStaleFlag {
+				removed, err := pruneStaleVendorPlaces(ctx, db, vendor.ID, placeSourceOSM, sortedKeys(result.SavedIDs))
+				if err != nil {
+					stats.Errors++
+					log.Printf("  failed to prune stale OSM places for %s: %v", vendor.Name, err)
+					if !*continueOnErrorFlag && !softSourceErrors {
+						fatalErr = err
+						break
+					}
+				} else if removed > 0 {
+					stats.PlacesPruned += int(removed)
+					log.Printf("  pruned %d stale OSM cached places for %s", removed, vendor.Name)
+				}
 			}
 		}
-		if coverage != nil && !*dryRunFlag && *pruneStaleFlag && report.LimitHitCells == 0 {
-			removed, err := pruneStaleVendorPlaces(ctx, db, vendor.ID, sortedKeys(savedPlaceIDs))
+
+		if sourceSet[placeSourceTomTom] && !tomTomDisabled {
+			log.Printf("  Searching TomTom for %s", vendor.Name)
+			places, report, err := searchTomTomForVendor(ctx, client, tomTomAPIKey, *tomTomBaseURLFlag, *tomTomCountrySetFlag, vendor.Name, coverage, *tomTomLimitFlag, *tomTomMaxPagesFlag, *tomTomOpeningHoursFlag)
+			stats.TomTomRequests += report.Requests
+			stats.TomTomLimitHits += report.LimitHitCells
 			if err != nil {
+				log.Printf("  TomTom error: %v", err)
+				if softSourceErrors {
+					stats.SoftErrors++
+					tomTomDisabled = true
+					log.Printf("  TomTom disabled for the rest of this run; continuing with other selected sources")
+					continue
+				}
 				stats.Errors++
-				log.Printf("  failed to prune stale places for %s: %v", vendor.Name, err)
 				if !*continueOnErrorFlag {
 					fatalErr = err
 					break
 				}
-			} else if removed > 0 {
-				stats.PlacesPruned += int(removed)
-				log.Printf("  pruned %d stale cached places for %s", removed, vendor.Name)
+				continue
+			}
+			log.Printf("  TomTom: unique=%d requests=%d capped=%t", len(places), report.Requests, report.LimitHitCells > 0)
+			result := processVendorPlaces(ctx, db, vendor, placeSourceTomTom, places, *strictFlag, allowedCategoryIDs, *dryRunFlag)
+			stats.PlacesSeen += result.Seen
+			stats.PlacesSkipped += result.Skipped
+			stats.PlacesMatched += result.Matched
+			stats.PlacesSaved += result.Saved
+			if result.Matched > 0 || result.Saved > 0 {
+				log.Printf("  TomTom: matched=%d saved=%d", result.Matched, result.Saved)
+			}
+			if result.Saved < result.Matched && !*dryRunFlag {
+				stats.Errors++
+				if !*continueOnErrorFlag && !softSourceErrors {
+					fatalErr = fmt.Errorf("failed to save all TomTom matches for %s", vendor.Name)
+					break
+				}
+			}
+			if report.LimitHitCells > 0 {
+				log.Printf("  incomplete: TomTom returned more pages than TOMTOM_MAX_PAGES for %s", vendor.Name)
+				if softSourceErrors {
+					stats.SoftErrors++
+				} else {
+					stats.Errors++
+				}
+				if !softSourceErrors && !*continueOnErrorFlag {
+					fatalErr = fmt.Errorf("%s still has capped TomTom search results", vendor.Name)
+					break
+				}
+			}
+			if !*dryRunFlag && *pruneStaleFlag && report.LimitHitCells == 0 {
+				removed, err := pruneStaleVendorPlaces(ctx, db, vendor.ID, placeSourceTomTom, sortedKeys(result.SavedIDs))
+				if err != nil {
+					stats.Errors++
+					log.Printf("  failed to prune stale TomTom places for %s: %v", vendor.Name, err)
+					if !*continueOnErrorFlag && !softSourceErrors {
+						fatalErr = err
+						break
+					}
+				} else if removed > 0 {
+					stats.PlacesPruned += int(removed)
+					log.Printf("  pruned %d stale TomTom cached places for %s", removed, vendor.Name)
+				}
+			}
+		}
+
+		if sourceSet[placeSourceFoursquare] && !foursquareDisabled {
+			log.Printf("  Searching Foursquare for %s", vendor.Name)
+			places, report, err := searchFoursquareForVendor(ctx, client, apiKey, *versionFlag, *fieldsFlag, *categoryIDsFlag, vendor.Name, *nearFlag, limit, coverage, maxSplitDepth, *sleepFlag)
+			stats.FoursquareRequests += report.Requests
+			stats.CoverageSplits += report.SplitCells
+			stats.CoverageLimitHits += report.LimitHitCells
+			if err != nil {
+				log.Printf("  Foursquare error: %v", err)
+				if softSourceErrors {
+					stats.SoftErrors++
+					foursquareDisabled = true
+					log.Printf("  Foursquare disabled for the rest of this run; continuing with other selected sources")
+					continue
+				}
+				stats.Errors++
+				if !*continueOnErrorFlag {
+					fatalErr = err
+					break
+				}
+				continue
+			}
+			if coverage != nil {
+				log.Printf("  Foursquare coverage: unique=%d requests=%d split_cells=%d limit_hit_cells=%d", len(places), report.Requests, report.SplitCells, report.LimitHitCells)
+			}
+
+			result := processVendorPlaces(ctx, db, vendor, placeSourceFoursquare, places, *strictFlag, allowedCategoryIDs, *dryRunFlag)
+			stats.PlacesSeen += result.Seen
+			stats.PlacesSkipped += result.Skipped
+			stats.PlacesMatched += result.Matched
+			stats.PlacesSaved += result.Saved
+			if result.Matched > 0 || result.Saved > 0 {
+				log.Printf("  Foursquare: matched=%d saved=%d", result.Matched, result.Saved)
+			}
+			if result.Saved < result.Matched && !*dryRunFlag {
+				stats.Errors++
+				if !*continueOnErrorFlag {
+					fatalErr = fmt.Errorf("failed to save all Foursquare matches for %s", vendor.Name)
+					break
+				}
+			}
+			if report.LimitHitCells > 0 {
+				log.Printf("  incomplete: %d Foursquare coverage cells still hit the %d result limit; increase MAX_SPLIT_DEPTH before trusting this source as complete", report.LimitHitCells, limit)
+				if softSourceErrors {
+					stats.SoftErrors++
+				} else {
+					stats.Errors++
+				}
+				if !softSourceErrors && !*continueOnErrorFlag {
+					fatalErr = fmt.Errorf("%s still has saturated Foursquare coverage cells", vendor.Name)
+					break
+				}
+			}
+			if coverage != nil && !*dryRunFlag && *pruneStaleFlag && report.LimitHitCells == 0 {
+				removed, err := pruneStaleVendorPlaces(ctx, db, vendor.ID, placeSourceFoursquare, sortedKeys(result.SavedIDs))
+				if err != nil {
+					stats.Errors++
+					log.Printf("  failed to prune stale Foursquare places for %s: %v", vendor.Name, err)
+					if !*continueOnErrorFlag {
+						fatalErr = err
+						break
+					}
+				} else if removed > 0 {
+					stats.PlacesPruned += int(removed)
+					log.Printf("  pruned %d stale Foursquare cached places for %s", removed, vendor.Name)
+				}
 			}
 		}
 	}
@@ -326,8 +639,8 @@ func main() {
 		}
 	}
 
-	log.Printf("Done. vendors=%d requests=%d split_cells=%d limit_hit_cells=%d seen=%d matched=%d skipped=%d saved=%d pruned=%d errors=%d dry_run=%t",
-		stats.Vendors, stats.FoursquareRequests, stats.CoverageSplits, stats.CoverageLimitHits, stats.PlacesSeen, stats.PlacesMatched, stats.PlacesSkipped, stats.PlacesSaved, stats.PlacesPruned, stats.Errors, *dryRunFlag)
+	log.Printf("Done. vendors=%d sources=%s foursquare_requests=%d tomtom_requests=%d osm_requests=%d osm_cache_hits=%d split_cells=%d foursquare_limit_hits=%d tomtom_limit_hits=%d seen=%d matched=%d skipped=%d saved=%d pruned=%d errors=%d soft_errors=%d dry_run=%t",
+		stats.Vendors, strings.Join(sortedSourceNames(sourceSet), ","), stats.FoursquareRequests, stats.TomTomRequests, stats.OSMRequests, stats.OSMCacheHits, stats.CoverageSplits, stats.CoverageLimitHits, stats.TomTomLimitHits, stats.PlacesSeen, stats.PlacesMatched, stats.PlacesSkipped, stats.PlacesSaved, stats.PlacesPruned, stats.Errors, stats.SoftErrors, *dryRunFlag)
 	if fatalErr != nil {
 		log.Printf("Failed fast. Re-run with -continue-on-error, or CONTINUE_ON_ERROR=1 make fetch-places, to keep processing after errors.")
 		os.Exit(1)
@@ -371,6 +684,51 @@ func loadVendors(ctx context.Context, db *sql.DB, filter string, max int) ([]ven
 		vendors = append(vendors, v)
 	}
 	return vendors, rows.Err()
+}
+
+func processVendorPlaces(ctx context.Context, db *sql.DB, vendor vendorRow, source string, places []foursquarePlace, strict bool, allowedCategoryIDs map[string]bool, dryRun bool) placeProcessResult {
+	result := placeProcessResult{
+		Seen:     len(places),
+		SavedIDs: map[string]bool{},
+	}
+	logSkips := source == placeSourceFoursquare
+
+	for _, place := range places {
+		place.Source = source
+		if !hasCoordinates(place) || placeID(place) == "" {
+			result.Skipped++
+			continue
+		}
+		if strict && !looksLikeVendor(vendor, place) {
+			result.Skipped++
+			if logSkips {
+				log.Printf("  skipped: %s did not look like %s", place.Name, vendor.Name)
+			}
+			continue
+		}
+		if !isAllowedVendorPlace(vendor, place, allowedCategoryIDs) {
+			result.Skipped++
+			if logSkips {
+				log.Printf("  skipped: %s is not an allowed pharmacy/shop place", place.Name)
+			}
+			continue
+		}
+
+		result.Matched++
+		if dryRun {
+			log.Printf("  %s match: %s (%s)", source, place.Name, formatAddress(place.Location))
+			result.SavedIDs[placeID(place)] = true
+			continue
+		}
+		if err := upsertVendorPlace(ctx, db, vendor, place); err != nil {
+			log.Printf("  save error for %s place %s: %v", source, place.Name, err)
+			continue
+		}
+		result.Saved++
+		result.SavedIDs[placeID(place)] = true
+	}
+
+	return result
 }
 
 func searchFoursquareForVendor(ctx context.Context, client *http.Client, apiKey, version, fields, categoryIDs, query, near string, limit int, coverage *coverageBounds, maxSplitDepth int, requestSleep time.Duration) ([]foursquarePlace, coverageReport, error) {
@@ -464,7 +822,501 @@ func searchFoursquare(ctx context.Context, client *http.Client, apiKey, version,
 	if err := json.Unmarshal(body, &decoded); err != nil {
 		return nil, err
 	}
+	for i := range decoded.Results {
+		decoded.Results[i].Source = placeSourceFoursquare
+	}
 	return decoded.Results, nil
+}
+
+func loadOSMPlaces(ctx context.Context, client *http.Client, repoRoot, overpassURL string, bounds *coverageBounds, timeoutSeconds int, cachePath string, refresh bool) (osmLoadResult, error) {
+	if bounds == nil {
+		return osmLoadResult{}, errors.New("OSM import requires coverage bounds")
+	}
+	if timeoutSeconds <= 0 {
+		timeoutSeconds = 180
+	}
+
+	cacheFile := resolveCachePath(repoRoot, cachePath)
+	if cacheFile != "" && !refresh {
+		if data, err := os.ReadFile(cacheFile); err == nil && len(bytes.TrimSpace(data)) > 0 {
+			places, err := decodeOSMPlaces(data)
+			if err != nil {
+				return osmLoadResult{}, fmt.Errorf("decoding cached OSM response: %w", err)
+			}
+			return osmLoadResult{Places: places, CacheHit: true}, nil
+		}
+	}
+
+	body, err := fetchOSMOverpass(ctx, client, overpassURL, bounds, timeoutSeconds)
+	if err != nil {
+		return osmLoadResult{}, err
+	}
+	if cacheFile != "" {
+		if err := os.MkdirAll(filepath.Dir(cacheFile), 0o755); err != nil {
+			return osmLoadResult{}, fmt.Errorf("creating OSM cache directory: %w", err)
+		}
+		if err := os.WriteFile(cacheFile, body, 0o644); err != nil {
+			return osmLoadResult{}, fmt.Errorf("writing OSM cache: %w", err)
+		}
+	}
+
+	places, err := decodeOSMPlaces(body)
+	if err != nil {
+		return osmLoadResult{}, err
+	}
+	return osmLoadResult{Places: places, Requests: 1}, nil
+}
+
+func fetchOSMOverpass(ctx context.Context, client *http.Client, overpassURL string, bounds *coverageBounds, timeoutSeconds int) ([]byte, error) {
+	overpassURL = strings.TrimSpace(overpassURL)
+	if overpassURL == "" {
+		overpassURL = defaultOSMOverpassURL
+	}
+	query := fmt.Sprintf(`[out:json][timeout:%d];
+area["ISO3166-1"="RS"][admin_level=2]->.searchArea;
+(
+  nwr["amenity"~"^(pharmacy)$"](area.searchArea);
+  nwr["healthcare"~"^(pharmacy)$"](area.searchArea);
+  nwr["shop"~"^(chemist|health_food|nutrition_supplements|sports|beauty|cosmetics)$"](area.searchArea);
+);
+out center tags;`, timeoutSeconds)
+
+	form := url.Values{}
+	form.Set("data", query)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, overpassURL, strings.NewReader(form.Encode()))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", "pharma-search-local-places-sync/1.0")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 64<<20))
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("Overpass status %d: %s", resp.StatusCode, truncateForLog(body, 500))
+	}
+	return body, nil
+}
+
+func decodeOSMPlaces(body []byte) ([]foursquarePlace, error) {
+	var decoded osmOverpassResponse
+	if err := json.Unmarshal(body, &decoded); err != nil {
+		return nil, err
+	}
+
+	places := make([]foursquarePlace, 0, len(decoded.Elements))
+	seen := map[string]bool{}
+	for _, element := range decoded.Elements {
+		if !isRelevantOSMElement(element) {
+			continue
+		}
+		place := osmElementToPlace(element)
+		id := placeID(place)
+		if id == "" || seen[id] || !hasCoordinates(place) {
+			continue
+		}
+		seen[id] = true
+		places = append(places, place)
+	}
+	sort.Slice(places, func(i, j int) bool {
+		return strings.ToLower(places[i].Name) < strings.ToLower(places[j].Name)
+	})
+	return places, nil
+}
+
+func isRelevantOSMElement(element osmElement) bool {
+	if len(element.Tags) == 0 {
+		return false
+	}
+	if strings.TrimSpace(osmTag(element.Tags, "name", "brand", "operator")) == "" {
+		return false
+	}
+	for _, key := range []string{"amenity", "healthcare", "shop"} {
+		value := normalizeName(element.Tags[key])
+		if value == "pharmacy" || value == "chemist" || value == "health food" ||
+			value == "nutrition supplements" || value == "sports" || value == "beauty" || value == "cosmetics" {
+			return true
+		}
+	}
+	return hasRelevantTextSignal(strings.Join([]string{
+		element.Tags["name"], element.Tags["brand"], element.Tags["operator"],
+		element.Tags["description"], element.Tags["healthcare:speciality"],
+	}, " "))
+}
+
+func osmElementToPlace(element osmElement) foursquarePlace {
+	tags := element.Tags
+	lat := element.Lat
+	lng := element.Lon
+	if (lat == 0 && lng == 0) && element.Center != nil {
+		lat = element.Center.Lat
+		lng = element.Center.Lon
+	}
+
+	name := strings.TrimSpace(osmTag(tags, "name", "brand", "operator"))
+	address := combineAddress(strings.TrimSpace(strings.Join([]string{tags["addr:street"], tags["addr:housenumber"]}, " ")), tags["addr:unit"])
+	locality := osmTag(tags, "addr:city", "addr:municipality", "is_in:city")
+	postcode := tags["addr:postcode"]
+	country := osmTag(tags, "addr:country", "country")
+	if country == "" {
+		country = "RS"
+	}
+	categoriesJSON := rawJSONOrDefault(mustJSON(osmCategories(tags)), "[]")
+	chainsJSON := rawJSONOrDefault(mustJSON(osmChains(tags)), "[]")
+
+	return foursquarePlace{
+		Source:     placeSourceOSM,
+		FSQID:      fmt.Sprintf("%s/%d", element.Type, element.ID),
+		Name:       name,
+		Categories: categoriesJSON,
+		Chains:     chainsJSON,
+		Tel:        osmTag(tags, "phone", "contact:phone"),
+		Website:    osmTag(tags, "website", "contact:website"),
+		Email:      osmTag(tags, "email", "contact:email"),
+		Location: foursquareLocation{
+			Address:          address,
+			Locality:         locality,
+			Region:           tags["addr:province"],
+			Postcode:         postcode,
+			Country:          country,
+			FormattedAddress: formattedOSMAddress(address, locality, postcode, country),
+		},
+		Hours: foursquareHours{
+			Display: strings.TrimSpace(tags["opening_hours"]),
+		},
+		Latitude:  lat,
+		Longitude: lng,
+		Raw:       rawJSONOrDefault(element.Raw, "{}"),
+	}
+}
+
+func searchTomTomForVendor(ctx context.Context, client *http.Client, apiKey, baseURL, countrySet, query string, bounds *coverageBounds, limit, maxPages int, openingHours bool) ([]foursquarePlace, coverageReport, error) {
+	if bounds == nil {
+		defaultBounds, err := parseCoverageBounds(defaultSerbiaCoverageBounds)
+		if err != nil {
+			return nil, coverageReport{}, err
+		}
+		bounds = defaultBounds
+	}
+	if limit <= 0 || limit > 100 {
+		limit = 100
+	}
+	if maxPages <= 0 {
+		maxPages = 20
+	}
+
+	report := coverageReport{}
+	seen := map[string]foursquarePlace{}
+	offset := 0
+	for page := 0; page < maxPages; page++ {
+		resp, err := searchTomTom(ctx, client, apiKey, baseURL, countrySet, query, bounds, limit, offset, openingHours)
+		report.Requests++
+		if err != nil {
+			return nil, report, err
+		}
+		for _, result := range resp.Results {
+			place := tomTomResultToPlace(result)
+			id := placeID(place)
+			if id == "" {
+				lat, lng := coordinates(place)
+				id = fmt.Sprintf("%s:%.7f:%.7f", normalizeName(place.Name), lat, lng)
+			}
+			if id != "" {
+				seen[id] = place
+			}
+		}
+		if len(resp.Results) == 0 || offset+len(resp.Results) >= resp.Summary.TotalResults {
+			break
+		}
+		if page == maxPages-1 {
+			report.LimitHitCells = 1
+			break
+		}
+		offset += len(resp.Results)
+	}
+
+	places := make([]foursquarePlace, 0, len(seen))
+	for _, place := range seen {
+		places = append(places, place)
+	}
+	sort.Slice(places, func(i, j int) bool {
+		return strings.ToLower(places[i].Name) < strings.ToLower(places[j].Name)
+	})
+	return places, report, nil
+}
+
+func searchTomTom(ctx context.Context, client *http.Client, apiKey, baseURL, countrySet, query string, bounds *coverageBounds, limit, offset int, openingHours bool) (tomTomSearchResponse, error) {
+	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if baseURL == "" {
+		baseURL = defaultTomTomBaseURL
+	}
+	endpoint := fmt.Sprintf("%s/search/2/search/%s.json", baseURL, url.PathEscape(query))
+	params := url.Values{}
+	params.Set("key", apiKey)
+	params.Set("limit", strconv.Itoa(limit))
+	params.Set("ofs", strconv.Itoa(offset))
+	params.Set("countrySet", strings.TrimSpace(countrySet))
+	params.Set("topLeft", fmt.Sprintf("%.6f,%.6f", bounds.North, bounds.West))
+	params.Set("btmRight", fmt.Sprintf("%.6f,%.6f", bounds.South, bounds.East))
+	params.Set("idxSet", "POI")
+	params.Set("view", "RS")
+	if openingHours {
+		params.Set("openingHours", "nextSevenDays")
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+"?"+params.Encode(), nil)
+	if err != nil {
+		return tomTomSearchResponse{}, err
+	}
+	req.Header.Set("Accept", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		return tomTomSearchResponse{}, err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	if err != nil {
+		return tomTomSearchResponse{}, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return tomTomSearchResponse{}, fmt.Errorf("TomTom status %d: %s", resp.StatusCode, truncateForLog(body, 500))
+	}
+
+	var decoded tomTomSearchResponse
+	if err := json.Unmarshal(body, &decoded); err != nil {
+		return tomTomSearchResponse{}, err
+	}
+	return decoded, nil
+}
+
+func tomTomResultToPlace(result tomTomResult) foursquarePlace {
+	categoriesJSON := rawJSONOrDefault(mustJSON(tomTomCategories(result)), "[]")
+	chainsJSON := rawJSONOrDefault(mustJSON(tomTomChains(result.POI.Brands)), "[]")
+	hoursDisplay := ""
+	if result.POI.OpeningHours != nil {
+		hoursDisplay = formatTomTomOpeningHours(*result.POI.OpeningHours)
+	}
+	timezone := ""
+	if result.POI.TimeZone != nil {
+		timezone = result.POI.TimeZone.IANAID
+	}
+
+	address := combineAddress(strings.TrimSpace(strings.Join([]string{result.Address.StreetName, result.Address.StreetNumber}, " ")), "")
+	locality := firstNonEmpty(result.Address.Municipality, result.Address.MunicipalitySubdivision)
+	region := firstNonEmpty(result.Address.CountrySubdivisionName, result.Address.CountrySubdivision)
+	formatted := result.Address.FreeformAddress
+	if formatted == "" {
+		formatted = formattedOSMAddress(address, locality, result.Address.PostalCode, result.Address.CountryCode)
+	}
+
+	return foursquarePlace{
+		Source:     placeSourceTomTom,
+		FSQID:      strings.TrimSpace(result.ID),
+		Name:       result.POI.Name,
+		Categories: categoriesJSON,
+		Chains:     chainsJSON,
+		Tel:        result.POI.Phone,
+		Website:    result.POI.URL,
+		Location: foursquareLocation{
+			Address:          address,
+			Locality:         locality,
+			Region:           region,
+			Postcode:         result.Address.PostalCode,
+			Country:          result.Address.CountryCode,
+			FormattedAddress: formatted,
+		},
+		Hours: foursquareHours{
+			Display: hoursDisplay,
+		},
+		Latitude:  result.Position.Lat,
+		Longitude: result.Position.Lon,
+		Timezone:  timezone,
+		Raw:       rawJSONOrDefault(result.Raw, "{}"),
+	}
+}
+
+func resolveCachePath(repoRoot, cachePath string) string {
+	cachePath = strings.TrimSpace(cachePath)
+	if cachePath == "" {
+		return ""
+	}
+	if filepath.IsAbs(cachePath) {
+		return cachePath
+	}
+	return filepath.Join(repoRoot, cachePath)
+}
+
+func overpassBBox(bounds coverageBounds) string {
+	return fmt.Sprintf("%.6f,%.6f,%.6f,%.6f", bounds.South, bounds.West, bounds.North, bounds.East)
+}
+
+func osmTag(tags map[string]string, keys ...string) string {
+	for _, key := range keys {
+		if value := strings.TrimSpace(tags[key]); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func osmCategories(tags map[string]string) []map[string]interface{} {
+	var categories []map[string]interface{}
+	for _, key := range []string{"amenity", "healthcare", "shop"} {
+		value := strings.TrimSpace(tags[key])
+		if value == "" {
+			continue
+		}
+		categories = append(categories, map[string]interface{}{
+			"id":   key + ":" + value,
+			"name": humanizeOSMValue(value),
+		})
+	}
+	return categories
+}
+
+func osmChains(tags map[string]string) []map[string]string {
+	brand := osmTag(tags, "brand", "operator")
+	if brand == "" {
+		return nil
+	}
+	return []map[string]string{{"name": brand}}
+}
+
+func formattedOSMAddress(address, locality, postcode, country string) string {
+	var parts []string
+	for _, part := range []string{address, locality, postcode, country} {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			parts = append(parts, part)
+		}
+	}
+	return strings.Join(parts, ", ")
+}
+
+func tomTomCategories(result tomTomResult) []map[string]interface{} {
+	var categories []map[string]interface{}
+	for _, category := range result.POI.Categories {
+		category = strings.TrimSpace(category)
+		if category != "" {
+			categories = append(categories, map[string]interface{}{"name": category})
+		}
+	}
+	for _, category := range result.POI.CategorySet {
+		if category.ID > 0 {
+			categories = append(categories, map[string]interface{}{"id": strconv.Itoa(category.ID)})
+		}
+	}
+	for _, classification := range result.POI.Classifications {
+		name := ""
+		if len(classification.Names) > 0 {
+			name = strings.TrimSpace(classification.Names[0].Name)
+		}
+		if classification.Code != "" || name != "" {
+			categories = append(categories, map[string]interface{}{
+				"id":   classification.Code,
+				"name": name,
+			})
+		}
+	}
+	return categories
+}
+
+func tomTomChains(brands []tomTomBrand) []map[string]string {
+	var chains []map[string]string
+	for _, brand := range brands {
+		if name := strings.TrimSpace(brand.Name); name != "" {
+			chains = append(chains, map[string]string{"name": name})
+		}
+	}
+	return chains
+}
+
+func formatTomTomOpeningHours(hours tomTomOpeningHours) string {
+	if len(hours.TimeRanges) == 0 {
+		return strings.TrimSpace(hours.Mode)
+	}
+	var parts []string
+	for _, timeRange := range hours.TimeRanges {
+		part := formatTomTomTimeRange(timeRange)
+		if part == "" {
+			continue
+		}
+		parts = append(parts, part)
+	}
+	if len(parts) == 0 {
+		return strings.TrimSpace(hours.Mode)
+	}
+	return strings.Join(parts, "\n")
+}
+
+func formatTomTomTimeRange(timeRange tomTomTimeRange) string {
+	startTime := formatTomTomClock(timeRange.StartTime)
+	endTime := formatTomTomClock(timeRange.EndTime)
+	if startTime == "" || endTime == "" {
+		return ""
+	}
+
+	startLabel := formatTomTomDateLabel(timeRange.StartTime.Date)
+	endLabel := formatTomTomDateLabel(timeRange.EndTime.Date)
+	if startLabel == "" && endLabel == "" {
+		return startTime + "-" + endTime
+	}
+	if endLabel == "" || startLabel == endLabel {
+		return strings.TrimSpace(startLabel + " " + startTime + "-" + endTime)
+	}
+	return strings.TrimSpace(startLabel + " " + startTime + "-" + endLabel + " " + endTime)
+}
+
+func formatTomTomClock(point tomTomTimePoint) string {
+	if point.Hour < 0 || point.Hour > 23 || point.Minute < 0 || point.Minute > 59 {
+		return ""
+	}
+	return fmt.Sprintf("%02d:%02d", point.Hour, point.Minute)
+}
+
+func formatTomTomDateLabel(dateValue string) string {
+	if strings.TrimSpace(dateValue) == "" {
+		return ""
+	}
+	parsed, err := time.Parse("2006-01-02", dateValue)
+	if err != nil {
+		return dateValue
+	}
+	weekdays := []string{"Ned", "Pon", "Uto", "Sre", "Čet", "Pet", "Sub"}
+	return weekdays[int(parsed.Weekday())]
+}
+
+func humanizeOSMValue(value string) string {
+	value = strings.ReplaceAll(strings.TrimSpace(value), "_", " ")
+	if value == "" {
+		return ""
+	}
+	words := strings.Fields(value)
+	for i, word := range words {
+		if len(word) > 0 {
+			words[i] = strings.ToUpper(word[:1]) + word[1:]
+		}
+	}
+	return strings.Join(words, " ")
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }
 
 func parseCoverageBounds(raw string) (*coverageBounds, error) {
@@ -544,6 +1396,7 @@ func bearerToken(apiKey string) string {
 func upsertVendorPlace(ctx context.Context, db *sql.DB, vendor vendorRow, place foursquarePlace) error {
 	lat, lng := coordinates(place)
 	foursquareID := placeID(place)
+	source := placeSource(place)
 	hoursJSON := rawJSONOrDefault(mustJSON(place.Hours), "{}")
 	categoriesJSON := rawJSONOrDefault(place.Categories, "[]")
 	chainsJSON := rawJSONOrDefault(place.Chains, "[]")
@@ -561,14 +1414,14 @@ func upsertVendorPlace(ctx context.Context, db *sql.DB, vendor vendorRow, place 
 			"vendorId", "foursquareId", name, address, locality, region, postcode, country,
 			"formattedAddress", phone, email, website, "hoursDisplay", "openNow", hours,
 			categories, chains, photos, "socialMedia", rating, popularity, price, latitude,
-			longitude, timezone, "mapsUrl", "rawPlace", "fetchedAt", "updatedAt"
+			longitude, timezone, "mapsUrl", source, "rawPlace", "fetchedAt", "updatedAt"
 		) VALUES (
 			$1, $2, $3, $4, $5, $6, $7, $8,
 			$9, $10, $11, $12, $13, $14, $15::jsonb,
 			$16::jsonb, $17::jsonb, $18::jsonb, $19::jsonb, $20, $21, $22, $23,
-			$24, $25, $26, $27::jsonb, now(), now()
+			$24, $25, $26, $27, $28::jsonb, now(), now()
 		)
-		ON CONFLICT ("vendorId", "foursquareId") DO UPDATE SET
+		ON CONFLICT ("vendorId", source, "foursquareId") DO UPDATE SET
 			name = EXCLUDED.name,
 			address = EXCLUDED.address,
 			locality = EXCLUDED.locality,
@@ -601,7 +1454,7 @@ func upsertVendorPlace(ctx context.Context, db *sql.DB, vendor vendorRow, place 
 		formatAddress(place.Location), place.Tel, place.Email, place.Website, hoursDisplay,
 		nullableBool(place.Hours.OpenNow), string(hoursJSON), string(categoriesJSON), string(chainsJSON),
 		string(photosJSON), string(socialJSON), nullableFloat(place.Rating), nullableFloat(place.Popularity),
-		nullableInt(place.Price), lat, lng, place.Timezone, mapsURL, string(rawPlaceJSON))
+		nullableInt(place.Price), lat, lng, place.Timezone, mapsURL, source, string(rawPlaceJSON))
 	if err != nil {
 		return err
 	}
@@ -672,10 +1525,6 @@ func pruneDisallowedPlaces(ctx context.Context, db *sql.DB, allowedCategoryIDs m
 			OR lower(vp.name || ' ' || v."name") LIKE '%lily%'
 			OR lower(vp.name || ' ' || v."name") LIKE '%srbotrade%'
 			OR lower(vp.name || ' ' || v."name") LIKE '%zdravlja%'
-			OR lower(vp.name || ' ' || v."name") LIKE '%lek%'
-			OR lower(vp.name || ' ' || v."name") LIKE '%лек%'
-			OR lower(vp.name || ' ' || v."name") LIKE '%med%'
-			OR lower(vp.name || ' ' || v."name") LIKE '%мед%'
 			OR lower(vp.name || ' ' || v."name") LIKE '%vita%'
 			OR lower(vp.name || ' ' || v."name") LIKE '%vitamin%'
 			OR lower(vp.name || ' ' || v."name") LIKE '%suplement%'
@@ -698,12 +1547,13 @@ func pruneDisallowedPlaces(ctx context.Context, db *sql.DB, allowedCategoryIDs m
 	return result.RowsAffected()
 }
 
-func pruneStaleVendorPlaces(ctx context.Context, db *sql.DB, vendorID string, fetchedPlaceIDs []string) (int64, error) {
+func pruneStaleVendorPlaces(ctx context.Context, db *sql.DB, vendorID, source string, fetchedPlaceIDs []string) (int64, error) {
 	result, err := db.ExecContext(ctx, `
 		DELETE FROM public."VendorPlace"
 		WHERE "vendorId" = $1
-		  AND NOT ("foursquareId" = ANY($2))
-	`, vendorID, pq.Array(fetchedPlaceIDs))
+		  AND source = $2
+		  AND NOT ("foursquareId" = ANY($3))
+	`, vendorID, source, pq.Array(fetchedPlaceIDs))
 	if err != nil {
 		return 0, err
 	}
@@ -735,6 +1585,16 @@ func placeID(place foursquarePlace) string {
 	return strings.TrimSpace(place.FSQID)
 }
 
+func placeSource(place foursquarePlace) string {
+	source := strings.ToLower(strings.TrimSpace(place.Source))
+	switch source {
+	case placeSourceOSM, placeSourceTomTom, placeSourceFoursquare:
+		return source
+	default:
+		return placeSourceFoursquare
+	}
+}
+
 func isAllowedVendorPlace(vendor vendorRow, place foursquarePlace, allowedCategoryIDs map[string]bool) bool {
 	hasAllowedCategory := false
 	hasRelevantCategory := false
@@ -762,7 +1622,8 @@ func isAllowedVendorPlace(vendor vendorRow, place foursquarePlace, allowedCatego
 func hasRelevantPlaceCategoryName(name string) bool {
 	for _, signal := range []string{
 		"pharmacy", "drugstore", "supplement", "vitamin", "nutrition", "health food",
-		"sporting goods", "cosmetic", "beauty supply",
+		"sporting goods", "cosmetic", "beauty supply", "chemist", "sports", "health",
+		"nutrition supplements", "beauty", "cosmetics",
 	} {
 		if strings.Contains(name, signal) {
 			return true
@@ -771,26 +1632,36 @@ func hasRelevantPlaceCategoryName(name string) bool {
 	return false
 }
 
-func hasRelevantPlaceNameSignal(vendor vendorRow, place foursquarePlace) bool {
-	raw := strings.ToLower(vendor.Name + " " + place.Name)
-	for _, signal := range []string{"апотек", "фарма", "лек", "мед", "суплемент", "витамин", "спорт"} {
+func hasRelevantTextSignal(value string) bool {
+	raw := strings.ToLower(value)
+	for _, signal := range []string{"апотек", "фарма", "суплемент", "витамин", "спорт"} {
 		if strings.Contains(raw, signal) {
 			return true
 		}
 	}
 
-	normalized := normalizeName(vendor.Name + " " + place.Name)
-	if normalized == "" {
-		return false
-	}
+	normalized := normalizeName(value)
 	for _, signal := range []string{
-		"apotek", "pharm", "farmaci", "drogerie", "drugstore", "zdravlja", "lek", "med", "vita",
-		"vitamin", "suplement", "supplement", "protein", "proteini", "sport", "fitness", "fitlab",
-		"gym", "pansport", "titanium", "superior",
+		"apotek", "pharm", "farmaci", "drogerie", "drugstore", "chemist", "zdravlja",
+		"vita", "vitamin", "suplement", "supplement", "nutrition", "protein",
+		"proteini", "sport", "fitness", "fitlab", "gym", "pansport", "titanium", "superior",
 	} {
 		if strings.Contains(normalized, signal) {
 			return true
 		}
+	}
+	return false
+}
+
+func hasRelevantPlaceNameSignal(vendor vendorRow, place foursquarePlace) bool {
+	raw := vendor.Name + " " + place.Name
+	if hasRelevantTextSignal(raw) {
+		return true
+	}
+
+	normalized := normalizeName(raw)
+	if normalized == "" {
+		return false
 	}
 
 	tokens := tokenSet(normalized)
@@ -818,14 +1689,14 @@ func looksLikeVendor(v vendorRow, place foursquarePlace) bool {
 	if vendorName == "" || placeName == "" {
 		return false
 	}
-	if strings.Contains(placeName, vendorName) || strings.Contains(vendorName, placeName) {
+	if len(vendorName) >= 3 && strings.Contains(placeName, vendorName) {
+		return true
+	}
+	if len(placeName) >= 4 && !isGenericPlaceName(placeName) && strings.Contains(vendorName, placeName) {
 		return true
 	}
 
 	vendorTokens := meaningfulTokens(vendorName)
-	if len(vendorTokens) == 0 {
-		vendorTokens = splitTokens(vendorName)
-	}
 	if len(vendorTokens) == 0 {
 		return false
 	}
@@ -876,6 +1747,7 @@ func meaningfulTokens(value string) []string {
 		"apoteka": true, "apoteke": true, "apotekarska": true, "ustanova": true,
 		"pharmacy": true, "farmacija": true, "online": true, "shop": true,
 		"store": true, "prodavnica": true, "srbija": true, "rs": true, "www": true,
+		"web": true, "net": true, "e": true,
 	}
 	var tokens []string
 	for _, token := range splitTokens(value) {
@@ -886,6 +1758,15 @@ func meaningfulTokens(value string) []string {
 	}
 	sort.Strings(tokens)
 	return tokens
+}
+
+func isGenericPlaceName(value string) bool {
+	generic := map[string]bool{
+		"apoteka": true, "pharmacy": true, "drugstore": true, "drogerie": true,
+		"chemist": true, "supplement": true, "suplementi": true, "vitamin": true,
+		"sport": true, "sports": true, "fitness": true, "shop": true, "store": true,
+	}
+	return generic[strings.TrimSpace(value)]
 }
 
 func tokenSet(value string) map[string]bool {
@@ -905,6 +1786,50 @@ func parseCSVSet(value string) map[string]bool {
 		}
 	}
 	return out
+}
+
+func parseSourceList(value string) ([]string, error) {
+	parts := strings.Split(value, ",")
+	var out []string
+	seen := map[string]bool{}
+	for _, part := range parts {
+		source := strings.ToLower(strings.TrimSpace(part))
+		if source == "" {
+			continue
+		}
+		switch source {
+		case placeSourceOSM, placeSourceTomTom, placeSourceFoursquare:
+		default:
+			return nil, fmt.Errorf("unsupported source %q", source)
+		}
+		if !seen[source] {
+			seen[source] = true
+			out = append(out, source)
+		}
+	}
+	if len(out) == 0 {
+		return nil, errors.New("expected at least one source")
+	}
+	return out, nil
+}
+
+func sourceSet(sources []string) map[string]bool {
+	out := map[string]bool{}
+	for _, source := range sources {
+		out[source] = true
+	}
+	return out
+}
+
+func sortedSourceNames(values map[string]bool) []string {
+	names := make([]string, 0, len(values))
+	for source, enabled := range values {
+		if enabled {
+			names = append(names, source)
+		}
+	}
+	sort.Strings(names)
+	return names
 }
 
 func sortedKeys(values map[string]bool) []string {
@@ -993,8 +1918,8 @@ func formatClock(raw string) string {
 	return raw[:2] + ":" + raw[2:]
 }
 
-func googleMapsURL(name string, lat, lng float64) string {
-	query := fmt.Sprintf("%s %.6f,%.6f", strings.TrimSpace(name), lat, lng)
+func googleMapsURL(_ string, lat, lng float64) string {
+	query := fmt.Sprintf("%.6f,%.6f", lat, lng)
 	return "https://www.google.com/maps/search/?api=1&query=" + url.QueryEscape(query)
 }
 

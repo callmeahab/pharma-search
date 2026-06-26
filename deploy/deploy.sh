@@ -33,6 +33,7 @@ rsync -avz --delete \
     --exclude '.gocache' \
     --exclude '.gomodcache' \
     --exclude '.pycache' \
+    --exclude 'cache' \
     --exclude '__pycache__' \
     --exclude 'node_modules' \
     --exclude '.next' \

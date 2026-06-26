@@ -15,11 +15,12 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { vendorsApi, Pharmacy, PharmacyPlace } from "@/lib/vendors";
-import { MapPin, Search } from "lucide-react";
+import { ChevronLeft, ChevronRight, MapPin, Search } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
 const POPULAR_CITY_LIMIT = 8;
+const PLACE_PAGE_SIZE = 24;
 
 type CityStat = {
   key: string;
@@ -34,6 +35,7 @@ export default function PharmaciesPage() {
   const [query, setQuery] = useState("");
   const [cityKey, setCityKey] = useState<string>("");
   const [selectedPlaceId, setSelectedPlaceId] = useState<string>("");
+  const [page, setPage] = useState(1);
 
   useEffect(() => {
     let cancelled = false;
@@ -102,6 +104,23 @@ export default function PharmaciesPage() {
     });
   }, [pharmacies, query, cityKey]);
 
+  const pageCount = Math.max(1, Math.ceil(filteredPlaces.length / PLACE_PAGE_SIZE));
+  const currentPage = Math.min(page, pageCount);
+  const pageStart = filteredPlaces.length === 0 ? 0 : (currentPage - 1) * PLACE_PAGE_SIZE + 1;
+  const pageEnd = Math.min(currentPage * PLACE_PAGE_SIZE, filteredPlaces.length);
+  const pagedPlaces = useMemo(
+    () => filteredPlaces.slice((currentPage - 1) * PLACE_PAGE_SIZE, currentPage * PLACE_PAGE_SIZE),
+    [filteredPlaces, currentPage],
+  );
+
+  useEffect(() => {
+    setPage(1);
+  }, [query, cityKey]);
+
+  useEffect(() => {
+    if (page > pageCount) setPage(pageCount);
+  }, [page, pageCount]);
+
   useEffect(() => {
     if (filteredPlaces.length === 0) {
       setSelectedPlaceId("");
@@ -114,6 +133,14 @@ export default function PharmaciesPage() {
 
   const selectedPlace = filteredPlaces.find((place) => place.id === selectedPlaceId);
   const hasImportedPlaces = places.length > 0;
+
+  function selectPlace(place: PharmacyPlace) {
+    setSelectedPlaceId(place.id);
+    const placeIndex = filteredPlaces.findIndex((item) => item.id === place.id);
+    if (placeIndex >= 0) {
+      setPage(Math.floor(placeIndex / PLACE_PAGE_SIZE) + 1);
+    }
+  }
 
   return (
     <div className="min-h-screen flex flex-col bg-health-light dark:bg-gray-900">
@@ -199,26 +226,36 @@ export default function PharmaciesPage() {
                 <PharmacyMap
                   places={filteredPlaces}
                   selectedId={selectedPlaceId}
-                  onSelect={(place) => setSelectedPlaceId(place.id)}
+                  onSelect={selectPlace}
                 />
 
-                <div className="mb-4 flex items-center justify-between gap-3">
+                <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <p className="text-sm text-gray-600 dark:text-gray-400">
+                    Prikaz {pageStart.toLocaleString("sr-RS")}-{pageEnd.toLocaleString("sr-RS")} od{" "}
                     {filteredPlaces.length.toLocaleString("sr-RS")} lokacija
                     {selectedPlace ? `, izabrana: ${selectedPlace.name}` : ""}
                   </p>
+                  {pageCount > 1 && (
+                    <PaginationControls page={currentPage} pageCount={pageCount} onPageChange={setPage} />
+                  )}
                 </div>
 
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-                  {filteredPlaces.map((place) => (
+                  {pagedPlaces.map((place) => (
                     <PharmacyPlaceCard
                       key={place.id}
                       place={place}
                       selected={place.id === selectedPlaceId}
-                      onSelect={(nextPlace) => setSelectedPlaceId(nextPlace.id)}
+                      onSelect={selectPlace}
                     />
                   ))}
                 </div>
+
+                {pageCount > 1 && (
+                  <div className="mt-5 flex justify-center">
+                    <PaginationControls page={currentPage} pageCount={pageCount} onPageChange={setPage} />
+                  </div>
+                )}
               </>
             )
           ) : (
@@ -247,6 +284,44 @@ export default function PharmaciesPage() {
         </div>
       </main>
       <Footer />
+    </div>
+  );
+}
+
+function PaginationControls({
+  page,
+  pageCount,
+  onPageChange,
+}: {
+  page: number;
+  pageCount: number;
+  onPageChange: (page: number) => void;
+}) {
+  return (
+    <div className="flex items-center gap-2">
+      <button
+        type="button"
+        onClick={() => onPageChange(Math.max(1, page - 1))}
+        disabled={page <= 1}
+        aria-label="Prethodna strana"
+        className="inline-flex h-9 items-center gap-1.5 rounded-md border border-gray-300 bg-white px-3 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-45 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
+      >
+        <ChevronLeft size={16} />
+        Prethodna
+      </button>
+      <span className="min-w-20 text-center text-sm text-gray-600 dark:text-gray-400">
+        {page.toLocaleString("sr-RS")} / {pageCount.toLocaleString("sr-RS")}
+      </span>
+      <button
+        type="button"
+        onClick={() => onPageChange(Math.min(pageCount, page + 1))}
+        disabled={page >= pageCount}
+        aria-label="Sledeća strana"
+        className="inline-flex h-9 items-center gap-1.5 rounded-md border border-gray-300 bg-white px-3 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-45 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
+      >
+        Sledeća
+        <ChevronRight size={16} />
+      </button>
     </div>
   );
 }

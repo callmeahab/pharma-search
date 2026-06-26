@@ -97,6 +97,58 @@
   .store-badge {
     @apply px-2 py-1 rounded-full text-xs font-medium bg-health-muted text-health-secondary dark:bg-gray-700 dark:text-health-accent;
   }
+
+  .dark .maplibregl-ctrl-group {
+    background: rgb(17 24 39 / 0.96);
+    border: 1px solid rgb(55 65 81);
+    border-radius: 0.5rem;
+  }
+
+  .dark .maplibregl-ctrl-group:not(:empty) {
+    box-shadow:
+      0 10px 24px rgb(0 0 0 / 0.28),
+      0 0 0 1px rgb(255 255 255 / 0.08);
+  }
+
+  .dark .maplibregl-ctrl-group button {
+    color: rgb(229 231 235);
+  }
+
+  .dark .maplibregl-ctrl-group button + button {
+    border-top-color: rgb(55 65 81);
+  }
+
+  .dark .maplibregl-ctrl-group button:not(:disabled):hover,
+  .dark .maplibregl-ctrl-group button:not(:disabled):active {
+    background-color: rgb(31 41 55 / 0.92);
+  }
+
+  .dark .maplibregl-ctrl-group button.maplibregl-ctrl-zoom-in .maplibregl-ctrl-icon,
+  .dark .maplibregl-ctrl-group button.maplibregl-ctrl-zoom-out .maplibregl-ctrl-icon {
+    filter: invert(1) brightness(1.45);
+    opacity: 0.9;
+  }
+
+  .dark .maplibregl-ctrl-group button:focus:focus-visible {
+    box-shadow: inset 0 0 0 2px rgb(59 190 113);
+  }
+
+  .dark .maplibregl-ctrl-attrib.maplibregl-compact {
+    background-color: rgb(17 24 39 / 0.92);
+    color: rgb(229 231 235);
+    box-shadow:
+      0 10px 24px rgb(0 0 0 / 0.28),
+      0 0 0 1px rgb(255 255 255 / 0.08);
+  }
+
+  .dark .maplibregl-ctrl-attrib a {
+    color: rgb(209 213 219);
+  }
+
+  .dark .maplibregl-ctrl-attrib-button {
+    background-color: transparent;
+    filter: invert(1) brightness(1.4);
+  }
 }
 
 @layer utilities {

@@ -41,6 +41,8 @@ export interface PharmacyPlace {
   vendor_website: string;
   vendor_logo: string;
   product_count: number;
+  source: string;
+  source_id: string;
   foursquare_id: string;
   name: string;
   address: string;
@@ -80,19 +82,29 @@ export const vendorsApi = {
   },
 };
 
-// Returns a directions URL: the explicit mapsUrl if present, otherwise a Google
-// Maps search built from the pharmacy's address (or name).
+// Returns a map URL pinned to exact coordinates when available, with imported
+// map URLs or address search only as fallbacks for rows without coordinates.
 export function directionsUrl(p: Pharmacy): string {
+  if (p.latitude !== null && p.longitude !== null && Number.isFinite(p.latitude) && Number.isFinite(p.longitude)) {
+    return coordinateMapsUrl(p.latitude, p.longitude);
+  }
   if (p.maps_url) return p.maps_url;
   const q = [p.name, p.address, p.city].filter(Boolean).join(", ");
   return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q)}`;
 }
 
 export function placeDirectionsUrl(p: PharmacyPlace): string {
+  if (Number.isFinite(p.latitude) && Number.isFinite(p.longitude)) {
+    return coordinateMapsUrl(p.latitude, p.longitude);
+  }
   if (p.maps_url) return p.maps_url;
   const q = [p.name, p.formatted_address || p.address, p.city].filter(Boolean).join(", ");
   if (q) return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q)}`;
   return `https://www.google.com/maps/search/?api=1&query=${p.latitude},${p.longitude}`;
+}
+
+function coordinateMapsUrl(latitude: number, longitude: number): string {
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${latitude},${longitude}`)}`;
 }
 
 // Normalizes a phone string to a tel: href (first listed number, digits + leading +).

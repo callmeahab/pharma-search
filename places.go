@@ -27,17 +27,21 @@ func (s *server) handleVendorPlaces(w http.ResponseWriter, r *http.Request) {
 			FROM "Product"
 			WHERE price > 0
 			GROUP BY "vendorId"
-		)
+		),
+		filtered_places AS (
 		SELECT
 			vp.id, vp."vendorId", v.name AS vendor_name, COALESCE(v.website, '') AS vendor_website,
 			COALESCE(v.logo, '') AS vendor_logo, COALESCE(pc.product_count, 0) AS product_count,
-			vp."foursquareId", vp.name, COALESCE(vp.address, ''), COALESCE(vp.locality, ''),
-			COALESCE(vp.region, ''), COALESCE(vp.postcode, ''), COALESCE(vp.country, ''),
-			COALESCE(vp."formattedAddress", ''), COALESCE(vp.phone, ''), COALESCE(vp.email, ''),
-			COALESCE(vp.website, ''), COALESCE(vp."hoursDisplay", ''), vp."openNow",
-			vp.latitude, vp.longitude, vp.rating, vp.popularity, vp.price,
-			COALESCE(vp."mapsUrl", ''), COALESCE(vp.categories, '[]'::jsonb)::text,
-			COALESCE(vp.photos, '[]'::jsonb)::text,
+			COALESCE(vp.source, 'foursquare') AS source, vp."foursquareId", vp.name,
+			COALESCE(vp.address, '') AS address, COALESCE(vp.locality, '') AS locality,
+			COALESCE(vp.region, '') AS region, COALESCE(vp.postcode, '') AS postcode,
+			COALESCE(vp.country, '') AS country, COALESCE(vp."formattedAddress", '') AS "formattedAddress",
+			COALESCE(vp.phone, '') AS phone, COALESCE(vp.email, '') AS email,
+			COALESCE(vp.website, '') AS website, COALESCE(vp."hoursDisplay", '') AS "hoursDisplay",
+			vp."openNow", vp.latitude, vp.longitude, vp.rating, vp.popularity, vp.price,
+			COALESCE(vp."mapsUrl", '') AS "mapsUrl",
+			COALESCE(vp.categories, '[]'::jsonb) AS categories,
+			COALESCE(vp.photos, '[]'::jsonb) AS photos,
 			vp."fetchedAt"
 		FROM "VendorPlace" vp
 		JOIN "Vendor" v ON v.id = vp."vendorId"
@@ -73,10 +77,6 @@ func (s *server) handleVendorPlaces(w http.ResponseWriter, r *http.Request) {
 			OR lower(vp.name || ' ' || v.name) LIKE '%lily%'
 			OR lower(vp.name || ' ' || v.name) LIKE '%srbotrade%'
 			OR lower(vp.name || ' ' || v.name) LIKE '%zdravlja%'
-			OR lower(vp.name || ' ' || v.name) LIKE '%lek%'
-			OR lower(vp.name || ' ' || v.name) LIKE '%лек%'
-			OR lower(vp.name || ' ' || v.name) LIKE '%med%'
-			OR lower(vp.name || ' ' || v.name) LIKE '%мед%'
 			OR lower(vp.name || ' ' || v.name) LIKE '%vita%'
 			OR lower(vp.name || ' ' || v.name) LIKE '%vitamin%'
 			OR lower(vp.name || ' ' || v.name) LIKE '%suplement%'
@@ -92,7 +92,42 @@ func (s *server) handleVendorPlaces(w http.ResponseWriter, r *http.Request) {
 			OR lower(vp.name || ' ' || v.name) LIKE '%superior%'
 			OR lower(v.name) = 'dm'
 		)
-		ORDER BY v.name ASC, COALESCE(vp.locality, '') ASC, vp.name ASC`)
+		),
+		ranked_places AS (
+			SELECT *,
+				row_number() OVER (
+					PARTITION BY "vendorId", floor(latitude * 500), floor(longitude * 500)
+					ORDER BY
+						(jsonb_array_length(photos) > 0) DESC,
+						(
+							trim(address) <> ''
+							AND lower(trim(address)) NOT IN ('rs', 'serbia', 'srbija')
+						) DESC,
+						(
+							trim("formattedAddress") <> ''
+							AND lower(trim("formattedAddress")) NOT IN ('rs', 'serbia', 'srbija')
+						) DESC,
+						(phone <> '') DESC,
+						("hoursDisplay" <> '') DESC,
+						CASE source
+							WHEN 'foursquare' THEN 1
+							WHEN 'tomtom' THEN 2
+							WHEN 'osm' THEN 3
+							ELSE 4
+						END ASC,
+						"fetchedAt" DESC
+				) AS place_rank
+			FROM filtered_places
+		)
+		SELECT
+			id, "vendorId", vendor_name, vendor_website, vendor_logo, product_count,
+			source, "foursquareId", name, address, locality, region, postcode, country,
+			"formattedAddress", phone, email, website, "hoursDisplay", "openNow",
+			latitude, longitude, rating, popularity, price, "mapsUrl",
+			categories::text, photos::text, "fetchedAt"
+		FROM ranked_places
+		WHERE place_rank = 1
+		ORDER BY vendor_name ASC, locality ASC, name ASC`)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "could not load vendor places")
 		return
@@ -101,7 +136,7 @@ func (s *server) handleVendorPlaces(w http.ResponseWriter, r *http.Request) {
 
 	places := []map[string]interface{}{}
 	for rows.Next() {
-		var id, vendorID, vendorName, vendorWebsite, vendorLogo, foursquareID, name string
+		var id, vendorID, vendorName, vendorWebsite, vendorLogo, source, foursquareID, name string
 		var address, city, region, postcode, country, formattedAddress, phone, email, website, hoursDisplay, mapsURL string
 		var categoriesJSON, photosJSON string
 		var productCount int
@@ -112,7 +147,7 @@ func (s *server) handleVendorPlaces(w http.ResponseWriter, r *http.Request) {
 		var fetchedAt time.Time
 
 		if err := rows.Scan(&id, &vendorID, &vendorName, &vendorWebsite, &vendorLogo, &productCount,
-			&foursquareID, &name, &address, &city, &region, &postcode, &country, &formattedAddress,
+			&source, &foursquareID, &name, &address, &city, &region, &postcode, &country, &formattedAddress,
 			&phone, &email, &website, &hoursDisplay, &openNow, &latitude, &longitude, &rating,
 			&popularity, &price, &mapsURL, &categoriesJSON, &photosJSON, &fetchedAt); err != nil {
 			continue
@@ -125,6 +160,8 @@ func (s *server) handleVendorPlaces(w http.ResponseWriter, r *http.Request) {
 			"vendor_website":    vendorWebsite,
 			"vendor_logo":       vendorLogo,
 			"product_count":     productCount,
+			"source":            source,
+			"source_id":         foursquareID,
 			"foursquare_id":     foursquareID,
 			"name":              name,
 			"address":           address,
@@ -218,9 +255,16 @@ func categoryNames(raw string) []string {
 		return []string{}
 	}
 	names := []string{}
+	seen := map[string]bool{}
 	for _, category := range categories {
-		if category.Name != "" {
-			names = append(names, category.Name)
+		name := strings.TrimSpace(category.Name)
+		if name == "" {
+			continue
+		}
+		key := strings.ToLower(name)
+		if !seen[key] {
+			names = append(names, name)
+			seen[key] = true
 		}
 	}
 	return names

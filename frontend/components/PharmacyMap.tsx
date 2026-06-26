@@ -5,10 +5,10 @@ import maplibregl, {
   type FilterSpecification,
   type Map as MapLibreMap,
   type MapLayerMouseEvent,
-  type StyleSpecification,
 } from "maplibre-gl";
 import { ExternalLink, Globe, LocateFixed, Mail, MapPin, Phone } from "lucide-react";
 import { useEffect, useMemo, useRef } from "react";
+import { useTheme } from "@/contexts/ThemeContext";
 import { PharmacyPlace, placeDirectionsUrl, telHref } from "@/lib/vendors";
 
 const MIN_ZOOM = 5;
@@ -22,26 +22,8 @@ const POINT_LABEL_LAYER_ID = "pharmacy-point-labels";
 const SELECTED_LAYER_ID = "pharmacy-selected-point";
 const PIN_IMAGE_ID = "pharmacy-pin";
 
-const MAP_STYLE: StyleSpecification = {
-  version: 8,
-  glyphs: "https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf",
-  sources: {
-    osm: {
-      type: "raster",
-      tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
-      tileSize: 256,
-      attribution:
-        '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-    },
-  },
-  layers: [
-    {
-      id: "osm",
-      type: "raster",
-      source: "osm",
-    },
-  ],
-};
+const LIGHT_MAP_STYLE = "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json";
+const DARK_MAP_STYLE = "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json";
 
 export default function PharmacyMap({
   places,
@@ -52,8 +34,10 @@ export default function PharmacyMap({
   selectedId?: string;
   onSelect?: (place: PharmacyPlace) => void;
 }) {
+  const { theme } = useTheme();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
+  const mapStyleRef = useRef("");
   const placesRef = useRef<PharmacyPlace[]>(places);
   const placesByIdRef = useRef<Map<string, PharmacyPlace>>(new Map());
   const onSelectRef = useRef<typeof onSelect>(onSelect);
@@ -80,10 +64,12 @@ export default function PharmacyMap({
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
+    const initialStyle = mapStyleForTheme(document.documentElement.classList.contains("dark") ? "dark" : theme);
+    mapStyleRef.current = initialStyle;
 
     const map = new maplibregl.Map({
       container: containerRef.current,
-      style: MAP_STYLE,
+      style: initialStyle,
       center: DEFAULT_CENTER,
       zoom: 7,
       minZoom: MIN_ZOOM,
@@ -102,7 +88,7 @@ export default function PharmacyMap({
     map.addControl(new maplibregl.AttributionControl({ compact: true }), "bottom-right");
 
     map.on("load", () => {
-      addPlaceLayers(map, placesRef.current);
+      addPlaceLayers(map, placesRef.current, isDarkMapStyle(mapStyleRef.current));
       setSelectedFilter(map, selectedPlaceIdRef.current);
       fitMapToPlaces(map, placesRef.current, 0);
 
@@ -119,6 +105,27 @@ export default function PharmacyMap({
       mapRef.current = null;
     };
   }, []);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    const nextStyle = mapStyleForTheme(theme);
+    if (mapStyleRef.current === nextStyle) return;
+
+    mapStyleRef.current = nextStyle;
+    map.setStyle(nextStyle);
+
+    const restorePlaceLayers = () => {
+      addPlaceLayers(map, placesRef.current, isDarkMapStyle(nextStyle));
+      setSelectedFilter(map, selectedPlaceIdRef.current);
+    };
+    map.once("style.load", restorePlaceLayers);
+
+    return () => {
+      map.off("style.load", restorePlaceLayers);
+    };
+  }, [theme]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -201,7 +208,7 @@ export default function PharmacyMap({
           title="Prikazi sve"
           aria-label="Prikazi sve lokacije"
           onClick={resetView}
-          className="absolute right-[10px] top-[78px] z-10 grid h-[29px] w-[29px] place-items-center rounded-sm bg-white text-[#333] shadow-[0_0_0_2px_rgba(0,0,0,0.1)] hover:bg-[#f2f2f2] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-health-primary"
+          className="absolute right-[10px] top-[78px] z-10 grid h-[31px] w-[31px] place-items-center rounded-lg border border-gray-200 bg-white text-[#333] shadow-[0_0_0_2px_rgba(0,0,0,0.1)] transition-colors hover:bg-[#f2f2f2] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-health-primary dark:border-gray-700 dark:bg-gray-900/95 dark:text-gray-100 dark:shadow-[0_10px_24px_rgba(0,0,0,0.28),0_0_0_1px_rgba(255,255,255,0.08)] dark:hover:bg-gray-800"
         >
           <LocateFixed size={17} strokeWidth={2.4} />
         </button>
@@ -325,7 +332,15 @@ function placeLocationKey(place: PharmacyPlace): string {
   return `${place.latitude.toFixed(6)},${place.longitude.toFixed(6)}`;
 }
 
-function addPlaceLayers(map: MapLibreMap, places: PharmacyPlace[]) {
+function mapStyleForTheme(theme: "light" | "dark"): string {
+  return theme === "dark" ? DARK_MAP_STYLE : LIGHT_MAP_STYLE;
+}
+
+function isDarkMapStyle(style: string): boolean {
+  return style === DARK_MAP_STYLE;
+}
+
+function addPlaceLayers(map: MapLibreMap, places: PharmacyPlace[], darkMode = false) {
   if (map.getSource(SOURCE_ID)) return;
   addPharmacyPinImage(map);
 
@@ -411,8 +426,8 @@ function addPlaceLayers(map: MapLibreMap, places: PharmacyPlace[]) {
       "text-optional": true,
     },
     paint: {
-      "text-color": "#111827",
-      "text-halo-color": "#ffffff",
+      "text-color": darkMode ? "#f9fafb" : "#111827",
+      "text-halo-color": darkMode ? "#111827" : "#ffffff",
       "text-halo-width": 1.2,
     },
   });
