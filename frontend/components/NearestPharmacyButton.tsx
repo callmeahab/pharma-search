@@ -47,7 +47,7 @@ export default function NearestPharmacyButton({
       const vendorPlaces = places.filter((place) => matchesVendor(place, vendorId, vendorName));
 
       if (vendorPlaces.length === 0) {
-        setMessage("Nemamo sačuvane lokacije za ovu apoteku.");
+        setMessage("Nemamo sačuvane lokacije za ovog partnera.");
         return;
       }
 
@@ -58,13 +58,13 @@ export default function NearestPharmacyButton({
       }, null as { place: PharmacyPlace; distance: number } | null);
 
       if (!nearest) {
-        setMessage("Nije pronađena lokacija apoteke.");
+        setMessage("Nije pronađena lokacija partnera.");
         return;
       }
 
       openMaps(nearest.place, position);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Nije moguće pronaći najbližu apoteku.");
+      setMessage(error instanceof Error ? error.message : "Nije moguće pronaći najbližu lokaciju.");
     } finally {
       setStatus("idle");
     }
@@ -75,10 +75,7 @@ export default function NearestPharmacyButton({
     setMessage("");
   };
 
-  const label =
-    price != null
-      ? `Najbliža apoteka za ${formatPrice(price)}`
-      : "Najbliža apoteka";
+  const label = price != null ? `Najbliža lokacija za ${formatPrice(price)}` : "Najbliža lokacija";
 
   return (
     <div className={cn("space-y-1", className)}>
@@ -91,12 +88,12 @@ export default function NearestPharmacyButton({
         className="w-full border-health-primary/50 text-health-primary hover:bg-health-light dark:border-green-500/60 dark:text-green-300 dark:hover:bg-green-950/40"
       >
         {status === "loading" ? <Loader2 className="animate-spin" /> : <MapPin />}
-        <span className="min-w-0 truncate">{status === "loading" ? "Tražim najbližu apoteku..." : label}</span>
+        <span className="min-w-0 truncate">{status === "loading" ? "Tražim najbližu lokaciju..." : label}</span>
       </Button>
       {status === "confirming" && (
         <div className="rounded-md border border-green-200 bg-green-50 p-3 text-sm text-gray-700 dark:border-green-900/70 dark:bg-green-950/30 dark:text-gray-200">
           <p>
-            Koristićemo vašu trenutnu lokaciju samo da pronađemo najbližu apoteku za ovu cenu.
+            Koristićemo vašu trenutnu lokaciju samo da pronađemo najbližu lokaciju za ovu cenu.
           </p>
           <div className="mt-2 flex flex-wrap gap-2">
             <Button
@@ -143,7 +140,7 @@ function getUserPosition(): Promise<UserPosition> {
       },
       (error) => {
         if (error.code === error.PERMISSION_DENIED) {
-          reject(new Error("Dozvolite pristup lokaciji da bismo našli najbližu apoteku."));
+          reject(new Error("Dozvolite pristup lokaciji da bismo našli najbližu lokaciju."));
           return;
         }
         reject(new Error("Nije moguće odrediti vašu lokaciju."));
@@ -191,7 +188,7 @@ function toRadians(value: number): number {
 function openMaps(place: PharmacyPlace, origin: UserPosition) {
   const destination = `${place.latitude},${place.longitude}`;
   const originParam = `${origin.latitude},${origin.longitude}`;
-  const label = encodeURIComponent(place.name || place.vendor_name || "Apoteka");
+  const label = encodeURIComponent(place.name || place.vendor_name || "Lokacija");
   const googleUrl = `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(originParam)}&destination=${encodeURIComponent(destination)}&travelmode=driving`;
 
   if (!isPhone()) {
@@ -201,7 +198,7 @@ function openMaps(place: PharmacyPlace, origin: UserPosition) {
 
   const appUrl = isIOS()
     ? `maps://?daddr=${encodeURIComponent(destination)}&q=${label}`
-    : `geo:0,0?q=${encodeURIComponent(`${destination}(${place.name || place.vendor_name || "Apoteka"})`)}`;
+    : `geo:0,0?q=${encodeURIComponent(`${destination}(${place.name || place.vendor_name || "Lokacija"})`)}`;
 
   let fallbackTimer: number | undefined;
   const clearFallback = () => {

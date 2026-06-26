@@ -24,6 +24,16 @@ export interface Pharmacy {
   location_count: number;
 }
 
+export interface PharmacyPlacePhoto {
+  id?: string;
+  url: string;
+  original_url: string;
+  thumbnail_url?: string;
+  width?: number;
+  height?: number;
+  created_at?: string;
+}
+
 export interface PharmacyPlace {
   id: string;
   vendor_id: string;
@@ -51,6 +61,7 @@ export interface PharmacyPlace {
   price: number | null;
   maps_url: string;
   categories: string[];
+  photos: PharmacyPlacePhoto[];
   fetched_at: string;
 }
 

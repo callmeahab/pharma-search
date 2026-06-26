@@ -30,9 +30,11 @@ const (
 	foursquareVersion             = "2025-06-17"
 	foursquarePharmacyCategoryID  = "4bf58dd8d48988d10f951735"
 	foursquareDrugstoreCategoryID = "5745c2e4498e11e7bccabdbd"
+	defaultSerbiaCoverageBounds   = "42.2322,18.8170,46.1900,23.0063"
 )
 
-const defaultFoursquareCategoryIDs = foursquarePharmacyCategoryID + "," + foursquareDrugstoreCategoryID
+const defaultFoursquareCategoryIDs = ""
+const defaultFoursquareFields = "fsq_place_id,fsq_id,name,categories,chains,geocodes,location,tel,email,website,hours,rating,popularity,price,photos,social_media,timezone,latitude,longitude"
 
 type vendorRow struct {
 	ID      string
@@ -41,12 +43,34 @@ type vendorRow struct {
 }
 
 type importStats struct {
-	Vendors       int
-	PlacesSeen    int
-	PlacesMatched int
-	PlacesSkipped int
-	PlacesSaved   int
-	Errors        int
+	Vendors            int
+	PlacesSeen         int
+	PlacesMatched      int
+	PlacesSkipped      int
+	PlacesSaved        int
+	PlacesPruned       int
+	FoursquareRequests int
+	CoverageSplits     int
+	CoverageLimitHits  int
+	Errors             int
+}
+
+type coverageBounds struct {
+	South float64
+	West  float64
+	North float64
+	East  float64
+}
+
+type coverageCell struct {
+	Bounds coverageBounds
+	Depth  int
+}
+
+type coverageReport struct {
+	Requests      int
+	SplitCells    int
+	LimitHitCells int
 }
 
 type foursquareSearchResponse struct {
@@ -136,13 +160,16 @@ func main() {
 	vendorFlag := flag.String("vendor", "", "Import one vendor by id, exact name, or case-insensitive name fragment")
 	nearFlag := flag.String("near", envDefault("FOURSQUARE_NEAR", "Serbia"), "Foursquare near parameter")
 	versionFlag := flag.String("api-version", envDefault("FOURSQUARE_API_VERSION", foursquareVersion), "Foursquare Places API version header")
-	fieldsFlag := flag.String("fields", os.Getenv("FOURSQUARE_FIELDS"), "Optional comma-separated Foursquare response fields; leave empty to use the free/default field set")
-	categoryIDsFlag := flag.String("category-ids", envDefault("FOURSQUARE_CATEGORY_IDS", defaultFoursquareCategoryIDs), "Comma-separated Foursquare category IDs to fetch and keep; default keeps Pharmacy and Drugstore only")
+	fieldsFlag := flag.String("fields", envDefault("FOURSQUARE_FIELDS", defaultFoursquareFields), "Comma-separated Foursquare response fields; default includes photos for full-resolution place images")
+	categoryIDsFlag := flag.String("category-ids", envDefault("FOURSQUARE_CATEGORY_IDS", defaultFoursquareCategoryIDs), "Optional comma-separated Foursquare category IDs to prefilter requests; blank is best for complete vendor coverage")
+	coverageBoundsFlag := flag.String("coverage-bounds", envDefault("FOURSQUARE_COVERAGE_BOUNDS", defaultSerbiaCoverageBounds), "south,west,north,east bounds for exhaustive recursive coverage; use 'near' to disable")
+	maxSplitDepthFlag := flag.Int("max-split-depth", envInt("FOURSQUARE_MAX_SPLIT_DEPTH", 8), "Maximum recursive splits for Foursquare cells that hit the per-request limit")
 	limitFlag := flag.Int("limit", envInt("FOURSQUARE_SEARCH_LIMIT", 50), "Foursquare places per vendor, maximum 50")
 	maxVendorsFlag := flag.Int("max-vendors", 0, "Stop after this many vendors; 0 imports all matching vendors")
 	sleepFlag := flag.Duration("sleep", envDuration("FOURSQUARE_REQUEST_SLEEP", 250*time.Millisecond), "Delay between Foursquare requests")
 	strictFlag := flag.Bool("strict-match", true, "Skip places whose name/domain does not match the vendor")
-	pruneDisallowedFlag := flag.Bool("prune-disallowed", envBool("FOURSQUARE_PRUNE_DISALLOWED", true), "Delete cached VendorPlace rows outside the allowed Foursquare category IDs")
+	pruneDisallowedFlag := flag.Bool("prune-disallowed", envBool("FOURSQUARE_PRUNE_DISALLOWED", true), "Delete cached VendorPlace rows that do not look like pharmacies or relevant shops")
+	pruneStaleFlag := flag.Bool("prune-stale", envBool("FOURSQUARE_PRUNE_STALE", true), "After a complete coverage fetch, delete cached VendorPlace rows not returned for that vendor")
 	continueOnErrorFlag := flag.Bool("continue-on-error", envBool("FOURSQUARE_CONTINUE_ON_ERROR", false), "Keep processing vendors after a Foursquare/API/save error")
 	dryRunFlag := flag.Bool("dry-run", false, "Fetch and print matches without writing to the database")
 	flag.Parse()
@@ -161,6 +188,19 @@ func main() {
 	limit := *limitFlag
 	if limit <= 0 || limit > 50 {
 		limit = 50
+	}
+	maxSplitDepth := *maxSplitDepthFlag
+	if maxSplitDepth < 0 {
+		maxSplitDepth = 0
+	}
+	coverage, err := parseCoverageBounds(*coverageBoundsFlag)
+	if err != nil {
+		log.Fatalf("invalid coverage bounds: %v", err)
+	}
+	if coverage != nil {
+		log.Printf("Using recursive Foursquare coverage bounds %s with max split depth %d", coverage.String(), maxSplitDepth)
+	} else {
+		log.Printf("Using one broad Foursquare near search per vendor near %q", *nearFlag)
 	}
 
 	db, err := sql.Open("postgres", resolveDatabaseURL(*dbURLFlag))
@@ -194,7 +234,10 @@ func main() {
 		}
 
 		log.Printf("[%d/%d] Searching Foursquare for %s", i+1, len(vendors), vendor.Name)
-		places, err := searchFoursquare(ctx, client, apiKey, *versionFlag, *fieldsFlag, *categoryIDsFlag, vendor.Name, *nearFlag, limit)
+		places, report, err := searchFoursquareForVendor(ctx, client, apiKey, *versionFlag, *fieldsFlag, *categoryIDsFlag, vendor.Name, *nearFlag, limit, coverage, maxSplitDepth, *sleepFlag)
+		stats.FoursquareRequests += report.Requests
+		stats.CoverageSplits += report.SplitCells
+		stats.CoverageLimitHits += report.LimitHitCells
 		if err != nil {
 			stats.Errors++
 			log.Printf("  error: %v", err)
@@ -204,8 +247,12 @@ func main() {
 			}
 			continue
 		}
+		if coverage != nil {
+			log.Printf("  coverage: unique=%d requests=%d split_cells=%d limit_hit_cells=%d", len(places), report.Requests, report.SplitCells, report.LimitHitCells)
+		}
 
 		stats.PlacesSeen += len(places)
+		savedPlaceIDs := map[string]bool{}
 		for _, place := range places {
 			if !hasCoordinates(place) || placeID(place) == "" {
 				stats.PlacesSkipped++
@@ -216,9 +263,9 @@ func main() {
 				log.Printf("  skipped: %s did not look like %s", place.Name, vendor.Name)
 				continue
 			}
-			if !isAllowedPharmacyPlace(vendor, place, allowedCategoryIDs) {
+			if !isAllowedVendorPlace(vendor, place, allowedCategoryIDs) {
 				stats.PlacesSkipped++
-				log.Printf("  skipped: %s is not an allowed pharmacy/drugstore place", place.Name)
+				log.Printf("  skipped: %s is not an allowed pharmacy/shop place", place.Name)
 				continue
 			}
 
@@ -237,17 +284,40 @@ func main() {
 				continue
 			}
 			stats.PlacesSaved++
+			savedPlaceIDs[placeID(place)] = true
 		}
 		if fatalErr != nil {
 			break
 		}
+		if report.LimitHitCells > 0 {
+			stats.Errors++
+			log.Printf("  incomplete: %d coverage cells still hit Foursquare's %d result limit; increase MAX_SPLIT_DEPTH before trusting this vendor as complete", report.LimitHitCells, limit)
+			if !*continueOnErrorFlag {
+				fatalErr = fmt.Errorf("%s still has saturated Foursquare coverage cells", vendor.Name)
+				break
+			}
+		}
+		if coverage != nil && !*dryRunFlag && *pruneStaleFlag && report.LimitHitCells == 0 {
+			removed, err := pruneStaleVendorPlaces(ctx, db, vendor.ID, sortedKeys(savedPlaceIDs))
+			if err != nil {
+				stats.Errors++
+				log.Printf("  failed to prune stale places for %s: %v", vendor.Name, err)
+				if !*continueOnErrorFlag {
+					fatalErr = err
+					break
+				}
+			} else if removed > 0 {
+				stats.PlacesPruned += int(removed)
+				log.Printf("  pruned %d stale cached places for %s", removed, vendor.Name)
+			}
+		}
 	}
 
-	if fatalErr == nil && !*dryRunFlag && *pruneDisallowedFlag && len(allowedCategoryIDs) > 0 {
+	if fatalErr == nil && !*dryRunFlag && *pruneDisallowedFlag {
 		removed, err := pruneDisallowedPlaces(ctx, db, allowedCategoryIDs)
 		if err != nil {
 			stats.Errors++
-			log.Printf("failed to prune cached non-pharmacy places: %v", err)
+			log.Printf("failed to prune cached non-pharmacy/shop places: %v", err)
 			if !*continueOnErrorFlag {
 				fatalErr = err
 			}
@@ -256,8 +326,8 @@ func main() {
 		}
 	}
 
-	log.Printf("Done. vendors=%d seen=%d matched=%d skipped=%d saved=%d errors=%d dry_run=%t",
-		stats.Vendors, stats.PlacesSeen, stats.PlacesMatched, stats.PlacesSkipped, stats.PlacesSaved, stats.Errors, *dryRunFlag)
+	log.Printf("Done. vendors=%d requests=%d split_cells=%d limit_hit_cells=%d seen=%d matched=%d skipped=%d saved=%d pruned=%d errors=%d dry_run=%t",
+		stats.Vendors, stats.FoursquareRequests, stats.CoverageSplits, stats.CoverageLimitHits, stats.PlacesSeen, stats.PlacesMatched, stats.PlacesSkipped, stats.PlacesSaved, stats.PlacesPruned, stats.Errors, *dryRunFlag)
 	if fatalErr != nil {
 		log.Printf("Failed fast. Re-run with -continue-on-error, or CONTINUE_ON_ERROR=1 make fetch-places, to keep processing after errors.")
 		os.Exit(1)
@@ -303,11 +373,71 @@ func loadVendors(ctx context.Context, db *sql.DB, filter string, max int) ([]ven
 	return vendors, rows.Err()
 }
 
-func searchFoursquare(ctx context.Context, client *http.Client, apiKey, version, fields, categoryIDs, query, near string, limit int) ([]foursquarePlace, error) {
+func searchFoursquareForVendor(ctx context.Context, client *http.Client, apiKey, version, fields, categoryIDs, query, near string, limit int, coverage *coverageBounds, maxSplitDepth int, requestSleep time.Duration) ([]foursquarePlace, coverageReport, error) {
+	if coverage == nil {
+		places, err := searchFoursquare(ctx, client, apiKey, version, fields, categoryIDs, query, near, nil, limit)
+		return places, coverageReport{Requests: 1}, err
+	}
+
+	report := coverageReport{}
+	seen := map[string]foursquarePlace{}
+	queue := []coverageCell{{Bounds: *coverage, Depth: 0}}
+
+	for len(queue) > 0 {
+		cell := queue[len(queue)-1]
+		queue = queue[:len(queue)-1]
+
+		if report.Requests > 0 && requestSleep > 0 {
+			time.Sleep(requestSleep)
+		}
+
+		places, err := searchFoursquare(ctx, client, apiKey, version, fields, categoryIDs, query, "", &cell.Bounds, limit)
+		report.Requests++
+		if err != nil {
+			return nil, report, err
+		}
+
+		if len(places) >= limit {
+			if cell.Depth < maxSplitDepth {
+				report.SplitCells++
+				queue = append(queue, cell.split()...)
+				continue
+			}
+			report.LimitHitCells++
+		}
+
+		for _, place := range places {
+			id := placeID(place)
+			if id == "" {
+				lat, lng := coordinates(place)
+				id = fmt.Sprintf("%s:%.7f:%.7f", normalizeName(place.Name), lat, lng)
+			}
+			if id != "" {
+				seen[id] = place
+			}
+		}
+	}
+
+	places := make([]foursquarePlace, 0, len(seen))
+	for _, place := range seen {
+		places = append(places, place)
+	}
+	sort.Slice(places, func(i, j int) bool {
+		return strings.ToLower(places[i].Name) < strings.ToLower(places[j].Name)
+	})
+	return places, report, nil
+}
+
+func searchFoursquare(ctx context.Context, client *http.Client, apiKey, version, fields, categoryIDs, query, near string, bounds *coverageBounds, limit int) ([]foursquarePlace, error) {
 	params := url.Values{}
 	params.Set("query", query)
-	params.Set("near", near)
 	params.Set("limit", strconv.Itoa(limit))
+	if bounds != nil {
+		params.Set("ne", fmt.Sprintf("%.6f,%.6f", bounds.North, bounds.East))
+		params.Set("sw", fmt.Sprintf("%.6f,%.6f", bounds.South, bounds.West))
+	} else {
+		params.Set("near", near)
+	}
 	if strings.TrimSpace(categoryIDs) != "" {
 		params.Set("categories", strings.TrimSpace(categoryIDs))
 	}
@@ -335,6 +465,46 @@ func searchFoursquare(ctx context.Context, client *http.Client, apiKey, version,
 		return nil, err
 	}
 	return decoded.Results, nil
+}
+
+func parseCoverageBounds(raw string) (*coverageBounds, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || strings.EqualFold(raw, "near") || strings.EqualFold(raw, "off") || strings.EqualFold(raw, "false") {
+		return nil, nil
+	}
+	parts := strings.Split(raw, ",")
+	if len(parts) != 4 {
+		return nil, fmt.Errorf("expected south,west,north,east")
+	}
+	values := [4]float64{}
+	for i, part := range parts {
+		value, err := strconv.ParseFloat(strings.TrimSpace(part), 64)
+		if err != nil {
+			return nil, err
+		}
+		values[i] = value
+	}
+	b := coverageBounds{South: values[0], West: values[1], North: values[2], East: values[3]}
+	if b.South >= b.North || b.West >= b.East {
+		return nil, fmt.Errorf("south/west must be less than north/east")
+	}
+	return &b, nil
+}
+
+func (b coverageBounds) String() string {
+	return fmt.Sprintf("%.4f,%.4f,%.4f,%.4f", b.South, b.West, b.North, b.East)
+}
+
+func (c coverageCell) split() []coverageCell {
+	midLat := (c.Bounds.South + c.Bounds.North) / 2
+	midLng := (c.Bounds.West + c.Bounds.East) / 2
+	depth := c.Depth + 1
+	return []coverageCell{
+		{Bounds: coverageBounds{South: c.Bounds.South, West: c.Bounds.West, North: midLat, East: midLng}, Depth: depth},
+		{Bounds: coverageBounds{South: c.Bounds.South, West: midLng, North: midLat, East: c.Bounds.East}, Depth: depth},
+		{Bounds: coverageBounds{South: midLat, West: c.Bounds.West, North: c.Bounds.North, East: midLng}, Depth: depth},
+		{Bounds: coverageBounds{South: midLat, West: midLng, North: c.Bounds.North, East: c.Bounds.East}, Depth: depth},
+	}
 }
 
 func doFoursquareRequest(ctx context.Context, client *http.Client, apiKey, version string, params url.Values) ([]byte, int, error) {
@@ -464,9 +634,6 @@ func backfillVendorContact(ctx context.Context, db *sql.DB, vendorID string) err
 
 func pruneDisallowedPlaces(ctx context.Context, db *sql.DB, allowedCategoryIDs map[string]bool) (int64, error) {
 	ids := sortedKeys(allowedCategoryIDs)
-	if len(ids) == 0 {
-		return 0, nil
-	}
 
 	result, err := db.ExecContext(ctx, `
 		DELETE FROM public."VendorPlace" vp
@@ -475,59 +642,68 @@ func pruneDisallowedPlaces(ctx context.Context, db *sql.DB, allowedCategoryIDs m
 		  AND NOT EXISTS (
 			SELECT 1
 			FROM jsonb_to_recordset(vp.categories) AS c(fsq_category_id text, id text, name text)
-			WHERE c.fsq_category_id = '5745c2e4498e11e7bccabdbd'
+			WHERE c.fsq_category_id = ANY($1)
+			   OR c.id = ANY($1)
+			   OR c.fsq_category_id = '5745c2e4498e11e7bccabdbd'
 			   OR c.id = '5745c2e4498e11e7bccabdbd'
 			   OR lower(c.name) = 'drugstore'
-			   OR (
-					(c.fsq_category_id = '4bf58dd8d48988d10f951735'
-					 OR c.id = '4bf58dd8d48988d10f951735'
-					 OR lower(c.name) = 'pharmacy')
-					AND (
-						lower(vp.name) LIKE '%apotek%'
-						OR lower(vp.name) LIKE '%апотек%'
-						OR lower(vp.name) LIKE '%pharm%'
-						OR lower(vp.name) LIKE '%фарм%'
-						OR lower(vp.name) LIKE '%farmaci%'
-						OR lower(vp.name) LIKE '%drogerie%'
-						OR lower(vp.name) LIKE '%drugstore%'
-						OR lower(vp.name) LIKE '%benu%'
-						OR lower(vp.name) LIKE '%dr max%'
-						OR lower(vp.name) LIKE '%lilly%'
-						OR lower(vp.name) LIKE '%lily%'
-						OR lower(vp.name) LIKE '%srbotrade%'
-						OR lower(vp.name) LIKE '%zdravlja%'
-						OR lower(vp.name) LIKE '%lek%'
-						OR lower(vp.name) LIKE '%лек%'
-						OR lower(vp.name) LIKE '%med%'
-						OR lower(vp.name) LIKE '%мед%'
-						OR lower(vp.name) LIKE '%vita%'
-						OR lower(v."name") LIKE '%apotek%'
-						OR lower(v."name") LIKE '%апотек%'
-						OR lower(v."name") LIKE '%pharm%'
-						OR lower(v."name") LIKE '%фарм%'
-						OR lower(v."name") LIKE '%farmaci%'
-						OR lower(v."name") LIKE '%drogerie%'
-						OR lower(v."name") LIKE '%drugstore%'
-						OR lower(v."name") LIKE '%benu%'
-						OR lower(v."name") LIKE '%dr max%'
-						OR lower(v."name") LIKE '%lilly%'
-						OR lower(v."name") LIKE '%lily%'
-						OR lower(v."name") LIKE '%srbotrade%'
-						OR lower(v."name") LIKE '%zdravlja%'
-						OR lower(v."name") LIKE '%lek%'
-						OR lower(v."name") LIKE '%лек%'
-						OR lower(v."name") LIKE '%med%'
-						OR lower(v."name") LIKE '%мед%'
-						OR lower(v."name") LIKE '%vita%'
-					)
-			   )
-			   OR (
-					(c.fsq_category_id = ANY($1) OR c.id = ANY($1))
-					AND c.fsq_category_id NOT IN ('4bf58dd8d48988d10f951735', '5745c2e4498e11e7bccabdbd')
-					AND c.id NOT IN ('4bf58dd8d48988d10f951735', '5745c2e4498e11e7bccabdbd')
-			   )
-		)
+			   OR c.fsq_category_id = '4bf58dd8d48988d10f951735'
+			   OR c.id = '4bf58dd8d48988d10f951735'
+			   OR lower(c.name) = 'pharmacy'
+			   OR lower(c.name) LIKE '%supplement%'
+			   OR lower(c.name) LIKE '%vitamin%'
+			   OR lower(c.name) LIKE '%nutrition%'
+			   OR lower(c.name) LIKE '%health food%'
+			   OR lower(c.name) LIKE '%sporting goods%'
+			   OR lower(c.name) LIKE '%cosmetic%'
+			   OR lower(c.name) LIKE '%beauty supply%'
+		  )
+		  AND NOT (
+			lower(vp.name || ' ' || v."name") LIKE '%apotek%'
+			OR lower(vp.name || ' ' || v."name") LIKE '%апотек%'
+			OR lower(vp.name || ' ' || v."name") LIKE '%pharm%'
+			OR lower(vp.name || ' ' || v."name") LIKE '%фарм%'
+			OR lower(vp.name || ' ' || v."name") LIKE '%farmaci%'
+			OR lower(vp.name || ' ' || v."name") LIKE '%drogerie%'
+			OR lower(vp.name || ' ' || v."name") LIKE '%drugstore%'
+			OR lower(vp.name || ' ' || v."name") LIKE '%benu%'
+			OR lower(vp.name || ' ' || v."name") LIKE '%dr max%'
+			OR lower(vp.name || ' ' || v."name") LIKE '%lilly%'
+			OR lower(vp.name || ' ' || v."name") LIKE '%lily%'
+			OR lower(vp.name || ' ' || v."name") LIKE '%srbotrade%'
+			OR lower(vp.name || ' ' || v."name") LIKE '%zdravlja%'
+			OR lower(vp.name || ' ' || v."name") LIKE '%lek%'
+			OR lower(vp.name || ' ' || v."name") LIKE '%лек%'
+			OR lower(vp.name || ' ' || v."name") LIKE '%med%'
+			OR lower(vp.name || ' ' || v."name") LIKE '%мед%'
+			OR lower(vp.name || ' ' || v."name") LIKE '%vita%'
+			OR lower(vp.name || ' ' || v."name") LIKE '%vitamin%'
+			OR lower(vp.name || ' ' || v."name") LIKE '%suplement%'
+			OR lower(vp.name || ' ' || v."name") LIKE '%supplement%'
+			OR lower(vp.name || ' ' || v."name") LIKE '%protein%'
+			OR lower(vp.name || ' ' || v."name") LIKE '%proteini%'
+			OR lower(vp.name || ' ' || v."name") LIKE '%sport%'
+			OR lower(vp.name || ' ' || v."name") LIKE '%fitness%'
+			OR lower(vp.name || ' ' || v."name") LIKE '%fitlab%'
+			OR lower(vp.name || ' ' || v."name") LIKE '%gym%'
+			OR lower(vp.name || ' ' || v."name") LIKE '%pansport%'
+			OR lower(vp.name || ' ' || v."name") LIKE '%titanium%'
+			OR lower(vp.name || ' ' || v."name") LIKE '%superior%'
+			OR lower(v."name") = 'dm'
+		  )
 	`, pq.Array(ids))
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+func pruneStaleVendorPlaces(ctx context.Context, db *sql.DB, vendorID string, fetchedPlaceIDs []string) (int64, error) {
+	result, err := db.ExecContext(ctx, `
+		DELETE FROM public."VendorPlace"
+		WHERE "vendorId" = $1
+		  AND NOT ("foursquareId" = ANY($2))
+	`, vendorID, pq.Array(fetchedPlaceIDs))
 	if err != nil {
 		return 0, err
 	}
@@ -559,37 +735,45 @@ func placeID(place foursquarePlace) string {
 	return strings.TrimSpace(place.FSQID)
 }
 
-func isAllowedPharmacyPlace(vendor vendorRow, place foursquarePlace, allowedCategoryIDs map[string]bool) bool {
-	if len(allowedCategoryIDs) == 0 {
-		return true
-	}
-	hasPharmacy := false
-	hasDrugstore := false
-	hasOtherAllowed := false
+func isAllowedVendorPlace(vendor vendorRow, place foursquarePlace, allowedCategoryIDs map[string]bool) bool {
+	hasAllowedCategory := false
+	hasRelevantCategory := false
 
 	for _, category := range placeCategories(place.Categories) {
 		categoryID := strings.TrimSpace(category.FSQCategoryID)
 		if categoryID == "" {
 			categoryID = strings.TrimSpace(category.ID)
 		}
-		name := strings.ToLower(strings.TrimSpace(category.Name))
+		name := normalizeName(strings.Join([]string{category.Name, category.ShortName, category.PluralName}, " "))
 
 		switch {
-		case categoryID == foursquareDrugstoreCategoryID || name == "drugstore":
-			hasDrugstore = true
-		case categoryID == foursquarePharmacyCategoryID || name == "pharmacy":
-			hasPharmacy = true
 		case allowedCategoryIDs[categoryID]:
-			hasOtherAllowed = true
+			hasAllowedCategory = true
+		case categoryID == foursquareDrugstoreCategoryID || categoryID == foursquarePharmacyCategoryID:
+			hasRelevantCategory = true
+		case hasRelevantPlaceCategoryName(name):
+			hasRelevantCategory = true
 		}
 	}
 
-	return hasDrugstore || hasOtherAllowed || (hasPharmacy && hasPharmacyNameSignal(vendor, place))
+	return hasAllowedCategory || hasRelevantCategory || hasRelevantPlaceNameSignal(vendor, place)
 }
 
-func hasPharmacyNameSignal(vendor vendorRow, place foursquarePlace) bool {
+func hasRelevantPlaceCategoryName(name string) bool {
+	for _, signal := range []string{
+		"pharmacy", "drugstore", "supplement", "vitamin", "nutrition", "health food",
+		"sporting goods", "cosmetic", "beauty supply",
+	} {
+		if strings.Contains(name, signal) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasRelevantPlaceNameSignal(vendor vendorRow, place foursquarePlace) bool {
 	raw := strings.ToLower(vendor.Name + " " + place.Name)
-	for _, signal := range []string{"апотек", "фарма", "лек", "мед"} {
+	for _, signal := range []string{"апотек", "фарма", "лек", "мед", "суплемент", "витамин", "спорт"} {
 		if strings.Contains(raw, signal) {
 			return true
 		}
@@ -601,6 +785,8 @@ func hasPharmacyNameSignal(vendor vendorRow, place foursquarePlace) bool {
 	}
 	for _, signal := range []string{
 		"apotek", "pharm", "farmaci", "drogerie", "drugstore", "zdravlja", "lek", "med", "vita",
+		"vitamin", "suplement", "supplement", "protein", "proteini", "sport", "fitness", "fitlab",
+		"gym", "pansport", "titanium", "superior",
 	} {
 		if strings.Contains(normalized, signal) {
 			return true

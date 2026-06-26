@@ -217,7 +217,7 @@ export default function PharmacyMap({
             {selectedPlacesAtLocation.length > 1 ? (
               <>
                 <h2 className="text-sm font-semibold text-gray-900 dark:text-white">
-                  {selectedPlacesAtLocation.length.toLocaleString("sr-RS")} apoteke na ovoj lokaciji
+                  {selectedPlacesAtLocation.length.toLocaleString("sr-RS")} lokacija na ovoj adresi
                 </h2>
                 {placeAddress(selectedPlace) && (
                   <p className="mt-1 line-clamp-2 text-xs text-gray-600 dark:text-gray-300">
@@ -251,9 +251,21 @@ function MapInfoPlace({
 }) {
   const address = placeAddress(place);
   const website = place.website || place.vendor_website;
+  const photo = showAddress ? place.photos?.[0] : undefined;
 
   return (
     <div className={compact ? "py-2 first:pt-0 last:pb-0" : ""}>
+      {photo?.url && (
+        <div className="-mx-3 -mt-3 mb-3 aspect-[16/9] overflow-hidden rounded-t-lg bg-gray-100 dark:bg-gray-800">
+          {/* eslint-disable-next-line @next/next/no-img-element -- Foursquare place photos are remote runtime URLs */}
+          <img
+            src={photo.original_url || photo.url}
+            alt={place.name}
+            loading="lazy"
+            className="h-full w-full object-cover"
+          />
+        </div>
+      )}
       <h3 className="truncate text-sm font-semibold text-gray-900 dark:text-white">{place.name}</h3>
       <p className="text-xs text-gray-500 dark:text-gray-400">{place.vendor_name}</p>
       {showAddress && address && (

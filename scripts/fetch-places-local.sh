@@ -7,8 +7,9 @@
 #   DRY_RUN=1 make fetch-places
 #   VENDOR=Benu DRY_RUN=1 make fetch-places
 #   MAX_VENDORS=5 CONTINUE_ON_ERROR=1 make fetch-places
-#   FIELDS=fsq_place_id,name,latitude,longitude,categories,location make fetch-places
-#   CATEGORY_IDS=4bf58dd8d48988d10f951735,5745c2e4498e11e7bccabdbd make fetch-places
+#   FIELDS=fsq_place_id,name,latitude,longitude,categories,location,photos make fetch-places
+#   COVERAGE_BOUNDS=42.2322,18.8170,46.1900,23.0063 MAX_SPLIT_DEPTH=8 make fetch-places
+#   CATEGORY_IDS=4bf58dd8d48988d10f951735,5745c2e4498e11e7bccabdbd make fetch-places  # faster, less complete
 #
 # This is intentionally local-only. It does not install timers, touch systemd, or
 # deploy anything to the production server.
@@ -52,6 +53,14 @@ if [ -n "${FIELDS:-}" ]; then
   args+=("-fields" "$FIELDS")
 fi
 
+if [ -n "${COVERAGE_BOUNDS:-}" ]; then
+  args+=("-coverage-bounds" "$COVERAGE_BOUNDS")
+fi
+
+if [ -n "${MAX_SPLIT_DEPTH:-}" ]; then
+  args+=("-max-split-depth" "$MAX_SPLIT_DEPTH")
+fi
+
 if [ -n "${CATEGORY_IDS:-}" ]; then
   args+=("-category-ids" "$CATEGORY_IDS")
 fi
@@ -74,6 +83,10 @@ fi
 
 if [ "${PRUNE_DISALLOWED:-1}" = "0" ]; then
   args+=("-prune-disallowed=false")
+fi
+
+if [ "${PRUNE_STALE:-1}" = "0" ]; then
+  args+=("-prune-stale=false")
 fi
 
 if [ "${CONTINUE_ON_ERROR:-0}" = "1" ]; then

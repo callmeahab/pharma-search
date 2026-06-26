@@ -14,6 +14,7 @@ export default function PharmacyPlaceCard({
 }) {
   const address = place.formatted_address || [place.address, place.city].filter(Boolean).join(", ");
   const website = place.website || place.vendor_website;
+  const photo = place.photos?.[0];
 
   return (
     <article
@@ -23,6 +24,18 @@ export default function PharmacyPlaceCard({
           : "border-gray-200 dark:border-gray-700"
       }`}
     >
+      {photo?.url && (
+        <div className="-mx-5 -mt-5 mb-4 aspect-[16/9] overflow-hidden rounded-t-lg bg-gray-100 dark:bg-gray-900">
+          {/* eslint-disable-next-line @next/next/no-img-element -- Foursquare place photos are remote runtime URLs */}
+          <img
+            src={photo.original_url || photo.url}
+            alt={place.name}
+            loading="lazy"
+            className="h-full w-full object-cover"
+          />
+        </div>
+      )}
+
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <button

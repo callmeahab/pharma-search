@@ -80,23 +80,31 @@ make fetch-places
 # Useful local knobs
 MAX_VENDORS=5 make fetch-places
 CONTINUE_ON_ERROR=1 make fetch-places
-NEAR="Serbia" LIMIT=50 SLEEP=250ms make fetch-places
+COVERAGE_BOUNDS="42.2322,18.8170,46.1900,23.0063" MAX_SPLIT_DEPTH=8 LIMIT=50 SLEEP=250ms make fetch-places
 ```
 
 The command loads `.env`, applies migrations, then runs `go run ./cmd/fetchplaces`.
 It requires `FOURSQUARE_API_KEY` for the current Foursquare Places API.
-By default it asks Foursquare for the Pharmacy and Drugstore categories only,
-then prunes any cached places outside those categories. It also uses
-Foursquare's default response fields so it can import basic location data without
-requesting paid/premium fields. If your Foursquare account has credits enabled,
-request richer fields locally:
+By default it searches by vendor name across Serbia using recursive Foursquare
+bounding boxes. If a box returns Foursquare's 50-result maximum, the importer
+splits the box and searches again, then deduplicates by Foursquare place id.
+If any smallest box still hits the limit, the run exits with an error so stale
+locations are not treated as complete. Successful complete vendor sweeps prune
+stale cached locations for that vendor.
+
+The importer keeps pharmacies, drugstores, and relevant supplement/health shops,
+then prunes cached places that no longer look relevant. It also requests the
+place photos field and stores Foursquare's full-resolution photo URL metadata
+locally with the pharmacy/shop record. If you want to override the requested
+fields, include `photos` to keep place images available:
 
 ```bash
-FIELDS=fsq_place_id,name,latitude,longitude,categories,location,tel,website,hours make fetch-places
+FIELDS=fsq_place_id,name,latitude,longitude,categories,location,tel,website,hours,photos make fetch-places
 ```
 
-To deliberately import another Foursquare category locally, override the category
-allowlist:
+To deliberately prefilter Foursquare requests locally, override category IDs.
+This is faster and cheaper, but can miss supplement shops that Foursquare does
+not classify as Pharmacy/Drugstore:
 
 ```bash
 CATEGORY_IDS=4bf58dd8d48988d10f951735,5745c2e4498e11e7bccabdbd make fetch-places
