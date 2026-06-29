@@ -1836,6 +1836,7 @@ func runConnectServer() {
 	srv.registerAuthRoutes(mux)
 	srv.registerWatchRoutes(mux)
 	srv.registerVendorRoutes(mux)
+	srv.registerMobileRoutes(mux)
 
 	// Add CORS middleware
 	corsHandler := cors.New(cors.Options{

@@ -1,0 +1,333 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		0791469528E38D8DC6BED1D0 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A0EEBED3089EC0420CFC0F4 /* ContentView.swift */; };
+		2F467E42B5BFA851549CFE9A /* PushRegistration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F58705EC08866FE3A6B6ED1 /* PushRegistration.swift */; };
+		41AF58305CEC0B4DEE883486 /* KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B4A98BBB5EC108C1C8398A2F /* KeychainStore.swift */; };
+		4333E986C488315E790D0F6F /* AppSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8CAEBD3ADD87D65D12F6B277 /* AppSession.swift */; };
+		84E3ACC42C98160197F3CEC8 /* PharmaSearchApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C4EFCEBBE0A769DAC604D37 /* PharmaSearchApp.swift */; };
+		93CD6085DE791307BB1F0A62 /* WatchlistViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 57D6AD3BB373F4FC9B7373EC /* WatchlistViewModel.swift */; };
+		A110A110A110A110A110A101 /* ApostekaLogo.png in Resources */ = {isa = PBXBuildFile; fileRef = A110A110A110A110A110A102 /* ApostekaLogo.png */; };
+		CDA7F1BAACF1C165D7020B4A /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 428EC7595A460CADB3F3E146 /* APIClient.swift */; };
+		E05ADF2AF4607DCCA8775BC9 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9DA405D2F4AB09C2EA02F6DF /* Models.swift */; };
+		F313E9598A610A789EB3CB10 /* ProductSearchViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B926FE14597365F61A5C2C1 /* ProductSearchViewModel.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		1B926FE14597365F61A5C2C1 /* ProductSearchViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProductSearchViewModel.swift; sourceTree = "<group>"; };
+		428EC7595A460CADB3F3E146 /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
+		57D2E695C54E1C9103334BEF /* PharmaSearch.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = PharmaSearch.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		57D6AD3BB373F4FC9B7373EC /* WatchlistViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchlistViewModel.swift; sourceTree = "<group>"; };
+		5C4EFCEBBE0A769DAC604D37 /* PharmaSearchApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PharmaSearchApp.swift; sourceTree = "<group>"; };
+		5F58705EC08866FE3A6B6ED1 /* PushRegistration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PushRegistration.swift; sourceTree = "<group>"; };
+		8CAEBD3ADD87D65D12F6B277 /* AppSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSession.swift; sourceTree = "<group>"; };
+		9A0EEBED3089EC0420CFC0F4 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		9DA405D2F4AB09C2EA02F6DF /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		A110A110A110A110A110A102 /* ApostekaLogo.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ApostekaLogo.png; sourceTree = "<group>"; };
+		B4A98BBB5EC108C1C8398A2F /* KeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainStore.swift; sourceTree = "<group>"; };
+		D7A4DC38A046388ACD60B6AF /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXGroup section */
+		613318F456AF91E534A78076 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				57D2E695C54E1C9103334BEF /* PharmaSearch.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		CAC32EB2100A939AB98BDBBB = {
+			isa = PBXGroup;
+			children = (
+				E0182E291E8C41B8892D1E2D /* PharmaSearch */,
+				613318F456AF91E534A78076 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		E0182E291E8C41B8892D1E2D /* PharmaSearch */ = {
+			isa = PBXGroup;
+			children = (
+				428EC7595A460CADB3F3E146 /* APIClient.swift */,
+				8CAEBD3ADD87D65D12F6B277 /* AppSession.swift */,
+				A110A110A110A110A110A102 /* ApostekaLogo.png */,
+				9A0EEBED3089EC0420CFC0F4 /* ContentView.swift */,
+				D7A4DC38A046388ACD60B6AF /* Info.plist */,
+				B4A98BBB5EC108C1C8398A2F /* KeychainStore.swift */,
+				9DA405D2F4AB09C2EA02F6DF /* Models.swift */,
+				5C4EFCEBBE0A769DAC604D37 /* PharmaSearchApp.swift */,
+				1B926FE14597365F61A5C2C1 /* ProductSearchViewModel.swift */,
+				5F58705EC08866FE3A6B6ED1 /* PushRegistration.swift */,
+				57D6AD3BB373F4FC9B7373EC /* WatchlistViewModel.swift */,
+			);
+			path = PharmaSearch;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		F0DEB65D0AC1053AFB78514D /* PharmaSearch */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = F28C4E00CEE82F36D67ADF90 /* Build configuration list for PBXNativeTarget "PharmaSearch" */;
+			buildPhases = (
+				EE21562139A59C645700ACC8 /* Sources */,
+				A110A110A110A110A110A103 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = PharmaSearch;
+			packageProductDependencies = (
+			);
+			productName = PharmaSearch;
+			productReference = 57D2E695C54E1C9103334BEF /* PharmaSearch.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		5CD5E43688A18CDD58206E13 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+				};
+			};
+			buildConfigurationList = 9F57DBC64516E7945DED9109 /* Build configuration list for PBXProject "PharmaSearch" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = CAC32EB2100A939AB98BDBBB;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 613318F456AF91E534A78076 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				F0DEB65D0AC1053AFB78514D /* PharmaSearch */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		A110A110A110A110A110A103 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A110A110A110A110A110A101 /* ApostekaLogo.png in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		EE21562139A59C645700ACC8 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				CDA7F1BAACF1C165D7020B4A /* APIClient.swift in Sources */,
+				4333E986C488315E790D0F6F /* AppSession.swift in Sources */,
+				0791469528E38D8DC6BED1D0 /* ContentView.swift in Sources */,
+				41AF58305CEC0B4DEE883486 /* KeychainStore.swift in Sources */,
+				E05ADF2AF4607DCCA8775BC9 /* Models.swift in Sources */,
+				84E3ACC42C98160197F3CEC8 /* PharmaSearchApp.swift in Sources */,
+				F313E9598A610A789EB3CB10 /* ProductSearchViewModel.swift in Sources */,
+				2F467E42B5BFA851549CFE9A /* PushRegistration.swift in Sources */,
+				93CD6085DE791307BB1F0A62 /* WatchlistViewModel.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		1924A87545B46BB7769EFDC9 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				INFOPLIST_FILE = PharmaSearch/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = rs.aposteka.PharmaSearch;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		27D5E33D27E36090D3E1283E /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 0.1.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.9;
+			};
+			name = Release;
+		};
+		5451FC9A5E677FF1AB6489C9 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 0.1.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.9;
+			};
+			name = Debug;
+		};
+		58EC2EE35D7E08EEDE146B60 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				INFOPLIST_FILE = PharmaSearch/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = rs.aposteka.PharmaSearch;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		9F57DBC64516E7945DED9109 /* Build configuration list for PBXProject "PharmaSearch" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				5451FC9A5E677FF1AB6489C9 /* Debug */,
+				27D5E33D27E36090D3E1283E /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		F28C4E00CEE82F36D67ADF90 /* Build configuration list for PBXNativeTarget "PharmaSearch" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				1924A87545B46BB7769EFDC9 /* Debug */,
+				58EC2EE35D7E08EEDE146B60 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 5CD5E43688A18CDD58206E13 /* Project object */;
+}
