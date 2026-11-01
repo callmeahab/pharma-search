@@ -1,3 +1,46 @@
+# Scraper repair verification — 2026-11-01
+
+Live reruns recovered the following snapshots. Counts below are valid unique
+titles per vendor after merging Ananas shards and applying importer hygiene;
+the 13 CSVs contain 81,472 raw rows and 66,779 unique vendor products.
+Imported, enriched and synced to production: 225,617 products (+19,375), with
+223,538 prices scraped today. Production health and search checks passed;
+account counts and search indexes were preserved. The final catalog has no
+duplicate vendor titles or links, invalid prices, or orphaned products.
+
+| Vendor | Valid unique products | Repair / verification |
+|---|---:|---|
+| Ananas (all six shards) | 28,140 | Parse server-rendered search JSON; validate pagination and explicit sold-out categories instead of generated CSS classes |
+| Maelia | 12,356 | Discover current root categories and parse Angular TransferState with pagination metadata |
+| eApoteka | 9,331 | Read HTML listings, full titles, localized prices and every pagination link |
+| Fitness Shop | 2,149 | Read all configured HTML catalogs and their pagination |
+| exYu Fitness | 409 | Follow child categories even when a parent contains no direct products |
+| Hiper | 4,134 | Read current sale prices, including bundle markup without Magento amount attributes |
+| Dr Max | 9,382 | Complete browser rerun; propagate browser disconnects and access failures |
+| eApotekaNet | 878 | Verified full sitemap rerun |
+
+Five sources remain externally unavailable or blocked as checked on November 1:
+
+| Source | Live response |
+|---|---|
+| Apotekar Online | HTTP 503, Vercel `DEPLOYMENT_PAUSED` |
+| Azgard (`azgardnutrition.rs`) | HTTP 402, Shopify store unavailable |
+| Apoteka Shop | HTTP 522, origin timeout |
+| Jugofarm | Browser displays a maintenance page |
+| Apoteka Net | HTTP 403 in both headed and headless browser checks |
+
+These failures preserve the previous catalog. Do not treat an outage, access
+block, malformed response, repeated page or failed later page as a completed
+snapshot. The worker now stages each run separately, validates CSV structure
+and reported counts, and publishes only successful snapshots. Process cleanup
+targets its own scraper groups rather than every headless Chrome process.
+Shared HTTP, API and sitemap helpers propagate failures instead of returning
+partial catalogs. Regression validation: `cd scrapers && bun test` (34 passing).
+
+The dated audit below is historical and does not describe current source health.
+
+---
+
 # Scraper / Data-Acquisition Audit — 2026-06-22
 
 Audited all 85 registered scrapers + shared framework (multi-agent audit; broken

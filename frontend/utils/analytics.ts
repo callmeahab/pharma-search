@@ -1,155 +1,27 @@
-import ReactGA from "react-ga4";
-declare global {
-  interface Window {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    dataLayer: any[];
+import { readAnalyticsConsent, writeAnalyticsConsent } from "@/lib/analytics-consent";
+
+function allowed() { return typeof window !== "undefined" && readAnalyticsConsent() === "accepted"; }
+export function setCookieConsent(hasConsent: boolean) {
+  writeAnalyticsConsent(hasConsent ? "accepted" : "declined");
+  // Remove cookies left by the previous analytics implementation. New collection
+  // is limited to first-party aggregate events and never loads third-party code.
+  for (const item of document.cookie.split(";")) {
+    const name = item.split("=")[0].trim();
+    if (/^_ga|^_gid$|^_gat/.test(name)) for (const domain of ["", `;domain=${window.location.hostname}`, `;domain=.${window.location.hostname}`]) document.cookie = `${name}=;max-age=0;path=/${domain};SameSite=Lax`;
   }
 }
-
-// Helper function to get readable timestamp in dd.MM.yyyy, HH:mm:ss format
-const getReadableTimestamp = () => {
-  const now = new Date();
-  const day = String(now.getDate()).padStart(2, '0');
-  const month = String(now.getMonth() + 1).padStart(2, '0'); // getMonth() is 0-indexed
-  const year = now.getFullYear();
-  const hours = String(now.getHours()).padStart(2, '0');
-  const minutes = String(now.getMinutes()).padStart(2, '0');
-  const seconds = String(now.getSeconds()).padStart(2, '0');
-
-  return `${day}.${month}.${year}, ${hours}:${minutes}:${seconds}`;
-};
-
-// Set cookie consent status
-export const setCookieConsent = (_hasConsent: boolean) => {
-
-  // Initialize GA if not already done
-  ReactGA.initialize("G-WECSBGJW8J");
-  // Create a new session
-  ReactGA.set({ anonymizeIp: true });
-
-  // Push timestamp to dataLayer
-  window.dataLayer = window.dataLayer || [];
-  window.dataLayer.push({
-    event: 'cookie_consent_updated',
-    timestamp: getReadableTimestamp(),
-    consent_status: 'accepted'
-  });
-
-};
-
-// Initialize Google Analytics with your tracking ID
-export const initGA = () => {
-  // Always initialize with full functionality as analytics are required
-  ReactGA.initialize("G-WECSBGJW8J");
-
-  window.dataLayer = window.dataLayer || [];
-  const timestamp = getReadableTimestamp();
-
-  window.dataLayer.push({
-    'gtm.start': new Date().getTime(),
-    event: 'gtm.js',
-    timestamp: timestamp
-  });
-
-  // Also push initialization event
-  window.dataLayer.push({
-    event: 'analytics_initialized',
-    timestamp: timestamp,
-    ga_tracking_id: 'G-WECSBGJW8J'
-  });
-
-  // Update local storage to reflect that cookies are accepted
-  localStorage.setItem('cookie-consent', 'accepted');
-};
-
-// Track page views
-export const trackPageView = (path: string) => {
-  const timestamp = getReadableTimestamp();
-
-  // GA4 tracking
-  ReactGA.send({ hitType: "pageview", page: path });
-
-  // GTM dataLayer push with timestamp
-  window.dataLayer = window.dataLayer || [];
-  window.dataLayer.push({
-    event: 'page_view',
-    page_path: path,
-    timestamp: timestamp
-  });
-
-};
-
-// Track search queries
-export const trackSearch = (searchTerm: string, resultCount: number) => {
-  const timestamp = getReadableTimestamp();
-
-  // GA4 event
-  ReactGA.event('Product Search', {
-    category: "Search",
-    action: "Product Search",
-    searchTerm: searchTerm,
-  });
-
-  // GTM dataLayer push with timestamp
-  window.dataLayer = window.dataLayer || [];
-  window.dataLayer.push({
-    event: 'search',
-    search_term: searchTerm,
-    search_results_count: resultCount,
-    timestamp: timestamp,
-    event_category: 'Search',
-    event_action: 'Product Search'
-  });
-
-};
-
-// Track product clicks
-export const trackProductClick = (productId: string, productName: string, category: string) => {
-  const timestamp = getReadableTimestamp();
-
-  // GA4 event
-  ReactGA.event('Product Click', {
-    category: "Product",
-    action: "Product Click",
-    product: productName,
-  });
-
-  // GTM dataLayer push with timestamp
-  window.dataLayer = window.dataLayer || [];
-  window.dataLayer.push({
-    event: 'product_click',
-    product_id: productId,
-    product_name: productName,
-    product_category: category,
-    timestamp: timestamp,
-    event_category: 'Product',
-    event_action: 'Product Click'
-  });
-
-};
-
-// Track store link clicks
-export const trackStoreClick = (storeName: string, targetUrl: string, productName: string | null = null) => {
-  const timestamp = getReadableTimestamp();
-
-  // GA4 event
-  ReactGA.event('Store Link Click', {
-    category: "Store",
-    action: "Store Link Click",
-    label: storeName,
-    storeUrl: targetUrl,
-  });
-
-  // GTM dataLayer push with timestamp
-  window.dataLayer = window.dataLayer || [];
-  window.dataLayer.push({
-    event: 'store_click',
-    store_name: storeName,
-    store_url: targetUrl,
-    product_name: productName || null,
-    timestamp: timestamp,
-    event_category: 'Store',
-    event_action: 'Store Link Click'
-  });
-
-};
+type Context = { requestId: string; rank: number };
+export type SearchCompletion = { requestId: string; resultCount: number; offerCount: number; latencyMs: number; filterCount: number; corrected: boolean };
+function firstParty(payload: Record<string, string | number | boolean | undefined>) {
+  if (!allowed()) return;
+  void fetch("/api/catalog/events", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload), keepalive: true }).catch(() => {});
+}
+export function trackSearchComplete(value: SearchCompletion) {
+  firstParty({ kind: "search_complete", request_id: value.requestId, result_count: value.resultCount, offer_count: value.offerCount, latency_ms: Math.round(value.latencyMs), filter_count: value.filterCount, corrected: value.corrected });
+}
+export function trackProductClick(_id: string, _name: string, _category: string, context?: Context) {
+  firstParty({ kind: "product_click", request_id: context?.requestId, rank: context?.rank });
+}
+export function trackStoreClick(_store: string, _url: string, _product: string | null = null, context?: Context) {
+  firstParty({ kind: "store_click", request_id: context?.requestId, rank: context?.rank });
+}

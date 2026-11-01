@@ -1,68 +1,58 @@
-# Scheduling the scrapers
+# Catalog pipeline and scheduling
 
-The scrapers do **not** run themselves. Before this, the catalog froze for ~2
-months because nothing scheduled them. Schedule the **full pipeline**
-(`run-pipeline.sh` = scrape → import-csv → postprocess) — NOT `bun start`, which
-only writes CSVs and never updates the DB.
+`run-pipeline.sh` runs migrations → scrapers → CSV import → cleanup → extraction
+→ categories → optional canonicalization → atomic SKU publication → source health
+→ optional production sync. Schedule this script, rather than the CSV-only worker.
 
-## Where does this run?
-
-The scraper host needs: Bun, headless Chromium deps (puppeteer), and
-`DATABASE_URL` pointing at the catalog DB. Pick one:
-
-- **Dedicated scraper host / the dev box** (recommended): run the pipeline there
-  against the production `DATABASE_URL` (or a local DB + `deploy/sync-data.sh`).
-- **The prod server**: note `deploy/deploy.sh` currently rsync-excludes `scrapers`
-  and `scrapers_logs`, so they aren't shipped there. You'd remove those excludes
-  and install Chromium — but Puppeteer competing with the app on a small box is
-  risky. Prefer a separate host.
-
-## Install (systemd, as root on the scraper host)
+The current scraper host is `/Users/ahab/pharma-search`. A LaunchAgent named
+`rs.aposteka.catalog` is installed for **03:00 Europe/Belgrade**, with `SYNC=1`.
+An independent `rs.aposteka.health` watchdog is loaded for 12:00 daily and writes
+`cache/scheduled-source-health.json`, so monitoring does not depend on pipeline completion.
+Both run as the logged-in Mac user; the Mac and local PostgreSQL must be available.
+Launchd handles missed calendar starts on wake. Logs are in `cache/scheduled-pipeline*.log`.
 
 ```bash
-# Set the host timezone so 03:00 means Belgrade time:
-timedatectl set-timezone Europe/Belgrade
-
-cp deploy/scrapers/pharma-scrapers.service /etc/systemd/system/
-cp deploy/scrapers/pharma-scrapers.timer   /etc/systemd/system/
-# Edit the .service: User, WorkingDirectory, SCRAPERS_DIR, and (optional)
-# SCRAPER_ALERT_WEBHOOK for failure alerts.
-
-systemctl daemon-reload
-systemctl enable --now pharma-scrapers.timer
-systemctl list-timers pharma-scrapers.timer     # confirm next run
-
-# Run once now to verify:
-systemctl start pharma-scrapers.service
-journalctl -u pharma-scrapers.service -f
+# Reinstall/update the existing job; does not start a scrape immediately.
+bash deploy/scrapers/install-macos-schedule.sh
+launchctl print gui/$(id -u)/rs.aposteka.catalog
+# Manual full run:
+SYNC=1 SKIP_CANONICALIZE=1 bash deploy/scrapers/run-pipeline.sh
+# Independent per-source watchdog (exits nonzero on stale or failed sources):
+cd scrapers && bun catalog-health.ts --check
 ```
 
-## Crontab alternative
+Linux alternatives are `pharma-scrapers.service` and `pharma-scrapers.timer`.
+Adjust paths/user before installing; the timer explicitly uses Europe/Belgrade.
+Scraping remains separate from the small production app server. No outbound
+notification destination is configured by the installer.
 
-```cron
-0 3 * * * SCRAPERS_DIR=/path/to/scrapers SCRAPER_ALERT_WEBHOOK=https://hooks.slack.com/... /path/to/deploy/scrapers/run-pipeline.sh >> /var/log/pharma-scrapers.log 2>&1
-```
+Each worker attempt writes status/count/timestamps into `output/.runs/`, imported
+into `ScraperRun` by `catalog-health.ts`. The report distinguishes each source's
+latest attempt from its latest price observation; one successful vendor cannot
+hide another vendor's outage. The public `/api/catalog/status` also reports source
+freshness and recorded attempts. `SOURCE_FRESHNESS_HOURS` defaults to 36 for the
+watchdog; current price eligibility uses `OFFER_MAX_AGE` (default `168h`).
 
-## Alerting & freshness
+Failed, blocked, incomplete and timed-out snapshots retain the previous CSV.
+Successful CSVs are validated in `.pending/` and renamed into place. A worker's
+failure threshold does not prevent the full pipeline from importing successful
+sources: it publishes healthy snapshots and returns a failing health status at
+the end. Interrupted workers and import/enrichment failures stop publication.
+A PID lock prevents concurrent pipelines and recovers abandoned process locks.
 
-- The worker exits non-zero and POSTs to `SCRAPER_ALERT_WEBHOOK` when the failure
-  rate exceeds `SCRAPER_FAILURE_ALERT_RATIO` (default 0.10). With systemd, also add
-  an `OnFailure=` handler or rely on the webhook.
-- **Freshness watchdog** (catch a stuck/disabled timer): alert if the newest
-  output CSV is older than ~36h, e.g. a separate daily cron:
-  ```bash
-  find /path/to/scrapers/output -name '*.csv' -mtime -2 | grep -q . \
-    || curl -s -X POST "$SCRAPER_ALERT_WEBHOOK" -d '{"text":"⚠️ scrapers: no fresh CSV in 48h"}'
-  ```
+CSV v2 appends `availability,sourceProductId,gtin` after the original eight fields.
+The importer still accepts complete legacy eight-column snapshots. Stock defaults
+to **unknown**; positive prices do not establish stock. Shopify variants retain
+separate URLs, titles and supplied barcodes. Listings are identified by vendor
+plus source ID, so title edits preserve IDs and same-title variants survive.
+Missing products in a sufficiently complete snapshot create `OfferLifecycle`
+evidence before delisting. `IMPORT_DELIST_MIN_RATIO` defaults to 0.5.
 
-## Tuning env vars
+Imports/enrichment change raw `Product` rows. Customers read `CatalogOffer`, which
+changes only in the rebuild transaction along with SKU metadata and publication
+version. Observations/history survive source delisting and production syncs.
 
-| Var | Default | Meaning |
-|-----|---------|---------|
-| `SCRAPER_CONCURRENCY` | 6 | parallel scrapers |
-| `SCRAPER_RETRIES` | 1 | retries (only transient *errors* are retried now) |
-| `SCRAPER_TIMEOUT_MS` | 900000 | per-scraper timeout (15m) |
-| `SCRAPER_FAILURE_ALERT_RATIO` | 0.1 | failure rate that triggers alert + non-zero exit |
-| `SCRAPER_ALERT_WEBHOOK` | — | Slack-style webhook for failures |
-| `IMPORT_DELIST_MIN_RATIO` | 0.5 | skip delisting a vendor if its fresh snapshot is < this × stored count (broken-scrape guard) |
-| `CLEANUP_MAX_ZERO_RATIO` | 0.5 | skip zero-price cleanup for a vendor above this zero ratio (broken-selector guard) |
+Useful controls: `SKIP_SCRAPE=1`, `SKIP_EXTRACT=1`, `SKIP_CATEGORIZE=1`,
+`SKIP_CANONICALIZE=1`, `SCRAPER_FILTER=a.ts,b.ts`, `SCRAPER_CONCURRENCY`,
+`SCRAPER_TIMEOUT_MS`, `SCRAPER_RETRIES`, and `SCRAPER_OUTPUT_DIR`.
+The canonicalizer is optional enrichment and is not used to assert SKU identity.

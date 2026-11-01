@@ -2,7 +2,9 @@ export interface Price {
   store: string;
   vendorId?: string;
   price: number;
-  inStock: boolean;
+  inStock?: boolean;
+  availability?: "available" | "unavailable" | "unknown";
+  unitPrice?: number;
   link?: string;
   title?: string;
   is_best_deal?: boolean;
@@ -35,6 +37,19 @@ export interface Product {
   comparisonContext?: ComparisonContext;
   historyGroupKey?: string;
   priceUpdatedAt?: string; // when the displayed (lowest) price was last retrieved
+  comparable?: boolean;
+  familyId?: string;
+  detailsComplete?: boolean;
+  unitLabel?: string;
+  unitPrice?: number;
+  catalogFilters?: CatalogOfferFilters;
+  searchContext?: { requestId: string; rank: number };
+  sourceOffers?: Price[];
+}
+
+export interface CatalogOfferFilters {
+  brands?: string[]; categories?: string[]; vendors?: string[]; forms?: string[];
+  quantities?: string[]; dosages?: string[]; minPrice?: number; maxPrice?: number;
 }
 
 export interface BackendProduct {
@@ -57,6 +72,8 @@ export interface BackendProduct {
   quantity?: number;
   rank: number;
   price_updated_at?: string;
+  availability?: "available" | "unavailable" | "unknown";
+  unit_price?: number;
 }
 
 export interface ProductGroup {
@@ -72,6 +89,18 @@ export interface ProductGroup {
   };
   vendor_count: number;
   product_count?: number;
+  offers?: BackendProduct[];
+  family_id?: string;
+  comparable?: boolean;
+  match_method?: string;
+  unit_price_min?: number;
+  unit_label?: string;
+  details_complete?: boolean;
+  category?: string;
+  brand?: string;
+  gtin?: string;
+  catalogFilters?: CatalogOfferFilters;
+  searchContext?: { requestId: string; rank: number };
 }
 
 export interface FlatSearchResult {
@@ -100,7 +129,9 @@ function toPrices(group: ProductGroup): Price[] {
     store: product.vendor_name,
     vendorId: product.vendor_id,
     price: product.price,
-    inStock: true,
+    inStock: product.availability === "available" ? true : product.availability === "unavailable" ? false : undefined,
+    availability: product.availability || "unknown",
+    unitPrice: product.unit_price,
     link: product.link,
     title: product.title,
     updatedAt: product.price_updated_at,
@@ -185,16 +216,17 @@ export function convertBackendProductToProduct(
     store: backendProduct.vendor_name,
     vendorId: backendProduct.vendor_id,
     price: backendProduct.price,
-    inStock: true,
+    inStock: backendProduct.availability === "available" ? true : backendProduct.availability === "unavailable" ? false : undefined,
+    availability: backendProduct.availability || "unknown",
     link: backendProduct.link,
     title: backendProduct.title,
   };
 
   return {
     id: backendProduct.id,
-    name: humanizeTitle(group.normalized_name || backendProduct.title),
+    name: humanizeTitle(backendProduct.title),
     description: formatOfferDescription(comparisonContext),
-    category: "", // No category since we removed badges
+    category: group.category || backendProduct.category || "",
     image: backendProduct.thumbnail || "/medicine-placeholder.svg",
     prices,
     vendorCount: group.vendor_count,
@@ -204,6 +236,9 @@ export function convertBackendProductToProduct(
     comparisonContext,
     historyGroupKey: backendProduct.group_key || group.id,
     priceUpdatedAt: backendProduct.price_updated_at,
+    comparable: group.comparable, familyId: group.family_id, detailsComplete: group.details_complete,
+    catalogFilters: group.catalogFilters, unitLabel: group.unit_label, unitPrice: backendProduct.unit_price, searchContext: group.searchContext,
+    sourceOffers: group.offers?.map(offer => ({ store: offer.vendor_name, vendorId: offer.vendor_id, title: offer.title, price: offer.price, link: offer.link, updatedAt: offer.price_updated_at, availability: offer.availability || "unknown", unitPrice: offer.unit_price })),
   };
 }
 
@@ -221,7 +256,7 @@ export function convertProductGroupToProducts(group: ProductGroup): Product[] {
     id: group.id,
     name: productTitle,
     description: formatGroupedDescription(comparisonContext),
-    category: "",
+    category: group.category || firstProduct?.category || "",
     image: firstProduct?.thumbnail || "/medicine-placeholder.svg",
     prices,
     vendorCount: group.vendor_count,
@@ -231,6 +266,9 @@ export function convertProductGroupToProducts(group: ProductGroup): Product[] {
     historyGroupKey: group.id || firstProduct?.group_key,
     // cheapest offer is products[0]; show when its price was retrieved
     priceUpdatedAt: group.products[0]?.price_updated_at,
+    comparable: group.comparable, familyId: group.family_id, detailsComplete: group.details_complete,
+    catalogFilters: group.catalogFilters, unitLabel: group.unit_label, unitPrice: group.unit_price_min, searchContext: group.searchContext,
+    sourceOffers: group.offers?.map(offer => ({ store: offer.vendor_name, vendorId: offer.vendor_id, title: offer.title, price: offer.price, link: offer.link, updatedAt: offer.price_updated_at, availability: offer.availability || "unknown", unitPrice: offer.unit_price })),
   };
 
   return [mainProduct];

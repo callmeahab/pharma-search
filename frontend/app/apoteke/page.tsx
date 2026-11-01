@@ -113,25 +113,8 @@ export default function PharmaciesPage() {
     [filteredPlaces, currentPage],
   );
 
-  useEffect(() => {
-    setPage(1);
-  }, [query, cityKey]);
-
-  useEffect(() => {
-    if (page > pageCount) setPage(pageCount);
-  }, [page, pageCount]);
-
-  useEffect(() => {
-    if (filteredPlaces.length === 0) {
-      setSelectedPlaceId("");
-      return;
-    }
-    if (!filteredPlaces.some((place) => place.id === selectedPlaceId)) {
-      setSelectedPlaceId(filteredPlaces[0].id);
-    }
-  }, [filteredPlaces, selectedPlaceId]);
-
-  const selectedPlace = filteredPlaces.find((place) => place.id === selectedPlaceId);
+  const selectedPlace = filteredPlaces.find((place) => place.id === selectedPlaceId) || filteredPlaces[0];
+  const activePlaceId = selectedPlace?.id || "";
   const hasImportedPlaces = places.length > 0;
 
   function selectPlace(place: PharmacyPlace) {
@@ -158,7 +141,7 @@ export default function PharmaciesPage() {
             <Search size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
             <Input
               value={query}
-              onChange={(e) => setQuery(e.target.value)}
+              onChange={(e) => { setQuery(e.target.value); setPage(1); }}
               placeholder="Pretraži po imenu, gradu ili adresi..."
               className="pl-10"
             />
@@ -167,7 +150,7 @@ export default function PharmaciesPage() {
           {cityStats.length > 0 && (
             <div className="mb-6 flex flex-wrap items-center gap-2">
               <button
-                onClick={() => setCityKey("")}
+                onClick={() => { setCityKey(""); setPage(1); }}
                 className={`rounded-full px-2.5 py-1 text-xs font-medium transition-colors ${
                   cityKey === ""
                     ? "bg-health-primary text-white"
@@ -179,7 +162,7 @@ export default function PharmaciesPage() {
               {visibleCities.map((item) => (
                 <button
                   key={item.key}
-                  onClick={() => setCityKey(item.key === cityKey ? "" : item.key)}
+                  onClick={() => { setCityKey(item.key === cityKey ? "" : item.key); setPage(1); }}
                   className={`rounded-full px-2.5 py-1 text-xs font-medium transition-colors ${
                     cityKey === item.key
                       ? "bg-health-primary text-white"
@@ -194,7 +177,7 @@ export default function PharmaciesPage() {
                   value={cityKey && !visibleCities.some((item) => item.key === cityKey) ? cityKey : "more"}
                   onValueChange={(value) => {
                     if (value === "more") return;
-                    setCityKey(value === "all" ? "" : value);
+                    setCityKey(value === "all" ? "" : value); setPage(1);
                   }}
                 >
                   <SelectTrigger className="h-8 w-full rounded-full border-gray-300 bg-white px-3 text-xs font-medium text-gray-700 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 sm:w-52">
@@ -225,7 +208,7 @@ export default function PharmaciesPage() {
               <>
                 <PharmacyMap
                   places={filteredPlaces}
-                  selectedId={selectedPlaceId}
+                  selectedId={activePlaceId}
                   onSelect={selectPlace}
                 />
 
@@ -245,7 +228,7 @@ export default function PharmaciesPage() {
                     <PharmacyPlaceCard
                       key={place.id}
                       place={place}
-                      selected={place.id === selectedPlaceId}
+                      selected={place.id === activePlaceId}
                       onSelect={selectPlace}
                     />
                   ))}

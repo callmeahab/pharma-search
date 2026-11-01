@@ -3,6 +3,7 @@ import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import { insertData, Product , initializeDatabase, closeDatabase } from './helpers/database';
 import { Page } from 'puppeteer';
 import { ScraperUtils } from './helpers/ScraperUtils';
+import { reportScraperFailure, requestText } from './helpers/http';
 
 puppeteer.use(StealthPlugin());
 
@@ -139,6 +140,8 @@ const browser = await puppeteer.launch({
 
 async function main() {
   try {
+    // A dead origin must not spend minutes looking like six empty categories.
+    await requestText('https://www.apotekashop.rs/', { timeoutMs: 12000, retries: 1 });
     // Initialize database connection
     await initializeDatabase();
     
@@ -152,6 +155,7 @@ async function main() {
     console.log('No products found.');
   }
   } catch (error) {
+    reportScraperFailure(error);
     console.error('Scraper failed:', error);
     process.exit(1);
   } finally {

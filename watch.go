@@ -1,6 +1,7 @@
 package main
 
 import (
+	"math"
 	"net/http"
 	"strings"
 )
@@ -17,7 +18,7 @@ func (s *server) handleWatchList(w http.ResponseWriter, r *http.Request) {
 	}
 	rows, err := s.db.Query(`
 		SELECT id, "groupKey", COALESCE("displayName",''), COALESCE(thumbnail,''),
-		       "targetPrice", "lastPrice", COALESCE("lastVendor",''), "createdAt"
+		       "targetPrice", "lastPrice", COALESCE("lastVendor",''), "createdAt",needs_review,COALESCE(review_reason,'')
 		FROM "Watch" WHERE "userId"=$1 ORDER BY "createdAt" DESC`, u.ID)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "could not load watchlist")
@@ -29,12 +30,15 @@ func (s *server) handleWatchList(w http.ResponseWriter, r *http.Request) {
 		var id, groupKey, name, thumb, vendor string
 		var target, last interface{}
 		var createdAt interface{}
-		if err := rows.Scan(&id, &groupKey, &name, &thumb, &target, &last, &vendor, &createdAt); err != nil {
+		var review bool
+		var reason string
+		if err := rows.Scan(&id, &groupKey, &name, &thumb, &target, &last, &vendor, &createdAt, &review, &reason); err != nil {
 			continue
 		}
 		watches = append(watches, map[string]interface{}{
 			"id": id, "group_key": groupKey, "display_name": name, "thumbnail": thumb,
 			"target_price": target, "last_price": last, "last_vendor": vendor, "created_at": createdAt,
+			"needs_review": review, "review_reason": reason,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"watches": watches})
@@ -58,8 +62,43 @@ func (s *server) handleWatchAdd(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid request")
 		return
 	}
+	if in.TargetPrice != nil && (*in.TargetPrice <= 0 || math.IsInf(*in.TargetPrice, 0) || math.IsNaN(*in.TargetPrice)) {
+		writeErr(w, 400, "invalid target price")
+		return
+	}
+	// Resolve an old offer UUID only through the reviewed unambiguous map. Never
+	// accept an ingredient-family key or the caller's price as an alert baseline.
+	if !strings.HasPrefix(in.GroupKey, "sku:v2:") && !strings.HasPrefix(in.GroupKey, "offer:v2:") {
+		var mapped string
+		if err := s.db.QueryRowContext(r.Context(), `SELECT sku_id FROM "CatalogIdentityAlias" WHERE legacy_key=$1 AND candidate_count=1 AND sku_id IS NOT NULL`, in.GroupKey).Scan(&mapped); err != nil {
+			writeErr(w, 409, "Izaberite tačan proizvod i pakovanje.")
+			return
+		}
+		in.GroupKey = mapped
+	}
+	var display, thumbnail string
+	if err := s.db.QueryRowContext(r.Context(), `SELECT s.display_name,COALESCE((SELECT thumbnail FROM "Product" WHERE sku_id=s.id ORDER BY price,id LIMIT 1),'') FROM "CatalogSku" s WHERE s.id=$1`, in.GroupKey).Scan(&display, &thumbnail); err != nil {
+		writeErr(w, 404, "Proizvod nije pronađen.")
+		return
+	}
+	in.DisplayName = display
+	in.Thumbnail = thumbnail
+	in.Price = nil
+	in.Vendor = ""
+	page, err := s.catalogSearch(r.Context(), catalogRequest{Limit: 1, Filters: catalogFilters{SKUID: in.GroupKey}})
+	if err != nil {
+		catalogHTTPError(w, err)
+		return
+	}
+	if len(page.Groups) > 0 {
+		price := page.Groups[0].PriceRange.Min
+		in.Price = &price
+		if len(page.Groups[0].Products) > 0 {
+			in.Vendor = page.Groups[0].Products[0].VendorName
+		}
+	}
 	var id string
-	err := s.db.QueryRow(`
+	err = s.db.QueryRowContext(r.Context(), `
 		INSERT INTO "Watch" ("userId","groupKey","displayName","thumbnail","targetPrice","lastPrice","lastVendor")
 		VALUES ($1,$2,$3,$4,$5,$6,$7)
 		ON CONFLICT ("userId","groupKey") DO UPDATE SET
@@ -67,7 +106,7 @@ func (s *server) handleWatchAdd(w http.ResponseWriter, r *http.Request) {
 		    "thumbnail"=EXCLUDED."thumbnail",
 		    "targetPrice"=COALESCE(EXCLUDED."targetPrice","Watch"."targetPrice"),
 		    "lastPrice"=COALESCE(EXCLUDED."lastPrice","Watch"."lastPrice"),
-		    "lastVendor"=COALESCE(EXCLUDED."lastVendor","Watch"."lastVendor")
+		    "lastVendor"=COALESCE(EXCLUDED."lastVendor","Watch"."lastVendor"),needs_review=false,review_reason=NULL
 		RETURNING id`,
 		u.ID, in.GroupKey, strings.TrimSpace(in.DisplayName), strings.TrimSpace(in.Thumbnail),
 		in.TargetPrice, in.Price, strings.TrimSpace(in.Vendor)).Scan(&id)
@@ -169,10 +208,15 @@ func (s *server) handleWatchHistory(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "groupKey required")
 		return
 	}
-	rows, err := s.db.Query(`
-		SELECT "minPrice", "recordedAt" FROM "GroupPriceHistory"
-		WHERE "groupKey"=$1 AND "recordedAt" > now() - interval '180 days'
-		ORDER BY "recordedAt" ASC LIMIT 500`, groupKey)
+	if len(groupKey) > 128 {
+		writeErr(w, 400, "invalid product key")
+		return
+	}
+	query := `SELECT min(min_price),date_trunc('day',observed_at) FROM "CatalogPriceHistory" WHERE sku_id=$1 AND observed_at>now()-interval '180 days' GROUP BY 2 ORDER BY 2`
+	if !strings.HasPrefix(groupKey, "sku:v2:") && !strings.HasPrefix(groupKey, "offer:v2:") {
+		query = `SELECT min("minPrice"),date_trunc('day',"recordedAt") FROM "GroupPriceHistory" WHERE "groupKey"=$1 AND "recordedAt">now()-interval '180 days' GROUP BY 2 ORDER BY 2`
+	}
+	rows, err := s.db.QueryContext(r.Context(), query, groupKey)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "could not load history")
 		return

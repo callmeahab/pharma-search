@@ -11,6 +11,7 @@ import {
   Legend,
 } from "recharts";
 import { format } from "date-fns";
+import { srLatn } from "date-fns/locale";
 import { ChartLine, Loader2 } from "lucide-react";
 import { ChartContainer } from "@/components/ui/chart";
 import { getPriceHistory, PriceHistoryPoint } from "@/lib/api";
@@ -31,30 +32,25 @@ export const PriceHistoryChart: React.FC<PriceHistoryProps> = ({
   groupKey,
   isInCard = false,
 }) => {
-  const [points, setPoints] = useState<PriceHistoryPoint[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
+  const [result, setResult] = useState<{key?: string; points: PriceHistoryPoint[]; error?: string}>({points: []});
+  const loading = !!groupKey && result.key !== groupKey;
+  const points = result.key === groupKey ? result.points : [];
+  const error = result.key === groupKey ? result.error : undefined;
   const chartHeight = isInCard ? 200 : 300;
 
   useEffect(() => {
     if (!groupKey) return;
 
     let cancelled = false;
-    setLoading(true);
-    setError("");
 
     getPriceHistory(groupKey)
       .then((historyPoints) => {
-        if (!cancelled) setPoints(historyPoints);
+        if (!cancelled) setResult({key: groupKey, points: historyPoints});
       })
       .catch((nextError) => {
         if (!cancelled) {
-          setPoints([]);
-          setError(nextError instanceof Error ? nextError.message : "Nije moguće učitati istoriju cena.");
+          setResult({key: groupKey, points: [], error: nextError instanceof Error ? nextError.message : "Nije moguće učitati istoriju cena."});
         }
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
       });
 
     return () => {
@@ -114,7 +110,7 @@ export const PriceHistoryChart: React.FC<PriceHistoryProps> = ({
               <Tooltip content={<CustomTooltip />} />
               <Legend />
               <Line
-                type="monotone"
+                type="stepAfter"
                 dataKey="lowestPrice"
                 name="Najniža cena"
                 stroke="#3EB75E"
@@ -141,7 +137,7 @@ function EmptyHistory({ message }: { message: string }) {
 function toChartPoint(point: PriceHistoryPoint): ChartPoint {
   const date = new Date(point.recorded_at);
   return {
-    date: Number.isNaN(date.getTime()) ? "" : format(date, "MMM dd"),
+    date: Number.isNaN(date.getTime()) ? "" : format(date, "dd. MMM", {locale: srLatn}),
     fullDate: point.recorded_at,
     lowestPrice: point.min_price,
   };

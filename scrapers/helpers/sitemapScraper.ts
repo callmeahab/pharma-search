@@ -10,14 +10,11 @@
  * Use for vendors whose product pages are curl-able (NOT Cloudflare-gated).
  */
 
-import { gunzipSync } from 'node:zlib';
 import { insertData, Product, initializeDatabase, closeDatabase, parsePrice } from './database';
 // Full entity decode (named Serbian Latin + numeric/hex). The old local version only
 // handled &amp;/&lt;/… so &scaron;/&rsquo; leaked into titles as mojibake.
 import { decodeEntities } from './hygiene';
-
-const UA =
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+import { reportScraperFailure, requestText, ScraperFailure } from './http';
 
 export interface SitemapOpts {
   productSitemaps?: string[]; // explicit product sitemap URLs (skip discovery)
@@ -28,23 +25,8 @@ export interface SitemapOpts {
 }
 
 async function fetchText(url: string, timeoutMs = 25000): Promise<string | null> {
-  const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), timeoutMs);
-  try {
-    const res = await fetch(url, {
-      headers: { 'User-Agent': UA, Accept: '*/*', 'Accept-Language': 'sr,en;q=0.9' },
-      signal: ctrl.signal,
-    });
-    if (!res.ok) return null;
-    if (url.endsWith('.gz')) {
-      return gunzipSync(Buffer.from(await res.arrayBuffer())).toString('utf-8');
-    }
-    return await res.text();
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(t);
-  }
+  const response = await requestText(url, { timeoutMs, allow404: true, gzip: url.endsWith('.gz') });
+  return response.status === 404 ? null : response.body;
 }
 
 function extractLocs(xml: string): string[] {
@@ -59,13 +41,16 @@ function extractLocs(xml: string): string[] {
 async function mapPool<T, R>(items: T[], limit: number, fn: (item: T, i: number) => Promise<R>): Promise<R[]> {
   const results: R[] = new Array(items.length);
   let idx = 0;
+  let failure: unknown;
   async function worker() {
-    while (idx < items.length) {
+    while (idx < items.length && !failure) {
       const i = idx++;
-      try { results[i] = await fn(items[i], i); } catch { results[i] = undefined as unknown as R; }
+      try { results[i] = await fn(items[i], i); }
+      catch (error) { failure = error; return; }
     }
   }
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  if (failure) throw failure;
   return results;
 }
 
@@ -91,7 +76,7 @@ export async function discoverProductUrls(baseUrl: string, opts: SitemapOpts = {
     if (seen.has(sm)) continue;
     seen.add(sm);
     const xml = await fetchText(sm);
-    if (!xml) continue;
+    if (!xml) throw new ScraperFailure(`${sm}: referenced sitemap is missing`, 'incomplete', 404);
     const locs = extractLocs(xml);
     if (/<sitemapindex/i.test(xml)) {
       let children = locs;
@@ -161,6 +146,8 @@ export function parseProductPage(html: string, url: string): Product | null {
   let price = '';
   let image = '';
   let category = '';
+  let gtin = '';
+  let availability: Product['availability'] = 'unknown';
 
   // 1. JSON-LD Product (fall through if a field is missing rather than return early).
   const blocks = [...html.matchAll(/<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)];
@@ -173,6 +160,11 @@ export function parseProductPage(html: string, url: string): Product | null {
       if (!price) price = extractOfferPrice(prod.offers);
       if (!image) image = firstImage(prod.image);
       if (!category && typeof prod.category === 'string') category = prod.category;
+      const offer = (Array.isArray(prod.offers) ? prod.offers[0] : prod.offers) as Record<string, unknown> | undefined;
+      const stock = String(offer?.availability || '');
+      if (/\/InStock$/.test(stock)) availability = 'available';
+      if (/\/(OutOfStock|Discontinued|SoldOut)$/.test(stock)) availability = 'unavailable';
+      gtin = String(prod.gtin13 || prod.gtin14 || prod.gtin12 || prod.gtin8 || prod.gtin || '');
       if (title && price) break;
     }
   }
@@ -211,7 +203,7 @@ export function parseProductPage(html: string, url: string): Product | null {
   }
 
   if (!title) return null;
-  return { title, price, category, link: url, thumbnail: image, photos: image };
+  return { title, price, category, link: url, thumbnail: image, photos: image, gtin, availability };
 }
 
 // Microdata price: <meta itemprop="price" content="X"> or <span itemprop="price">X</span>.
@@ -270,6 +262,9 @@ export async function runSitemapScraper(baseUrl: string, shopName: string, opts:
     const products = await scrapeSitemapVendor(baseUrl, shopName, opts);
     await insertData(products, shopName);
     console.log(`Successfully processed ${products.length} products`);
+  } catch (error) {
+    reportScraperFailure(error);
+    throw error;
   } finally {
     await closeDatabase();
   }

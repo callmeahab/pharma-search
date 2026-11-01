@@ -1,5 +1,5 @@
-// Rewritten 2026-06-23: Magento 2, server-rendered. Use the product sitemap +
-// Magento data-price-amount (the explicit product sitemap avoids category pages).
-import { runSitemapScraper } from './helpers/sitemapScraper';
-runSitemapScraper('https://aleksandarmn.com', 'Aleksandar Mn', { concurrency: 6, productSitemaps: ['https://aleksandarmn.com/product_sitemap.xml'] })
+// Shopify migration: fetch the public catalog in batches instead of requesting
+// every product page, which triggers the store's rate limit.
+import { runApiScraper, scrapeShopify } from './helpers/apiScrapers';
+runApiScraper(() => scrapeShopify('https://aleksandarmn.com', 'Aleksandar Mn'), 'Aleksandar Mn')
   .then(() => process.exit(0)).catch((e) => { console.error('Aleksandar Mn scraper failed:', e); process.exit(1); });

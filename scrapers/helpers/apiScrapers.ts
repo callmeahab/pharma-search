@@ -7,21 +7,17 @@
  */
 
 import { insertData, Product, initializeDatabase, closeDatabase } from './database';
-
-const UA =
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+import { reportScraperFailure, requestText, ScraperFailure } from './http';
 
 async function fetchJson(url: string): Promise<{ ok: boolean; status: number; body: unknown }> {
-  const res = await fetch(url, {
-    headers: { 'User-Agent': UA, Accept: 'application/json' },
-  });
+  const res = await requestText(url, { accept: 'application/json', allowedStatuses: [400, 404] });
   let body: unknown = null;
   try {
-    body = await res.json();
+    body = JSON.parse(res.body);
   } catch {
-    /* non-JSON */
+    if (res.status >= 200 && res.status < 300) throw new ScraperFailure(`${url}: invalid catalog JSON`, 'incomplete');
   }
-  return { ok: res.ok, status: res.status, body };
+  return { ok: res.status >= 200 && res.status < 300, status: res.status, body };
 }
 
 // ---- WooCommerce Store API: /wp-json/wc/store/v1/products ----
@@ -32,6 +28,7 @@ interface WcProduct {
   images?: Array<{ src?: string }>;
   categories?: Array<{ name?: string }>;
   is_in_stock?: boolean;
+  global_unique_id?: string;
 }
 
 export async function scrapeWooStore(
@@ -47,11 +44,13 @@ export async function scrapeWooStore(
     const url = `${root}/wp-json/wc/store/v1/products?per_page=${perPage}&page=${page}`;
     const { ok, status, body } = await fetchJson(url);
     if (!ok) {
-      if (page === 1) throw new Error(`${shopName}: Store API ${status} on page 1 (${url})`);
-      break; // past the last page Woo returns 400/404
+      const code = (body as { code?: string } | null)?.code;
+      if (page > 1 && status === 400 && code?.endsWith('invalid_page_number')) break;
+      throw new ScraperFailure(`${shopName}: Store API ${status} on page ${page} (${url})`, 'unavailable', status);
     }
     const batch = body as WcProduct[];
-    if (!Array.isArray(batch) || batch.length === 0) break;
+    if (!Array.isArray(batch)) throw new ScraperFailure(`${shopName}: invalid Store API product list`, 'incomplete');
+    if (batch.length === 0) break;
 
     for (const p of batch) {
       if (opts.inStockOnly && p.is_in_stock === false) continue;
@@ -69,9 +68,12 @@ export async function scrapeWooStore(
         link: p.permalink || '',
         thumbnail: images[0] || '',
         photos: images.join(', '),
+        availability: p.is_in_stock === true ? 'available' : p.is_in_stock === false ? 'unavailable' : 'unknown',
+        gtin: p.global_unique_id || '',
       });
     }
     if (batch.length < perPage) break;
+    if (page === 1000) throw new ScraperFailure(`${shopName}: pagination limit reached`, 'incomplete');
   }
 
   if (products.length === 0) {
@@ -85,7 +87,7 @@ interface ShopifyProduct {
   title?: string;
   handle?: string;
   product_type?: string;
-  variants?: Array<{ price?: string }>;
+  variants?: Array<{ id?: number; title?: string; price?: string; available?: boolean; barcode?: string }>;
   images?: Array<{ src?: string }>;
 }
 
@@ -97,26 +99,31 @@ export async function scrapeShopify(baseUrl: string, shopName: string): Promise<
     const url = `${root}/products.json?limit=250&page=${page}`;
     const { ok, status, body } = await fetchJson(url);
     if (!ok) {
-      if (page === 1) throw new Error(`${shopName}: products.json ${status} on page 1 (${url})`);
-      break;
+      throw new ScraperFailure(`${shopName}: products.json ${status} on page ${page} (${url})`, 'unavailable', status);
     }
-    const batch = ((body as { products?: ShopifyProduct[] })?.products) || [];
+    const batch = (body as { products?: ShopifyProduct[] })?.products;
+    if (!Array.isArray(batch)) throw new ScraperFailure(`${shopName}: invalid Shopify product list`, 'incomplete');
     if (batch.length === 0) break;
 
     for (const p of batch) {
       const title = (p.title || '').trim();
       if (!title) continue;
       const images = (p.images || []).map((i) => i.src).filter(Boolean) as string[];
-      products.push({
-        title,
-        price: p.variants?.[0]?.price != null ? String(p.variants[0].price) : '',
-        category: p.product_type || '',
-        link: p.handle ? `${root}/products/${p.handle}` : root,
-        thumbnail: images[0] || '',
-        photos: images.join(', '),
-      });
+      for (const variant of p.variants || []) {
+        const variantTitle = variant.title && variant.title !== 'Default Title' ? ` ${variant.title}` : '';
+        const link = p.handle ? `${root}/products/${p.handle}${variant.id ? `?variant=${variant.id}` : ''}` : root;
+        products.push({
+          title: title + variantTitle,
+          price: variant.price != null ? String(variant.price) : '',
+          category: p.product_type || '', link,
+          thumbnail: images[0] || '', photos: images.join(', '),
+          availability: variant.available === true ? 'available' : variant.available === false ? 'unavailable' : 'unknown',
+          gtin: variant.barcode || '',
+        });
+      }
     }
     if (batch.length < 250) break;
+    if (page === 500) throw new ScraperFailure(`${shopName}: pagination limit reached`, 'incomplete');
   }
 
   if (products.length === 0) {
@@ -132,6 +139,9 @@ export async function runApiScraper(scrape: () => Promise<Product[]>, shopName: 
     const products = await scrape();
     await insertData(products, shopName);
     console.log(`Successfully processed ${products.length} products`);
+  } catch (error) {
+    reportScraperFailure(error);
+    throw error;
   } finally {
     await closeDatabase();
   }

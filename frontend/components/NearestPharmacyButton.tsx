@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { Loader2, MapPin } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { cn, formatPrice } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 import { PharmacyPlace, vendorsApi } from "@/lib/vendors";
 
 type NearestPharmacyButtonProps = {
@@ -26,7 +26,7 @@ export default function NearestPharmacyButton({
   vendorId,
   vendorName,
   productName,
-  price,
+  price: _price,
   className,
   size = "sm",
 }: NearestPharmacyButtonProps) {
@@ -75,7 +75,7 @@ export default function NearestPharmacyButton({
     setMessage("");
   };
 
-  const label = price != null ? `Najbliža lokacija za ${formatPrice(price)}` : "Najbliža lokacija";
+  const label = "Najbliža poslovnica prodavca";
 
   return (
     <div className={cn("space-y-1", className)}>
@@ -93,7 +93,7 @@ export default function NearestPharmacyButton({
       {status === "confirming" && (
         <div className="rounded-md border border-green-200 bg-green-50 p-3 text-sm text-gray-700 dark:border-green-900/70 dark:bg-green-950/30 dark:text-gray-200">
           <p>
-            Koristićemo vašu trenutnu lokaciju samo da pronađemo najbližu lokaciju za ovu cenu.
+            Koristićemo vašu trenutnu lokaciju da pronađemo poslovnicu ovog prodavca. Online cena i zaliha ne potvrđuju cenu i dostupnost u poslovnici.
           </p>
           <div className="mt-2 flex flex-wrap gap-2">
             <Button
@@ -200,7 +200,6 @@ function openMaps(place: PharmacyPlace, origin: UserPosition) {
     ? `maps://?daddr=${encodeURIComponent(destination)}&q=${label}`
     : `geo:0,0?q=${encodeURIComponent(`${destination}(${place.name || place.vendor_name || "Lokacija"})`)}`;
 
-  let fallbackTimer: number | undefined;
   const clearFallback = () => {
     if (fallbackTimer) window.clearTimeout(fallbackTimer);
     document.removeEventListener("visibilitychange", handleVisibilityChange);
@@ -212,7 +211,7 @@ function openMaps(place: PharmacyPlace, origin: UserPosition) {
 
   document.addEventListener("visibilitychange", handleVisibilityChange, { once: true });
   window.addEventListener("pagehide", clearFallback, { once: true });
-  fallbackTimer = window.setTimeout(() => {
+  const fallbackTimer = window.setTimeout(() => {
     window.location.href = googleUrl;
   }, 900);
   window.location.href = appUrl;

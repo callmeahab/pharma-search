@@ -58,8 +58,11 @@ go run .
 # Scrapers
 cd scrapers && bun start
 
-# Full scrape -> import -> cleanup pipeline
+# Scrape -> import -> cleanup
 cd scrapers && bun run pipeline
+
+# Full catalog refresh, including search/grouping metadata (from repo root)
+bash deploy/scrapers/run-pipeline.sh
 
 # Import scraped CSVs through the Go wrapper
 go run ./cmd/importcsv
@@ -252,28 +255,40 @@ This installs and configures:
 - Nginx reverse proxy
 - UFW firewall
 
-### Deploy Code
+### Deploy code and publish the catalog
 
-Run from your local machine to deploy updates:
-
-```bash
-./deploy/deploy.sh root@your-server
-```
-
-This will:
-- Sync code via rsync (excludes ml/, scrapers/, node_modules/)
-- Build frontend (`bun install` + `bun run build`)
-- Build backend (`go build`)
-- Apply database migrations
-- Restart PM2 processes
-
-### Sync Data
-
-Copy the catalog database to the server (account/watchlist tables are preserved):
+Build in an isolated release directory, apply checked migrations with the
+migration owner, publish data, then activate the prepared release:
 
 ```bash
-./deploy/sync-data.sh root@your-server
+./deploy/deploy.sh pharma --prepare
+./deploy/sync-data.sh pharma
+./deploy/deploy.sh pharma --activate /var/www/pharma-search-releases/RELEASE
+python3 deploy/smoke.py https://aposteka.rs
 ```
+
+Preparation prints the concrete release path. The running frontend build is
+untouched while the new build runs. Activation checks backend/homepage health and
+restores the previous two PM2 processes on failure. Configuration stays in the
+original private `.env` files; no fallback credentials are generated. Runtime
+source fingerprints and matching dictionary versions are exposed in catalog status.
+
+Sync requires the additive schema to be installed. It atomically replaces the
+catalog, appends observations/history using their natural keys, preserves account,
+watch and legacy-history counts, and migrates only unambiguous legacy watches.
+MVCC deletes let readers continue seeing the previous publication until commit.
+Full backups are saved under `/var/backups/pharma-search/`. `--skip-schema` remains
+accepted for compatibility; sync no longer drops or recreates schema.
+
+```bash
+# Rehearse the real transaction in a disposable local database:
+bun deploy/test-sync.ts
+# Read-only query/price/latency replay:
+go run . catalog-evaluate > evaluation-after.json
+```
+
+See [IMPLEMENTATION.md](IMPLEMENTATION.md) for validation and rollout evidence,
+and [scraper scheduling](deploy/scrapers/README.md) for the installed nightly job.
 
 ### SSL Certificate
 
@@ -295,7 +310,7 @@ DATABASE_URL=postgresql://user:pass@localhost:5432/pharma_search
 ### Frontend (.env.local)
 
 ```bash
-NEXT_PUBLIC_API_URL=http://localhost:50051
+CATALOG_API_URL=http://127.0.0.1:50051
 ```
 
 ## License

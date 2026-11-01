@@ -1,0 +1,58 @@
+name: Checks
+on: [push, pull_request]
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: pharma_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd 'pg_isready -U postgres' --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgres://postgres:test@localhost:5432/pharma_test?sslmode=disable
+      CATALOG_TEST_DATABASE_URL: postgres://postgres:test@localhost:5432/pharma_test?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: oven-sh/setup-bun@v2
+      - run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      - run: go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.11
+      - run: go install connectrpc.com/connect/cmd/protoc-gen-connect-go@v1.19.1
+      - run: protoc -I proto --go_out=. --go_opt=module=github.com/callmeahab/pharma-search --connect-go_out=. --connect-go_opt=module=github.com/callmeahab/pharma-search proto/service.proto
+      - run: psql "$CATALOG_TEST_DATABASE_URL" -c 'CREATE EXTENSION IF NOT EXISTS pg_trgm; CREATE EXTENSION IF NOT EXISTS pgcrypto;'
+      - run: go test ./...
+      - run: go vet ./...
+      - run: bun install --frozen-lockfile
+        working-directory: scrapers
+      - run: bun test helpers
+        working-directory: scrapers
+      - run: bun install --frozen-lockfile
+        working-directory: frontend
+      - run: bun run proto:generate && bunx tsc --noEmit && bun run lint && bun run build
+        working-directory: frontend
+      - name: Server-rendered catalog smoke test
+        shell: bash
+        run: |
+          set -euo pipefail
+          go run ./cmd/migrate -seed-vendors=false
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f testdata/catalog-fixtures.sql
+          go run . catalog-rebuild
+          go build -o /tmp/pharma-ci .
+          PRICEWATCH_ENABLED=0 /tmp/pharma-ci > /tmp/catalog-backend.log 2>&1 &
+          backend_pid=$!
+          (cd frontend && PORT=3000 bun run start) > /tmp/catalog-frontend.log 2>&1 &
+          frontend_pid=$!
+          trap 'kill "$backend_pid" "$frontend_pid" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:50051/api/catalog/status >/dev/null && curl -fsS http://127.0.0.1:3000/ >/dev/null; then break; fi
+            sleep 2
+          done
+          python3 deploy/smoke.py http://127.0.0.1:3000 http://127.0.0.1:50051

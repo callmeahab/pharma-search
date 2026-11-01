@@ -1,266 +1,117 @@
-import puppeteer from 'puppeteer-extra';
-import StealthPlugin from 'puppeteer-extra-plugin-stealth';
-import { insertData, Product, initializeDatabase, closeDatabase } from './database';
-import { Page } from 'puppeteer';
-import { ScraperUtils } from './ScraperUtils';
+import { closeDatabase, initializeDatabase, insertData, type Product } from './database';
+import { reportScraperFailure, requestText, ScraperFailure } from './http';
 
-// Configure stealth plugin
-puppeteer.use(StealthPlugin());
-
-const baseUrl = 'https://www.ananas.rs';
-
-export async function scrollPage(page: Page) {
-  await page.evaluate(async () => {
-    await new Promise<void>((resolve) => {
-      let totalHeight = 0;
-      const distance = 500;
-      const timer = setInterval(() => {
-        const scrollHeight = document.body.scrollHeight;
-        window.scrollBy(0, distance);
-        totalHeight += distance;
-        if (totalHeight >= scrollHeight) {
-          clearInterval(timer);
-          resolve();
-        }
-      }, 100);
-    });
-  });
+interface AnanasHit {
+  objectID?: string | number;
+  price?: number;
+  onStock?: boolean;
+  available?: number;
+  product?: { name?: string; slug?: string; coverImageUrl?: string; thumbnailUrl?: string; categoryNames?: string[] };
 }
 
-export async function ensureImagesLoaded(page: Page) {
-  const maxRetries = 3;
-  let retries = 0;
+export interface AnanasPage {
+  products: Product[];
+  page: number;
+  pages: number;
+  total: number;
+  hitIds: string[];
+  skipped: number;
+}
 
-  while (retries < maxRetries) {
-    await page.evaluate(() => {
-      document.querySelectorAll('img').forEach((img) => {
-        const dataSrc = img.getAttribute('data-src');
-        const srcset = img.getAttribute('data-srcset');
-        if (dataSrc) img.src = dataSrc;
-        if (srcset) img.srcset = srcset;
-      });
-    });
-
-    await new Promise((resolve) => setTimeout(resolve, 500));
-
-    const allImagesLoaded = await page.evaluate(() => {
-      const images = Array.from(document.querySelectorAll('img'));
-      return images.every((img) => {
-        if (img.src.includes('data:image/gif;base64')) return false;
-        return img.complete && img.naturalHeight > 0;
-      });
-    });
-
-    if (allImagesLoaded) break;
-    retries++;
-    await new Promise((resolve) => setTimeout(resolve, 500));
+// The current site renders its catalog as JSON before hydration. Read that
+// payload instead of generated CSS classes, lazy images or rendered price text.
+export function parseAnanasPage(html: string, url: string, expectedPage: number): AnanasPage {
+  const script = [...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/gi)]
+    .map(match => match[1])
+    .find(text => /window\[Symbol\.for\(["']InstantSearchInitialResults["']\)\]\s*=/.test(text));
+  if (!script) {
+    // The site renders no search payload when a category is explicitly sold out.
+    if (expectedPage === 1 && /id=["']category-page-empty-state-identifier["']/.test(html)
+      && /data-testid=["']empty-state-title["']/.test(html)) {
+      return { products: [], page: 0, pages: 0, total: 0, hitIds: [], skipped: 0 };
+    }
+    throw new ScraperFailure(`${url}: missing Ananas catalog payload`, 'incomplete');
   }
+  let state: Record<string, { results?: Array<{ hits?: AnanasHit[]; page?: number; nbPages?: number; nbHits?: number }> }>;
+  try { state = JSON.parse(script.slice(script.indexOf('=') + 1).trim().replace(/;\s*$/, '')); }
+  catch { throw new ScraperFailure(`${url}: invalid Ananas catalog JSON`, 'incomplete'); }
+  const result = Object.values(state).flatMap(value => value.results || [])
+    .find(value => Array.isArray(value.hits));
+  if (!result || !Number.isInteger(result.page) || !Number.isInteger(result.nbPages)
+    || !Number.isInteger(result.nbHits) || result.page !== expectedPage - 1) {
+    throw new ScraperFailure(`${url}: invalid or repeated Ananas pagination`, 'incomplete');
+  }
+  if (result.nbHits! > 0 && result.hits!.length === 0 && expectedPage <= result.nbPages!) {
+    throw new ScraperFailure(`${url}: empty page inside the Ananas catalog`, 'incomplete');
+  }
+  const products: Product[] = [];
+  const hitIds: string[] = [];
+  let skipped = 0;
+  for (const hit of result.hits!) {
+    const id = String(hit.objectID || '');
+    hitIds.push(id);
+    if (hit.onStock === false || hit.available === 0) { skipped++; continue; }
+    const product = hit.product;
+    if (!product?.name?.trim() || !product.slug || !/^\d+$/.test(id)
+      || !Number.isFinite(hit.price) || hit.price! <= 0) {
+      throw new ScraperFailure(`${url}: incomplete in-stock product ${id}`, 'incomplete');
+    }
+    const image = product.coverImageUrl || product.thumbnailUrl || '';
+    const imageUrl = image ? new URL(image, 'https://static.ananas.rs').href : '';
+    products.push({
+      title: product.name.trim(), price: String(Math.round(hit.price!)),
+      category: product.categoryNames?.[0] || new URL(url).pathname.split('/').pop() || '',
+      link: `https://ananas.rs/proizvod/${product.slug}/${id}`,
+      thumbnail: imageUrl, photos: imageUrl,
+    });
+  }
+  return { products, page: result.page!, pages: result.nbPages!, total: result.nbHits!, hitIds, skipped };
 }
 
 export function decodeNextJsImageUrl(src: string) {
-  const urlMatch = src.match(/url=(.*?)(&|$)/);
-  return urlMatch ? decodeURIComponent(urlMatch[1]) : src;
+  const encoded = src.match(/url=(.*?)(&|$)/)?.[1];
+  return encoded ? decodeURIComponent(encoded) : src;
 }
 
-export async function scrapePage(
-  page: Page,
-  url: string,
-  pageScrapedTitles: Set<string>
-): Promise<{ products: Product[]; skipped: number; totalElements: number }> {
-  const allProducts: Product[] = [];
-  const category = url.split('/')[5]?.split('?')[0] || 'unknown';
-  let pageSkipped = 0;
-  let result: any;
-
-  try {
-    await ScraperUtils.goto(page, url, {
-      settleMs: 250,
-      timeout: 60000,
-    });
-
-    await page.waitForSelector('.ais-Hits-item', {
-      timeout: 15000,
-      visible: true,
-    });
-
-    await scrollPage(page);
-    await ensureImagesLoaded(page);
-
-    result = await page.evaluate((baseUrl: string) => {
-      const allElements = Array.from(
-        document.querySelectorAll('.ais-Hits-item'),
-      );
-
-      // Skip out-of-stock items (no specific class found in the new HTML)
-      const skippedElements = allElements.filter((element) =>
-        element.querySelector('.sc-492kdg-11'),
-      );
-
-      const keptElements = allElements.filter(
-        (element) => !element.querySelector('.sc-492kdg-11'),
-      );
-
-      const products = keptElements.map((element) => {
-        // Title from h3 tag
-        const title = element.querySelector('h3')?.textContent?.trim() || '';
-
-        // Price from span with class sc-1arj7wv-2 (current price, not the old price)
-        const priceElement = element.querySelector('.sc-1arj7wv-2');
-        const price = priceElement?.textContent?.trim() || '';
-
-        // Link from anchor tag
-        const link = element.querySelector('a.sc-v9wo15-0')?.getAttribute('href') || '';
-
-        // Image - get all img tags and find the one with proper srcset
-        const imgElements = element.querySelectorAll('img');
-        let imgSrc = '';
-
-        for (const imgElement of Array.from(imgElements)) {
-          const possibleSources = [
-            (() => {
-              const ss = imgElement.getAttribute('srcset');
-              if (!ss) return undefined;
-              // Get the highest quality image from srcset
-              const parts = ss.split(',').map(p => p.trim().split(' ')[0]).filter(Boolean);
-              return parts[parts.length - 1];
-            })(),
-            imgElement.getAttribute('src'),
-            imgElement.getAttribute('data-src'),
-            imgElement.getAttribute('data-lazy'),
-          ];
-
-          for (const src of possibleSources) {
-            if (src && !src.includes('data:image/gif;base64') && !src.includes('data:image/svg+xml') && !src.includes('/_next/static/media/')) {
-              imgSrc = src;
-              break;
-            }
-          }
-
-          if (imgSrc) break;
-        }
-
-        return {
-          title,
-          price,
-          link: baseUrl + link,
-          img: imgSrc,
-        };
-      });
-
-      return {
-        products: products.filter((p) => p.img && p.title && p.price),
-        skipped: skippedElements.length,
-        totalFound: allElements.length,
-      };
-    }, baseUrl);
-
-    if (result?.products?.length) {
-      result.products = result.products.map((p: any) => ({
-        ...p,
-        img: decodeNextJsImageUrl(p.img)
-      }));
-    }
-
-    pageSkipped = result.skipped;
-
-    let duplicatesSkipped = 0;
-    for (const product of result.products) {
-      if (!pageScrapedTitles.has(product.title)) {
-        const decodedImg = decodeNextJsImageUrl(product.img);
-
-        allProducts.push({
-          title: product.title,
-          price: product.price,
-          category,
-          link: product.link,
-          thumbnail: decodedImg,
-          photos: decodedImg,
-        });
-        pageScrapedTitles.add(product.title);
-      } else {
-        duplicatesSkipped++;
-      }
-    }
-
-    if (duplicatesSkipped > 0) {
-      console.log(`🔁 Duplicates skipped: ${duplicatesSkipped}`);
-    }
-
-    console.log(
-      `🟢 ${url} - Found ${result.totalFound} total elements, ${result.products.length} valid products (${allProducts.length} new, ${duplicatesSkipped} duplicates), Skipped ${pageSkipped} out-of-stock items`,
-    );
-  } catch (error) {
-    console.error(`🔴 ${url} - Error: ${(error as Error).message}`);
-  }
-
-  return { products: allProducts, skipped: pageSkipped, totalElements: result?.totalFound || 0 };
-}
-
-export async function scrapeAnanasCategoryUrls(categoryUrls: string[]): Promise<{
-  products: Product[];
-  totalSkipped: number;
-}> {
-  const browser = await puppeteer.launch({
-    headless: ScraperUtils.IS_HEADLESS,
-    defaultViewport: null,
-    args: ScraperUtils.getBrowserArgs(),
-  });
-
-  const page = await browser.newPage();
-  await ScraperUtils.configurePage(page);
-  let allScrapedProducts: Product[] = [];
+export async function scrapeAnanasCategoryUrls(categoryUrls: string[]): Promise<{ products: Product[]; totalSkipped: number }> {
+  const products = new Map<string, Product>();
   let totalSkipped = 0;
-
-  try {
-    for (const categoryUrl of categoryUrls) {
-      const categoryScrapedTitles = new Set<string>();
-      let pageIndex = 1;
-      while (true) {
-        const pageUrl = `${categoryUrl}?page=${pageIndex}`;
-        console.log(`🌐 Scraping: ${pageUrl}`);
-
-        const { products, skipped, totalElements } = await scrapePage(page, pageUrl, categoryScrapedTitles);
-        totalSkipped += skipped;
-
-        if (totalElements === 0) {
-          console.log(`⏹️ Reached end of pagination at page ${pageIndex} - no elements found`);
-          break;
-        }
-
-        console.log(`📄 Page ${pageIndex}: ${totalElements} elements found, ${products.length} new products processed`);
-
-        allScrapedProducts = [...allScrapedProducts, ...products];
-        pageIndex++;
-
-        await new Promise((resolve) => setTimeout(resolve, 500));
+  for (const categoryUrl of [...new Set(categoryUrls)]) {
+    let pages = 1;
+    const seen = new Set<string>();
+    for (let page = 1; page <= pages; page++) {
+      const url = new URL(categoryUrl);
+      url.searchParams.set('page', String(page));
+      const response = await requestText(url.href);
+      const data = parseAnanasPage(response.body, url.href, page);
+      if (page === 1) {
+        pages = data.pages;
+        if (pages > 2000 || pages < 0) throw new ScraperFailure(`${url}: invalid page count`, 'incomplete');
+        console.log(`Ananas: ${categoryUrl}: ${data.total} products, ${pages} pages`);
       }
+      const signature = data.hitIds.join(',');
+      if (data.hitIds.length && seen.has(signature)) {
+        throw new ScraperFailure(`${url}: repeated catalog page`, 'incomplete');
+      }
+      seen.add(signature);
+      totalSkipped += data.skipped;
+      for (const product of data.products) products.set(product.link, product);
+      console.log(`Ananas: page ${page}/${pages}, ${data.products.length} priced products`);
     }
-  } catch (error) {
-    console.error(`🚨 Critical error: ${(error as Error).message}`);
-  } finally {
-    await ScraperUtils.cleanup();
-    await browser.close();
   }
-
-  return { products: allScrapedProducts, totalSkipped };
+  if (!products.size) throw new ScraperFailure('Ananas: no available priced products', 'incomplete');
+  return { products: [...products.values()], totalSkipped };
 }
 
 export async function runAnanasScraper(categoryUrls: string[], scraperName: string) {
   try {
     await initializeDatabase();
-
-    console.log(`🚀 Starting ${scraperName} with ${categoryUrls.length} categories`);
     const { products } = await scrapeAnanasCategoryUrls(categoryUrls);
-
-    if (products.length > 0) {
-      await insertData(products, 'Ananas');
-      console.log(`✅ ${scraperName}: Successfully stored ${products.length} products`);
-    } else {
-      console.log(`❌ ${scraperName}: No products found across all categories`);
-    }
+    await insertData(products, 'Ananas');
+    console.log(`${scraperName}: Successfully stored ${products.length} products`);
   } catch (error) {
-    console.error(`${scraperName} failed:`, error);
-    process.exit(1);
+    reportScraperFailure(error);
+    process.exitCode = 1;
   } finally {
     await closeDatabase();
   }

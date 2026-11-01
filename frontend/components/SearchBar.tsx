@@ -1,356 +1,71 @@
-import React, { useState, useEffect, useRef } from "react";
+"use client";
+
+import { useEffect, useId, useRef, useState } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { Search, X, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Search, X } from "lucide-react";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { autocomplete, ProductGroup, AutocompleteResult } from "@/lib/api";
-import { Product } from "@/types/product";
-import ProductDetailModal from "./ProductDetailModal";
-import { Spinner } from "@/components/ui/spinner";
+import { fetchCatalogSuggestions, productPath } from "@/lib/catalog";
+import { formatPrice } from "@/lib/utils";
 
-interface SearchBarProps {
-  onSearch: (term: string) => void;
-  initialTerm?: string;
-}
-
-const SearchBar: React.FC<SearchBarProps> = ({
-  onSearch,
-  initialTerm = "",
-}) => {
-  const [searchTerm, setSearchTerm] = useState(initialTerm);
-  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
-  const [filteredSuggestions, setFilteredSuggestions] = useState<
-    Array<{ id: string; name: string; category: string; image: string }>
-  >([]);
-  const [searchGroups, setSearchGroups] = useState<ProductGroup[]>([]);
-  const [autocompleteSuggestions, setAutocompleteSuggestions] = useState<AutocompleteResult["suggestions"]>([]);
-  const [isLoadingGroups, setIsLoadingGroups] = useState(false);
-  const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
-  const [showModal, setShowModal] = useState(false);
-  const [hasUnsearchedChanges, setHasUnsearchedChanges] = useState(false);
-  const dropdownRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-
+type Suggestion = { id: string; title: string; price: number; vendor_name: string };
+export default function SearchBar({ onSearch, initialTerm = "" }: { onSearch: (term: string) => void; initialTerm?: string }) {
+  const [term, setTerm] = useState(initialTerm);
+  const [focused, setFocused] = useState(false);
+  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [active, setActive] = useState(-1);
+  const [failed, setFailed] = useState(false);
+  const request = useRef(0); const listId = useId(); const router = useRouter();
   useEffect(() => {
-    if (initialTerm !== searchTerm) {
-      setSearchTerm(initialTerm);
-      setHasUnsearchedChanges(false);
-      if (initialTerm.trim() !== "") {
-        fetchAutocompleteSuggestions(initialTerm);
-      }
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialTerm]);
-
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (
-        dropdownRef.current &&
-        !dropdownRef.current.contains(event.target as Node)
-      ) {
-        setIsDropdownOpen(false);
-      }
-    };
-
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => {
-      document.removeEventListener("mousedown", handleClickOutside);
-    };
-  }, []);
-
-  useEffect(() => {
-    return () => {
-      if (searchTimeoutRef.current) {
-        clearTimeout(searchTimeoutRef.current);
-      }
-    };
-  }, []);
-
-  const fetchAutocompleteSuggestions = async (value: string) => {
-    if (value.trim() === "") {
-      setAutocompleteSuggestions([]);
-      setSearchGroups([]);
-      setFilteredSuggestions([]);
-      return;
-    }
-
-    if (searchTimeoutRef.current) {
-      clearTimeout(searchTimeoutRef.current);
-    }
-
-    setIsLoadingGroups(true);
-    searchTimeoutRef.current = setTimeout(async () => {
+    if (!focused || term.trim().length < 2) return;
+    const generation = ++request.current; const abort = new AbortController();
+    const timeout = setTimeout(async () => {
+      setLoading(true); setFailed(false);
       try {
-        const results = await autocomplete(value, 8);
-        setAutocompleteSuggestions(results.suggestions);
-        setSearchGroups([]);
-      } catch (error) {
-        console.error("Error fetching autocomplete:", error);
-        setAutocompleteSuggestions([]);
-      } finally {
-        setIsLoadingGroups(false);
-      }
-    }, value.length <= 2 ? 400 : 150);
-  };
-
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = e.target.value;
-    setSearchTerm(value);
-    setHasUnsearchedChanges(true);
-
-    if (value.trim() === "") {
-      setIsDropdownOpen(false);
-      setAutocompleteSuggestions([]);
-      setSearchGroups([]);
-      setFilteredSuggestions([]);
-    } else {
-      setIsDropdownOpen(true);
-      fetchAutocompleteSuggestions(value);
-    }
-  };
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (searchTerm.trim()) {
-      onSearch(searchTerm.trim());
-      setIsDropdownOpen(false);
-      setHasUnsearchedChanges(false);
-    }
-  };
-
-  const handleSuggestionClick = (name: string) => {
-    setSearchTerm(name);
-    onSearch(name);
-    setIsDropdownOpen(false);
-    setHasUnsearchedChanges(false);
-  };
-
-  const handleProductSelect = (productId: string) => {
-    // Find the product from search groups
-    const product = searchGroups
-      .flatMap((group) => group.products)
-      .find((p) => p.id === productId);
-
-    if (product) {
-      // Map the BackendProduct to match the Product type
-      const mappedProduct: Product = {
-        id: product.id,
-        name: product.title,
-        description: `Dostupno u apoteci ${product.vendor_name}`,
-        category: '',
-        image: product.thumbnail || '/medicine-placeholder.svg',
-        prices: [{
-          store: product.vendor_name,
-          vendorId: product.vendor_id,
-          price: product.price,
-          inStock: true,
-          link: product.link
-        }],
-        vendorCount: 1
-      };
-      setSelectedProduct(mappedProduct);
-      setShowModal(true);
-    }
-  };
-
-  const handlePopularSearchClick = (
-    e: React.MouseEvent,
-    term: string
-  ) => {
-    e.preventDefault();
-    setSearchTerm(term);
-    onSearch(term);
-    setHasUnsearchedChanges(false);
-  };
-
-  const clearSearch = () => {
-    setSearchTerm("");
-    setIsDropdownOpen(false);
-    setAutocompleteSuggestions([]);
-    setSearchGroups([]);
-    setFilteredSuggestions([]);
-    setHasUnsearchedChanges(false);
-    // Clear the URL parameters by calling onSearch with empty string
-    onSearch("");
-  };
-
+        const result = await fetchCatalogSuggestions(term.trim(), abort.signal);
+        if (generation === request.current) { setSuggestions(result.suggestions); setActive(-1); }
+      } catch {
+        if (!abort.signal.aborted && generation === request.current) { setSuggestions([]); setFailed(true); }
+      } finally { if (!abort.signal.aborted && generation === request.current) setLoading(false); }
+    }, 180);
+    return () => { clearTimeout(timeout); abort.abort(); };
+  }, [term, focused]);
+  const open = focused && term.trim().length >= 2;
+  const search = (query: string) => { request.current++; setFocused(false); setTerm(query); onSearch(query.trim()); };
   return (
-    <div className="relative w-full max-w-4xl mx-auto" ref={dropdownRef}>
-      <form onSubmit={handleSubmit} className="flex">
-        <div className="relative flex-1">
-          <Input
-            ref={inputRef}
-            type="text"
-            placeholder="Pretražite proizvode, brendove ili kategorije..."
-            value={searchTerm}
-            onChange={handleInputChange}
-            onFocus={() => {
-              if (searchTerm.trim()) {
-                setIsDropdownOpen(true);
-              }
-            }}
-            className="h-14 rounded-r-none border-r-0 text-base"
-          />
-          {searchTerm && (
-            <button
-              type="button"
-              onClick={clearSearch}
-              className="absolute right-3 top-1/2 -translate-y-1/2 p-1 hover:bg-gray-100 rounded-full transition-colors"
-            >
-              <X className="h-4 w-4 text-gray-400" />
-            </button>
-          )}
-        </div>
-        <Button
-          type="submit"
-          className={`h-14 px-6 rounded-l-none bg-health-primary hover:bg-health-secondary dark:bg-health-secondary dark:hover:bg-health-primary ${hasUnsearchedChanges ? 'ring-2 ring-health-secondary ring-opacity-50' : ''
-            }`}
-        >
-          <Search className="mr-2 h-5 w-5" />
-          <span className="text-base">Pretraži</span>
-          {hasUnsearchedChanges && (
-            <span className="ml-1 w-2 h-2 bg-health-secondary rounded-full"></span>
-          )}
-        </Button>
-      </form>
-
-      {/* Dropdown for search suggestions */}
-      {isDropdownOpen &&
-        (autocompleteSuggestions.length > 0 ||
-          filteredSuggestions.length > 0 ||
-          isLoadingGroups) && (
-          <div className="absolute z-10 w-full mt-1 bg-white rounded-md shadow-lg max-h-80 overflow-auto dark:bg-gray-800 dark:border dark:border-gray-700">
-            {isLoadingGroups && (
-              <div className="px-4 py-6 text-center">
-                <Spinner size="md" text="Pretraživanje..." />
-              </div>
-            )}
-
-            {/* Autocomplete Suggestions from API */}
-            {autocompleteSuggestions.length > 0 && (
-              <div>
-                <div className="px-4 py-2 text-xs font-medium text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-700">
-                  PREDLOZI
-                </div>
-                <ul className="py-1">
-                  {autocompleteSuggestions.map((suggestion) => (
-                    <li
-                      key={suggestion.id}
-                      onClick={() => handleSuggestionClick(suggestion.title)}
-                      className="px-4 py-3 hover:bg-gray-100 cursor-pointer flex items-center justify-between dark:hover:bg-gray-700 dark:text-gray-200 transition-colors"
-                    >
-                      <div className="flex items-center gap-3">
-                        <Avatar className="h-8 w-8 rounded-md">
-                          <AvatarFallback className="rounded-md bg-gray-200 dark:bg-gray-700 text-xs">
-                            {suggestion.title.charAt(0)}
-                          </AvatarFallback>
-                        </Avatar>
-                        <span className="text-sm">{suggestion.title}</span>
-                      </div>
-                      <div className="text-right">
-                        <span className="text-sm font-medium text-green-600 dark:text-green-400">
-                          {suggestion.price.toLocaleString('sr-RS')} RSD
-                        </span>
-                        <div className="text-xs text-gray-400 dark:text-gray-500">
-                          {suggestion.vendor_name}
-                        </div>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-
-            {/* Sample Product Suggestions */}
-            {filteredSuggestions.length > 0 && (
-              <div>
-                {searchGroups.length > 0 && (
-                  <div className="px-4 py-2 text-xs font-medium text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-700">
-                    PREDLOZI
-                  </div>
-                )}
-                <ul className="py-1">
-                  {filteredSuggestions.map((suggestion) => (
-                    <li
-                      key={suggestion.id}
-                      onClick={() => {
-                        handleSuggestionClick(suggestion.name);
-                        handleProductSelect(suggestion.id);
-                      }}
-                      className="px-4 py-3 hover:bg-gray-100 cursor-pointer flex items-center justify-between dark:hover:bg-gray-700 dark:text-gray-200 transition-colors"
-                    >
-                      <div className="flex items-center gap-3">
-                        <Avatar className="h-10 w-10 rounded-md">
-                          <AvatarImage
-                            src={suggestion.image}
-                            alt={suggestion.name}
-                          />
-                          <AvatarFallback className="rounded-md bg-gray-200 dark:bg-gray-700">
-                            {suggestion.name.charAt(0)}
-                          </AvatarFallback>
-                        </Avatar>
-                        <span className="text-base">{suggestion.name}</span>
-                      </div>
-                      <span className="text-sm text-gray-500 dark:text-gray-400">
-                        {suggestion.category}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
+    <div className="w-full">
+      <form className="relative" role="search" onSubmit={event => { event.preventDefault(); search(term); }} onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) setFocused(false); }}>
+        <div className="flex gap-2">
+          <div className="relative flex-1">
+            <label htmlFor={`${listId}-input`} className="sr-only">Pretraga proizvoda, brenda, doze ili pakovanja</label>
+            <Search className="absolute left-3 top-3 h-4 w-4 text-gray-400" aria-hidden="true" />
+            <Input id={`${listId}-input`} value={term} maxLength={256} autoComplete="off" className="pl-9 pr-9" placeholder="Proizvod, brend, doza, pakovanje…"
+              role="combobox" aria-autocomplete="list" aria-expanded={open} aria-controls={`${listId}-list`} aria-activedescendant={active >= 0 ? `${listId}-${active}` : undefined}
+              onFocus={() => setFocused(true)} onChange={event => { request.current++; setTerm(event.target.value); setSuggestions([]); setActive(-1); setLoading(false); setFailed(false); setFocused(true); }}
+              onKeyDown={event => {
+                if (event.key === "Escape") { setFocused(false); setActive(-1); }
+                if (event.key === "ArrowDown" && suggestions.length) { event.preventDefault(); setFocused(true); setActive(index => (index + 1) % suggestions.length); }
+                if (event.key === "ArrowUp" && suggestions.length) { event.preventDefault(); setActive(index => (index <= 0 ? suggestions.length : index) - 1); }
+                if (event.key === "Enter" && open && active >= 0 && suggestions[active]) { event.preventDefault(); setFocused(false); router.push(productPath(suggestions[active].id)); }
+              }} />
+            {term && <button type="button" aria-label="Obriši pretragu" className="absolute right-2 top-2 p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700" onClick={() => search("")}><X size={16} /></button>}
           </div>
-        )}
-
-      <div className="mt-2 flex flex-wrap gap-2">
-        <span className="text-sm text-gray-500 dark:text-gray-400">
-          Popularne pretrage:
-        </span>
-        <button
-          type="button"
-          onClick={(e) => handlePopularSearchClick(e, "vitamin d")}
-          className="text-sm text-health-primary hover:underline dark:text-health-accent"
-        >
-          Vitamin D
-        </button>
-        <button
-          type="button"
-          onClick={(e) => handlePopularSearchClick(e, "protein")}
-          className="text-sm text-health-primary hover:underline dark:text-health-accent"
-        >
-          Protein
-        </button>
-        <button
-          type="button"
-          onClick={(e) => handlePopularSearchClick(e, "omega")}
-          className="text-sm text-health-primary hover:underline dark:text-health-accent"
-        >
-          Omega-3
-        </button>
-        <button
-          type="button"
-          onClick={(e) => handlePopularSearchClick(e, "probiotici")}
-          className="text-sm text-health-primary hover:underline dark:text-health-accent"
-        >
-          Probiotici
-        </button>
-      </div>
-
-      {hasUnsearchedChanges && (
-        <div className="mt-1 text-xs text-health-primary dark:text-health-accent">
-          Pritisnite Enter ili kliknite &quot;Pretraži&quot; da pretražite rezultate
+          <Button type="submit">Pretraži</Button>
         </div>
-      )}
-
-      {/* Product Detail Modal */}
-      <ProductDetailModal
-        product={selectedProduct}
-        isOpen={showModal}
-        onClose={() => setShowModal(false)}
-      />
+        {open && <div className="absolute left-0 right-0 top-full mt-1 z-50 rounded-lg border bg-white shadow-lg dark:bg-gray-800 dark:border-gray-700">
+          <ul id={`${listId}-list`} role="listbox" aria-label="Predlozi proizvoda" className="max-h-80 overflow-y-auto">
+            {suggestions.map((item, index) => <li key={item.id} id={`${listId}-${index}`} role="option" aria-selected={active === index} className={active === index ? "bg-health-light dark:bg-gray-700" : ""}>
+              <Link href={productPath(item.id)} tabIndex={-1} onMouseDown={event => event.preventDefault()} className="flex items-center justify-between gap-4 px-4 py-3 hover:bg-gray-100 dark:hover:bg-gray-700" onClick={() => setFocused(false)}>
+                <span className="text-sm">{item.title}</span><span className="text-right shrink-0"><span className="text-sm font-medium text-health-primary dark:text-green-300">{formatPrice(item.price)}</span><span className="block text-xs text-gray-500">{item.vendor_name}</span></span>
+              </Link>
+            </li>)}
+          </ul>
+          {!suggestions.length && <p role="status" className="flex gap-2 p-4 text-sm text-gray-500">{loading && <Loader2 size={16} className="animate-spin" />}{loading ? "Tražim predloge…" : failed ? "Predlozi trenutno nisu dostupni. Pritisnite Enter za pretragu." : "Nema predloga. Pritisnite Enter za sve rezultate."}</p>}
+        </div>}
+      </form>
+      <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-sm"><span className="text-gray-500">Popularne pretrage:</span>{["vitamin d", "protein", "omega 3", "probiotik"].map(query => <button key={query} type="button" className="text-health-primary dark:text-green-300 hover:underline" onClick={() => search(query)}>{query}</button>)}</div>
     </div>
   );
-};
-
-export default SearchBar;
+}

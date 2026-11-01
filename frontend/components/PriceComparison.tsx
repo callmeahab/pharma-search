@@ -1,6 +1,8 @@
+"use client";
+
 import React from "react";
 import { Price } from "@/types/product";
-import { cn, formatPrice } from "@/lib/utils";
+import { cn, formatPrice, formatPriceAge } from "@/lib/utils";
 import { ExternalLink } from "lucide-react";
 import { trackStoreClick } from "@/utils/analytics";
 import { PriceComparisonProduct } from "@/lib/api";
@@ -11,6 +13,8 @@ interface PriceComparisonProps {
   products?: PriceComparisonProduct[];
   isInCard?: boolean; // Prop to identify if it's in a card on home screen
   productName?: string; // Add productName as an optional prop
+  searchContext?: { requestId: string; rank: number };
+  unitLabel?: string;
 }
 
 interface PriceDataItem {
@@ -18,7 +22,10 @@ interface PriceDataItem {
   store: string;
   vendorId?: string;
   price: number;
-  inStock: boolean;
+  inStock?: boolean;
+  availability?: "available" | "unavailable" | "unknown";
+  updatedAt?: string;
+  unitPrice?: number;
   link?: string;
   website?: string;
   is_best_deal?: boolean;
@@ -31,6 +38,7 @@ export const PriceComparison: React.FC<PriceComparisonProps> = ({
   products,
   isInCard: _isInCard = false,
   productName,
+  searchContext, unitLabel,
 }) => {
   // Handle both legacy prices and new products format
   const priceData: PriceDataItem[] = products
@@ -39,7 +47,7 @@ export const PriceComparison: React.FC<PriceComparisonProps> = ({
       store: product.vendor.name,
       vendorId: undefined,
       price: product.price,
-      inStock: true,
+      availability: "unknown" as const,
       link: product.link,
       website: product.vendor.website,
       is_best_deal: product.price_analysis.is_best_deal,
@@ -60,11 +68,12 @@ export const PriceComparison: React.FC<PriceComparisonProps> = ({
   const handleStoreClick = (price: PriceDataItem) => {
     // Track store link click
     // Milose Markovicu, prosledi link od proizvoda sa BackendProduct u Product, zbog analitike
-    const targetUrl = price.link || price.website || `https://www.${price.store.toLowerCase().replace(/\s+/g, "")}.com`;
-    trackStoreClick(price.store, targetUrl, productName || null);
+    const targetUrl = price.link || price.website;
+    if (!targetUrl) return;
+    trackStoreClick(price.store, targetUrl, productName || null, searchContext);
 
     // Use the actual product link if available, otherwise fallback to generic website
-    window.open(targetUrl, "_blank");
+    window.open(targetUrl, "_blank", "noopener,noreferrer");
   };
 
   return (
@@ -72,6 +81,7 @@ export const PriceComparison: React.FC<PriceComparisonProps> = ({
       <h4 className="text-lg font-medium mb-3 dark:text-gray-200">
         Poređenje cena
       </h4>
+      <p className="text-xs text-gray-500 mb-3">Online cene bez dostave. Cenu i zalihu u poslovnici proverite kod prodavca.</p>
       {cheapestPrice && (
         <NearestPharmacyButton
           vendorId={cheapestPrice.vendorId}
@@ -106,6 +116,7 @@ export const PriceComparison: React.FC<PriceComparisonProps> = ({
                   />
                 </span>
                 <span className="text-xs font-medium text-orange-600 dark:text-orange-400 truncate">{price.store}</span>
+                <span className="text-xs text-gray-500">{price.availability === "available" ? "Prodavac navodi: dostupno online" : "Zaliha nije potvrđena"}{price.updatedAt ? ` · Cena ažurirana: ${formatPriceAge(price.updatedAt)}` : ""}</span>
               </div>
             </div>
             <div className="flex flex-col items-end shrink-0 text-right">
@@ -119,6 +130,7 @@ export const PriceComparison: React.FC<PriceComparisonProps> = ({
               >
                 {formatPrice(price.price)}
               </span>
+              {!!price.unitPrice && unitLabel && <span className="text-xs text-gray-500">{formatPrice(price.unitPrice)} / {unitLabel}</span>}
 
               {index > 0 && (
                 <span

@@ -8,7 +8,7 @@
     "dev": "bun run proto:generate && next dev",
     "build": "bun run proto:generate && next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "eslint . --max-warnings=0"
   },
   "dependencies": {
     "@bufbuild/protobuf": "^1.10.1",
@@ -59,7 +59,6 @@
     "react": "^19.1.0",
     "react-day-picker": "^9.7.0",
     "react-dom": "^19.1.0",
-    "react-ga4": "^2.1.0",
     "react-hook-form": "^7.59.0",
     "react-resizable-panels": "^2.1.9",
     "recharts": "^2.15.4",

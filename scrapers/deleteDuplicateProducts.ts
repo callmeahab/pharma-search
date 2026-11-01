@@ -11,7 +11,8 @@ async function deleteDuplicateProducts() {
       FROM (
         SELECT 1
         FROM "Product"
-        GROUP BY LOWER(title), "vendorId", price
+        WHERE source_product_id IS NOT NULL
+        GROUP BY source_product_id, "vendorId"
         HAVING COUNT(*) > 1
       ) duplicate_groups
     `);
@@ -23,10 +24,10 @@ async function deleteDuplicateProducts() {
         SELECT
           id,
           ROW_NUMBER() OVER (
-            PARTITION BY LOWER(title), "vendorId", price
+            PARTITION BY source_product_id, "vendorId"
             ORDER BY "updatedAt" DESC, "createdAt" DESC, id DESC
           ) AS row_number
-        FROM "Product"
+        FROM "Product" WHERE source_product_id IS NOT NULL
       ),
       deleted AS (
         DELETE FROM "Product" p

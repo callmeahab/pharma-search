@@ -8,7 +8,7 @@ const projectRoot = path.resolve(helperDir, '..', '..');
 const projectEnvPath = path.join(projectRoot, '.env');
 
 // Prefer the repo-local DB config for scraper/import scripts.
-loadDotenv({ path: projectEnvPath, override: true });
+loadDotenv({ path: projectEnvPath, override: true, quiet: true });
 
 if (process.env.SCRAPERS_DATABASE_URL) {
   process.env.DATABASE_URL = process.env.SCRAPERS_DATABASE_URL;
@@ -48,8 +48,8 @@ export async function assertCoreSchema(pool: Pool) {
   const result = await pool.query(`
     SELECT
       current_database() AS database_name,
-      to_regclass('public."Vendor"')::text AS vendor_table,
-      to_regclass('public."Product"')::text AS product_table
+      to_regclass('"Vendor"')::text AS vendor_table,
+      to_regclass('"Product"')::text AS product_table
   `);
 
   const row = result.rows[0];
@@ -61,7 +61,7 @@ export async function assertCoreSchema(pool: Pool) {
   throw new Error(
     [
       `Connected to database "${databaseName}" but the pharma-search schema is missing.`,
-      `Expected tables: public."Vendor" and public."Product".`,
+      `Expected tables: "Vendor" and "Product" on the configured search path.`,
       'Load the repo root .env or set SCRAPERS_DATABASE_URL to the correct database.',
       'If this is the right database, run:',
       'go run ./cmd/migrate',

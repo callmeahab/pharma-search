@@ -19,7 +19,7 @@
 #   SCRAPER_CONCURRENCY / SCRAPER_TIMEOUT_MS   tune the scrape (defaults 6 / 15m)
 #   DATABASE_URL         postgres URL (defaults to local)
 #   ANTHROPIC_API_KEY    required for the canonicalize phase (skipped if unset)
-set -uo pipefail
+set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SCRAPERS_DIR="${SCRAPERS_DIR:-$REPO_ROOT/scrapers}"
@@ -27,10 +27,23 @@ PY="$REPO_ROOT/ml/.venv/bin/python"
 [ -x "$PY" ] || PY="python3"
 export PATH="$HOME/.bun/bin:/root/.bun/bin:/usr/local/bin:$PATH"
 
-phase() { echo; echo "==== [$(date -Iseconds)] $* ===="; }
+phase() { echo; echo "==== [$(date -u +%Y-%m-%dT%H:%M:%SZ)] $* ===="; }
 die()   { echo "ERROR: $*" >&2; exit 1; }
 
 command -v bun >/dev/null 2>&1 || die "bun not found on PATH"
+# mkdir is atomic on macOS and Linux. A concurrent job never imports half a run.
+LOCK_DIR="$REPO_ROOT/cache/pipeline.lock"
+mkdir -p "$REPO_ROOT/cache"
+if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+  old_pid=$(cat "$LOCK_DIR/pid" 2>/dev/null || true)
+  if [[ "$old_pid" =~ ^[0-9]+$ ]] && ! kill -0 "$old_pid" 2>/dev/null; then
+    rm "$LOCK_DIR/pid"; rmdir "$LOCK_DIR"; mkdir "$LOCK_DIR"
+  else die "pipeline already running ($LOCK_DIR)"; fi
+fi
+printf '%s\n' "$$" > "$LOCK_DIR/pid"
+trap 'rm -f "$LOCK_DIR/pid"; rmdir "$LOCK_DIR"' EXIT
+phase "database migrations"
+(cd "$REPO_ROOT" && go run ./cmd/migrate -seed-vendors=false) || die "migration failed"
 
 if [ "${BUILD_DICTS:-0}" = "1" ]; then
   phase "build dictionaries"
@@ -44,8 +57,14 @@ if [ "${SKIP_SCRAPE:-0}" = "1" ]; then
   bun import-csv.ts || die "import-csv failed"
   SCRAPER_RUN_DB_CLEANUP="${SCRAPER_RUN_DB_CLEANUP:-1}" bun run postprocess || die "postprocess failed"
 else
-  phase "scrape + import + postprocess (bun run pipeline)"
-  SCRAPER_RUN_DB_CLEANUP="${SCRAPER_RUN_DB_CLEANUP:-1}" bun run pipeline || die "scrape pipeline failed"
+  phase "scrape source snapshots"
+  SCRAPE_STATUS=0
+  SCRAPER_RUN_DB_CLEANUP=0 bun run-scrapers-worker.ts || SCRAPE_STATUS=$?
+  if [ "$SCRAPE_STATUS" -ge 128 ]; then die "worker interrupted"; fi
+  if [ "$SCRAPE_STATUS" != 0 ]; then echo "WARN: scraper failures recorded; publishing successful source snapshots" >&2; fi
+  phase "import + postprocess"
+  bun import-csv.ts || die "import-csv failed"
+  bun run postprocess || die "postprocess failed"
 fi
 
 if [ "${SKIP_EXTRACT:-0}" != "1" ]; then
@@ -70,9 +89,17 @@ if [ "${SKIP_CANONICALIZE:-0}" != "1" ]; then
   fi
 fi
 
+phase "publish exact SKU catalog"
+(cd "$REPO_ROOT" && go run -ldflags "-X main.buildVersion=$(python3 deploy/source-version.py)" . catalog-rebuild) || die "catalog rebuild failed"
+phase "source health"
+HEALTH_STATUS=${SCRAPE_STATUS:-0}
+bun catalog-health.ts --check > "$REPO_ROOT/cache/source-health.json" || HEALTH_STATUS=$?
+if [ "$HEALTH_STATUS" != 0 ]; then echo "WARN: source health needs attention; see cache/source-health.json" >&2; fi
+
 if [ "${SYNC:-0}" = "1" ]; then
   phase "sync catalog to prod (deploy/sync-data.sh)"
   bash "$REPO_ROOT/deploy/sync-data.sh" || die "sync-data failed"
 fi
 
 phase "pipeline complete"
+exit "$HEALTH_STATUS"

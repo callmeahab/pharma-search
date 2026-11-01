@@ -1,4 +1,5 @@
 "use client";
+import { categoryLinks } from "@/lib/catalog";
 
 import React from "react";
 import { Button } from "@/components/ui/button";
@@ -31,6 +32,7 @@ export interface Facets {
   category?: Record<string, number>;
   normalizedName?: Record<string, number>;
   dosageUnit?: Record<string, number>;
+  dosage?: Record<string, number>;
   form?: Record<string, number>;
   quantity?: Record<string, number>;
 }
@@ -46,7 +48,7 @@ interface FilterSidebarProps {
 
 const defaultFilters: FilterState = {
   minPrice: 0,
-  maxPrice: 50000,
+  maxPrice: 0,
   categories: [],
   brands: [],
   vendors: [],
@@ -140,15 +142,15 @@ export const FilterSidebar: React.FC<FilterSidebarProps> = ({
   const clearAllFilters = () => {
     onFiltersChange({
       ...defaultFilters,
-      minPrice: priceRange.min,
-      maxPrice: priceRange.max,
+      minPrice: 0,
+      maxPrice: 0,
       groupSimilar: filters.groupSimilar,
     });
   };
 
   const hasActiveFilters =
-    filters.minPrice > priceRange.min ||
-    filters.maxPrice < priceRange.max ||
+    filters.minPrice > 0 ||
+    filters.maxPrice > 0 ||
     filters.categories.length > 0 ||
     filters.brands.length > 0 ||
     filters.vendors.length > 0 ||
@@ -172,8 +174,8 @@ export const FilterSidebar: React.FC<FilterSidebarProps> = ({
     : [];
 
   // Extract dosage units from facets
-  const dosageOptions = facets?.dosageUnit
-    ? Object.entries(facets.dosageUnit)
+  const dosageOptions = (facets?.dosage || facets?.dosageUnit)
+    ? Object.entries(facets.dosage || facets.dosageUnit || {})
         .filter(([key]) => key && key.trim() !== "")
         .sort((a, b) => b[1] - a[1])
         .slice(0, 10)
@@ -260,19 +262,19 @@ export const FilterSidebar: React.FC<FilterSidebarProps> = ({
               key={`${priceRange.min}-${priceRange.max}-${filters.minPrice}-${filters.maxPrice}`}
               defaultValue={[
                 Math.max(filters.minPrice, priceRange.min),
-                Math.min(filters.maxPrice, priceRange.max)
+                Math.min(filters.maxPrice || priceRange.max, priceRange.max)
               ]}
               min={priceRange.min}
               max={priceRange.max}
-              step={100}
+              step={1}
               onValueCommit={([min, max]) => {
-                onFiltersChange({ ...filters, minPrice: min, maxPrice: max });
+                onFiltersChange({ ...filters, minPrice: min <= priceRange.min ? 0 : min, maxPrice: max >= priceRange.max ? 0 : max });
               }}
               className="mb-4"
             />
             <div className="flex justify-between text-xs text-gray-600 dark:text-gray-400">
               <span>{formatPrice(Math.max(filters.minPrice, priceRange.min))}</span>
-              <span>{formatPrice(Math.min(filters.maxPrice, priceRange.max))}</span>
+              <span>{formatPrice(Math.min(filters.maxPrice || priceRange.max, priceRange.max))}</span>
             </div>
           </div>
         </FilterSection>
@@ -285,7 +287,7 @@ export const FilterSidebar: React.FC<FilterSidebarProps> = ({
                 <CheckboxItem
                   key={name}
                   id={`category-${name}`}
-                  label={name}
+                  label={categoryLinks.find(item => item[1] === name)?.[2] || name}
                   count={filters.categories.includes(name) ? undefined : count}
                   checked={filters.categories.includes(name)}
                   onChange={() => toggleArrayFilter("categories", name)}

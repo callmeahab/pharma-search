@@ -5,7 +5,6 @@ import { Button } from "@/components/ui/button";
 import ThemeToggle from "./ThemeToggle";
 import SearchBar from "./SearchBar";
 import { usePathname, useRouter } from "next/navigation";
-import { trackSearch } from "@/utils/analytics";
 import { MapPin, User } from "lucide-react";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useAuth } from "@/contexts/AuthContext";
@@ -43,13 +42,14 @@ const Navbar = () => {
     };
 
     window.addEventListener("popstate", updateFromUrl);
+    window.addEventListener("catalogLocationChanged", updateFromUrl);
     return () => window.removeEventListener("popstate", updateFromUrl);
   }, []);
 
 
   const handleSearch = (term: string) => {
+    setUrlSearchTerm(term);
     if (term && term.trim()) {
-      trackSearch(term, 0); // Results count will be determined on the main page
 
       // If we're not on the home page, navigate there with the search term
       if (pathname !== "/") {
@@ -60,7 +60,7 @@ const Navbar = () => {
       // If we're already on the home page, just update the URL and dispatch event
       const url = new URL(window.location.origin + pathname);
       url.searchParams.set("q", term.trim());
-      window.history.replaceState(null, "", url.toString());
+      window.history.pushState(null, "", url.toString());
     } else {
       // Clear search - navigate to home page
       if (pathname !== "/") {
@@ -71,9 +71,10 @@ const Navbar = () => {
       // If already on home page, just clear the URL
       const url = new URL(window.location.origin + pathname);
       url.searchParams.delete("q");
-      window.history.replaceState(null, "", url.toString());
+      window.history.pushState(null, "", url.toString());
     }
 
+    window.dispatchEvent(new Event("catalogLocationChanged"));
     // Dispatch a custom event to notify other components about URL change
     window.dispatchEvent(
       new CustomEvent("urlSearchChanged", {
@@ -136,7 +137,7 @@ const Navbar = () => {
           </div>
 
           <div className="flex-grow mx-0 md:mx-6 max-w-full md:max-w-3xl w-full">
-            <SearchBar onSearch={handleSearch} initialTerm={urlSearchTerm} />
+            <SearchBar key={urlSearchTerm} onSearch={handleSearch} initialTerm={urlSearchTerm} />
           </div>
 
           {!isMobile && (

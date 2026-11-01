@@ -138,9 +138,8 @@ out
 .nuxt
 dist
 
-# Gatsby files
+# Gatsby cache (Next.js public assets belong in version control)
 .cache/
-public
 
 # Storybook build outputs
 .out

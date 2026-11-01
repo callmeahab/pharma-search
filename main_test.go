@@ -1,227 +1,81 @@
 package main
 
-import "testing"
+import (
+	"context"
+	"encoding/base64"
+	"encoding/json"
+	"math"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+)
 
-func TestConvertHitsToGroupsDedupesVendorsAndRecalculatesPriceRange(t *testing.T) {
-	hits := []map[string]interface{}{
-		{
-			"id":                  "p1",
-			"title":               "Omega 3 1000 mg 30 kapsula",
-			"price":               1000.0,
-			"vendorId":            "vendor-a",
-			"vendorName":          "Vendor A",
-			"link":                "https://a.test/1",
-			"thumbnail":           "",
-			"brand":               "Brand",
-			"normalizedName":      "omega 3 1000 mg 30 kapsula",
-			"coreProductIdentity": "omega 3",
-			"dosageValue":         1000.0,
-			"dosageUnit":          "mg",
-			"form":                "kapsule",
-			"quantityValue":       30.0,
-		},
-		{
-			"id":                  "p2",
-			"title":               "Omega 3 1000 mg 30 kapsula akcija",
-			"price":               1100.0,
-			"vendorId":            "vendor-a",
-			"vendorName":          "Vendor A",
-			"link":                "https://a.test/2",
-			"thumbnail":           "",
-			"brand":               "Brand",
-			"normalizedName":      "omega 3 1000 mg 30 kapsula",
-			"coreProductIdentity": "omega 3",
-			"dosageValue":         1000.0,
-			"dosageUnit":          "mg",
-			"form":                "kapsule",
-			"quantityValue":       30.0,
-		},
-		{
-			"id":                  "p3",
-			"title":               "Omega 3 1000 mg 30 kapsula",
-			"price":               1200.0,
-			"vendorId":            "vendor-b",
-			"vendorName":          "Vendor B",
-			"link":                "https://b.test/1",
-			"thumbnail":           "",
-			"brand":               "Brand",
-			"normalizedName":      "omega 3 1000 mg 30 kapsula",
-			"coreProductIdentity": "omega 3",
-			"dosageValue":         1000.0,
-			"dosageUnit":          "mg",
-			"form":                "kapsule",
-			"quantityValue":       30.0,
-		},
-	}
-
-	groups := convertHitsToGroups(hits, "omega 3", nil)
-	if len(groups) != 1 {
-		t.Fatalf("expected 1 group, got %d", len(groups))
-	}
-
-	group := groups[0]
-	products := getSlice(group, "products")
-	if got := len(products); got != 2 {
-		t.Fatalf("expected 2 visible products after dedupe, got %d", got)
-	}
-
-	if got := int(getFloat(group, "vendor_count")); got != 2 {
-		t.Fatalf("expected vendor_count=2, got %d", got)
-	}
-
-	if got := int(getFloat(group, "product_count")); got != 3 {
-		t.Fatalf("expected raw product_count=3, got %d", got)
-	}
-
-	priceRange := getMap(group, "price_range")
-	if got := getFloat(priceRange, "min"); got != 1000 {
-		t.Fatalf("expected min price 1000, got %.2f", got)
-	}
-	if got := getFloat(priceRange, "max"); got != 1200 {
-		t.Fatalf("expected max price 1200, got %.2f", got)
-	}
-	if got := getFloat(priceRange, "avg"); got != 1100 {
-		t.Fatalf("expected avg price 1100, got %.2f", got)
-	}
-}
-
-func TestConvertHitsToGroupsFoldsFormlessIntoDominantForm(t *testing.T) {
-	mk := func(id, vendor, form string) map[string]interface{} {
-		return map[string]interface{}{
-			"id": id, "title": "Vitamin C 1000", "price": 100.0,
-			"vendorId": vendor, "vendorName": vendor, "link": "", "thumbnail": "",
-			"brand": "", "normalizedName": "vitamin c 1000",
-			"coreProductIdentity": "vitamin c", "dosageValue": 1000.0, "dosageUnit": "mg",
-			"form": form,
+func TestCatalogRejectsInvalidInputBeforeAccessingDatabase(t *testing.T) {
+	for _, r := range []catalogRequest{{Limit: -1}, {Offset: -1}, {Limit: 10000}, {Query: strings.Repeat("q", 257)}, {Sort: "arbitrary sql"}, {Filters: catalogFilters{MinPrice: 20, MaxPrice: 10}}, {Filters: catalogFilters{MinPrice: math.NaN()}}, {Filters: catalogFilters{Quantities: []int{-1}}}} {
+		s := &server{}
+		if _, err := s.catalogSearch(context.Background(), r); err == nil {
+			t.Fatalf("invalid input accepted: %+v", r)
 		}
 	}
-	hits := []map[string]interface{}{
-		mk("p1", "vendor-a", "tablete"),
-		mk("p2", "vendor-b", "tablete"),
-		mk("p3", "vendor-c", ""), // form unknown -> should fold into tablete
+}
+
+func TestCatalogCursorBindsQueryFiltersAndGeneration(t *testing.T) {
+	r, _ := normalizeCatalogRequest(catalogRequest{Query: "Magnezijum", Filters: catalogFilters{Brands: []string{"Solgar"}}, Limit: 24})
+	signature := requestSignature(r)
+	data, _ := json.Marshal(catalogCursor{Generation: "first", Signature: signature, Offset: 24})
+	cursor := base64.RawURLEncoding.EncodeToString(data)
+	if n, e := decodeCatalogCursor(cursor, "first", signature); e != nil || n != 24 {
+		t.Fatal(n, e)
 	}
-	groups := convertHitsToGroups(hits, "vitamin c", nil)
-	if len(groups) != 1 {
-		t.Fatalf("expected formless to fold into the dominant form -> 1 group, got %d", len(groups))
+	if _, e := decodeCatalogCursor(cursor, "second", signature); e == nil {
+		t.Fatal("cursor survived catalog refresh")
 	}
-	if got := int(getFloat(groups[0], "vendor_count")); got != 3 {
-		t.Fatalf("expected 3 vendors in the merged group, got %d", got)
+	r.Filters.Brands = []string{"Now Foods"}
+	if _, e := decodeCatalogCursor(cursor, "first", requestSignature(r)); e == nil {
+		t.Fatal("cursor survived filter change")
+	}
+	r.Query = "магнезијум"
+	r.Filters.Brands = []string{"Solgar"}
+	if requestSignature(r) != signature {
+		t.Fatal("equivalent language queries have different normalized plans")
 	}
 }
 
-func TestBuildFacetsFromHitsSupportsGroupedProductKeys(t *testing.T) {
-	hits := []map[string]interface{}{
-		{
-			"vendor_name": "Vendor A",
-			"brand_name":  "Brand",
-			"dosage_unit": "mg",
-			"form":        "kapsule",
-			"quantity":    30.0,
-		},
-		{
-			"vendor_name": "Vendor B",
-			"brand_name":  "Brand",
-			"dosage_unit": "mg",
-			"form":        "kapsule",
-			"quantity":    30.0,
-		},
+func TestConcurrentCatalogMissesShareWork(t *testing.T) {
+	g := catalogFlightGroup{}
+	var runs atomic.Int32
+	var wait sync.WaitGroup
+	start := make(chan struct{})
+	for range 10 {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			<-start
+			_, e := g.do(context.Background(), "same", func() (*catalogPage, error) {
+				runs.Add(1)
+				time.Sleep(30 * time.Millisecond)
+				return &catalogPage{}, nil
+			})
+			if e != nil {
+				t.Error(e)
+			}
+		}()
 	}
-
-	facets := buildFacetsFromHits(hits)
-
-	if got := facets["vendorName"].Values["Vendor A"]; got != 1 {
-		t.Fatalf("expected Vendor A facet count 1, got %d", got)
-	}
-	if got := facets["brand"].Values["Brand"]; got != 2 {
-		t.Fatalf("expected Brand facet count 2, got %d", got)
-	}
-	if got := facets["dosageUnit"].Values["mg"]; got != 2 {
-		t.Fatalf("expected dosageUnit facet count 2, got %d", got)
-	}
-	if got := facets["form"].Values["kapsule"]; got != 2 {
-		t.Fatalf("expected form facet count 2, got %d", got)
-	}
-	if got := facets["quantity"].Values["30"]; got != 2 {
-		t.Fatalf("expected quantity facet count 2, got %d", got)
+	close(start)
+	wait.Wait()
+	if runs.Load() != 1 {
+		t.Fatalf("duplicate work: %d", runs.Load())
 	}
 }
 
-func TestConvertHitsToGroupsRanksByCoverageWithinRelevanceTier(t *testing.T) {
-	hits := []map[string]interface{}{
-		// A single-vendor magnesium offer: relevant to the query but low coverage.
-		{
-			"id":                  "mag-1",
-			"title":               "Magnezijum 300 mg 30 kapsula",
-			"price":               700.0,
-			"vendorId":            "vendor-a",
-			"vendorName":          "Vendor A",
-			"brand":               "BrandA",
-			"normalizedName":      "magnezijum 300 mg",
-			"coreProductIdentity": "magnezijum",
-			"dosageValue":         300.0,
-			"dosageUnit":          "mg",
-			"form":                "kapsule",
-		},
-		// A different magnesium strength stocked by two vendors: same relevance
-		// tier, higher coverage -> should rank first.
-		{
-			"id":                  "mag-2",
-			"title":               "Magnezijum 375 mg 60 kapsula",
-			"price":               900.0,
-			"vendorId":            "vendor-b",
-			"vendorName":          "Vendor B",
-			"brand":               "BrandB",
-			"normalizedName":      "magnezijum 375 mg",
-			"coreProductIdentity": "magnezijum",
-			"dosageValue":         375.0,
-			"dosageUnit":          "mg",
-			"form":                "kapsule",
-		},
-		{
-			"id":                  "mag-3",
-			"title":               "Magnezijum 375 mg 60 kapsula",
-			"price":               950.0,
-			"vendorId":            "vendor-c",
-			"vendorName":          "Vendor C",
-			"brand":               "BrandC",
-			"normalizedName":      "magnezijum 375 mg",
-			"coreProductIdentity": "magnezijum",
-			"dosageValue":         375.0,
-			"dosageUnit":          "mg",
-			"form":                "kapsule",
-		},
-		// An unrelated product: must rank below both (lower relevance tier).
-		{
-			"id":                  "vc-1",
-			"title":               "Vitamin C 500 mg 30 tableta",
-			"price":               400.0,
-			"vendorId":            "vendor-d",
-			"vendorName":          "Vendor D",
-			"brand":               "BrandD",
-			"normalizedName":      "vitamin c 500 mg",
-			"coreProductIdentity": "vitamin c",
-			"dosageValue":         500.0,
-			"dosageUnit":          "mg",
-			"form":                "tablete",
-		},
+func TestEmptySearchesCannotGrowCacheWithoutBound(t *testing.T) {
+	c := newSearchResultCache(50000, time.Minute)
+	for i := range 1000 {
+		c.put(string(rune(i)), &cachedSearchResult{cachedAt: time.Now()})
 	}
-
-	groups := convertHitsToGroups(hits, "magnezijum", nil)
-	if len(groups) != 3 {
-		t.Fatalf("expected 3 groups, got %d", len(groups))
-	}
-
-	// Within the magnesium relevance tier, the 2-vendor 375mg group outranks the
-	// 1-vendor 300mg group (coverage tie-break).
-	if got := getString(groups[0], "id"); got != "ing:magnezijum::375mg::form:kapsule" {
-		t.Fatalf("expected highest-coverage magnesium group first, got %q", got)
-	}
-	if got := int(getFloat(groups[0], "vendor_count")); got != 2 {
-		t.Fatalf("expected top group vendor_count=2, got %d", got)
-	}
-
-	// The unrelated Vitamin C group is in a lower relevance tier and must rank last.
-	if got := getString(groups[2], "id"); got != "ing:vitamin c::500mg::form:tablete" {
-		t.Fatalf("expected unrelated group last, got %q", got)
+	if c.stats().entries > 256 {
+		t.Fatal("empty-query cache is unbounded")
 	}
 }

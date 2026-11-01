@@ -1,4 +1,8 @@
+"use client";
+
 import React, { useState } from "react";
+import Link from "next/link";
+import { productPath } from "@/lib/catalog";
 import { Card, CardContent, CardFooter } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { ArrowLeftRight, Clock, ExternalLink, Heart, Store, TrendingDown } from "lucide-react";
@@ -23,9 +27,9 @@ const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
   const comparison = product.comparisonContext;
 
   const lowestPrice =
-    comparison?.lowestPrice ?? Math.min(...product.prices.map((price) => price.price));
+    comparison?.lowestPrice ?? (product.prices.length ? Math.min(...product.prices.map((price) => price.price)) : 0);
   const highestPrice =
-    comparison?.highestPrice ?? Math.max(...product.prices.map((price) => price.price));
+    comparison?.highestPrice ?? (product.prices.length ? Math.max(...product.prices.map((price) => price.price)) : 0);
   const priceDifference = Math.max(0, highestPrice - lowestPrice);
   const savingsPercentage =
     highestPrice > 0 ? Math.round((priceDifference / highestPrice) * 100) : 0;
@@ -35,14 +39,15 @@ const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
   const canCompare = vendorCount > 1 && product.prices.length > 1;
   const showGroupedSummary =
     !isOfferView && (canCompare || hiddenOfferCount > 0 || (product.productCount || 0) > 1);
-  const isWishlisted = isWatched(product.id);
+  const watchKey = product.historyGroupKey || product.id;
+  const isWishlisted = isWatched(watchKey);
   const vendorWord = pluralizeSr(vendorCount, "apoteka", "apoteke", "apoteka");
 
   const openTarget = (store: string, link?: string) => {
-    const targetUrl =
-      link || `https://www.${store.toLowerCase().replace(/\s+/g, "")}.com`;
-    trackStoreClick(store, targetUrl, product.name);
-    window.open(targetUrl, "_blank");
+    if (!link) return;
+    const targetUrl = link;
+    trackStoreClick(store, targetUrl, product.name, product.searchContext);
+    window.open(targetUrl, "_blank", "noopener,noreferrer");
   };
 
   const handleBuyClick = (e: React.MouseEvent) => {
@@ -60,7 +65,7 @@ const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
     }
     setShowPriceComparison(true);
     setShowModal(true);
-    trackProductClick(product.id, product.name, product.category);
+    trackProductClick(product.id, product.name, product.category, product.searchContext);
   };
 
   const handleCardClick = () => {
@@ -73,13 +78,13 @@ const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
 
     setShowPriceComparison(true);
     setShowModal(true);
-    trackProductClick(product.id, product.name, product.category);
+    trackProductClick(product.id, product.name, product.category, product.searchContext);
   };
 
   const handleWishClick = (e: React.MouseEvent) => {
     e.stopPropagation();
     toggleWatch({
-      groupKey: product.id,
+      groupKey: watchKey,
       displayName: product.name,
       thumbnail: product.image,
       price: lowestPrice,
@@ -101,7 +106,7 @@ const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
             className="w-full h-48 object-contain"
             onError={() => setImageError(true)}
           />
-          {canCompare && savingsPercentage > 0 && (
+          {product.comparable && canCompare && savingsPercentage > 0 && (
             <div className="absolute top-2 right-2 bg-red-500 text-white px-2 py-1 rounded-full text-xs font-bold">
               Ušteda do {savingsPercentage}%
             </div>
@@ -126,10 +131,11 @@ const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
 
         <CardContent className="pt-4 flex flex-col gap-3 flex-1">
           <div>
-            <h3 className="text-lg font-semibold mb-1 line-clamp-2">{product.name}</h3>
+            <h3 className="text-lg font-semibold mb-1 line-clamp-2"><Link href={productPath(watchKey)} onClick={event => { event.stopPropagation(); trackProductClick(product.id, product.name, product.category, product.searchContext); }} className="hover:underline">{product.name}</Link></h3>
             <p className="text-sm text-gray-500 dark:text-gray-400 line-clamp-2">
               {product.description}
             </p>
+            {!product.comparable && <p className="text-xs text-gray-500 mt-1">Zaseban listing · istovetnost pakovanja nije potvrđena</p>}
           </div>
 
           {isOfferView ? (
@@ -155,7 +161,7 @@ const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
                     <span>
                       {comparison?.isBestOffer
                         ? "Ovo je najniža cena u grupi"
-                        : `Najbolja cena je ${formatPrice(lowestPrice)}`}
+                        : `Najbolja cena je ${lowestPrice > 0 ? formatPrice(lowestPrice) : "Nema svežih ponuda"}`}
                     </span>
                   </div>
                   <p className="text-sm text-gray-700 dark:text-gray-200">
@@ -169,7 +175,7 @@ const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
                       : `Najpovoljnije trenutno nudi ${bestVendorName}.`}
                   </p>
                   <p className="text-xs text-gray-500 dark:text-gray-400">
-                    Raspon cena: {formatPrice(lowestPrice)} - {formatPrice(highestPrice)}
+                    Raspon cena: {lowestPrice > 0 ? formatPrice(lowestPrice) : "Nema svežih ponuda"} - {formatPrice(highestPrice)}
                   </p>
                 </div>
               )}
@@ -179,7 +185,7 @@ const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <p className="text-sm text-gray-500 dark:text-gray-400">Već od</p>
-                  <p className="price-tag">{formatPrice(lowestPrice)}</p>
+                  <p className="price-tag">{lowestPrice > 0 ? formatPrice(lowestPrice) : "Nema svežih ponuda"}</p>
                 </div>
                 <div className="flex items-center text-sm text-gray-500 dark:text-gray-400">
                   <Store size={16} className="mr-1 text-health-secondary" />
@@ -213,6 +219,7 @@ const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
               Cena ažurirana: {formatPriceAge(product.priceUpdatedAt)}
             </p>
           )}
+          {!!product.unitPrice && product.comparable && <p className="text-xs text-gray-500">{formatPrice(product.unitPrice)} / {product.unitLabel}</p>}
         </CardContent>
 
         <CardFooter className="pt-0">

@@ -1,424 +1,49 @@
 "use client";
-
-import React, { useState, useEffect } from "react";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-  DialogTabs,
-  DialogTabList,
-  DialogTabTrigger,
-  DialogTabContent,
-  DialogClose,
-} from "@/components/ui/dialog";
-import {
-  Drawer,
-  DrawerContent,
-  DrawerHeader,
-  DrawerTitle,
-  DrawerClose,
-} from "@/components/ui/drawer";
+import { useEffect, useState } from "react";
+import Link from "next/link";
+import { Heart, Loader2 } from "lucide-react";
+import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { Drawer, DrawerContent, DrawerTitle, DrawerDescription } from "@/components/ui/drawer";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
-import { Product } from "@/types/product";
 import { PriceComparison } from "./PriceComparison";
 import { PriceHistoryChart } from "./PriceHistoryChart";
-import NearestPharmacyButton from "./NearestPharmacyButton";
-import { Store, Percent, X, Heart, ExternalLink } from "lucide-react";
-import { useWishlist } from "@/contexts/WishlistContext";
-import { formatPrice, formatVendorCount } from "@/lib/utils";
-import { trackStoreClick } from "@/utils/analytics";
+import { useIsMobile } from "@/hooks/use-mobile";
+import { useAuth } from "@/contexts/AuthContext";
+import { fetchCatalogSKU, productPath } from "@/lib/catalog";
+import { convertProductGroupToProducts, type Product } from "@/types/product";
 
-interface ProductDetailModalProps {
-  product: Product | null;
-  isOpen: boolean;
-  onClose: () => void;
-  showPriceComparison?: boolean;
-}
-
-function useMediaQuery(query: string): boolean {
-  const [matches, setMatches] = useState(false);
-
+export default function ProductDetailModal({ product, isOpen, onClose }: { product: Product | null; isOpen: boolean; onClose: () => void; showPriceComparison?: boolean }) {
+  const mobile = useIsMobile(); const [resolved, setResolved] = useState<{ key: string; product: Product; error?: string } | null>(null); const [retry, setRetry] = useState(0);
+  const skuKey = product?.historyGroupKey || product?.id || "";
+  const key = `${skuKey}|${JSON.stringify(product?.catalogFilters || {})}`;
   useEffect(() => {
-    const media = window.matchMedia(query);
-    setMatches(media.matches);
-
-    const listener = (e: MediaQueryListEvent) => setMatches(e.matches);
-    media.addEventListener("change", listener);
-    return () => media.removeEventListener("change", listener);
-  }, [query]);
-
-  return matches;
-}
-
-const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
-  product,
-  isOpen,
-  onClose,
-  showPriceComparison: _showPriceComparison = false,
-}) => {
-  const { isInWishlist, toggleWishlist } = useWishlist();
-  const [imageError, setImageError] = useState(false);
-  const [activeTab, setActiveTab] = useState<"comparison" | "history">("comparison");
-  const isDesktop = useMediaQuery("(min-width: 640px)");
-
-  useEffect(() => {
-    if (isOpen) setActiveTab("comparison");
-  }, [isOpen, product?.id]);
-
+    if (!isOpen || !product || product.detailsComplete) return;
+    const abort = new AbortController();
+    fetchCatalogSKU(skuKey, product.catalogFilters, abort.signal).then(result => {
+      if (abort.signal.aborted) return; const complete = convertProductGroupToProducts(result.group)[0];
+      setResolved({ key, product: { ...product, prices: complete.prices, sourceOffers: complete.sourceOffers, vendorCount: complete.vendorCount, comparisonContext: complete.comparisonContext, detailsComplete: true } });
+    }).catch(error => { if (!abort.signal.aborted) setResolved({ key, product, error: error instanceof Error ? error.message : "Ponude nisu dostupne." }); });
+    return () => abort.abort();
+  }, [isOpen, key, skuKey, product, retry]);
   if (!product) return null;
+  const current = resolved?.key === key ? resolved.product : product; const error = resolved?.key === key ? resolved.error : undefined;
+  const content = <ProductDetails key={key} product={current} loading={!current.detailsComplete && !error} error={error} retry={() => { setResolved(null); setRetry(value => value + 1); }} />;
+  if (mobile) return <Drawer open={isOpen} onOpenChange={open => { if (!open) onClose(); }}><DrawerContent className="max-h-[92vh] overflow-y-auto"><DrawerTitle className="sr-only">{product.name}</DrawerTitle><DrawerDescription className="sr-only">Online ponude, tačno pakovanje i istorija cene</DrawerDescription>{content}</DrawerContent></Drawer>;
+  return <Dialog open={isOpen} onOpenChange={open => { if (!open) onClose(); }}><DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto"><DialogTitle className="sr-only">{product.name}</DialogTitle><DialogDescription className="sr-only">Online ponude, tačno pakovanje i istorija cene</DialogDescription>{content}</DialogContent></Dialog>;
+}
 
-  const isSingleProduct = product.prices.length === 1;
-  const lowestPrice = Math.min(...product.prices.map((p) => p.price));
-  const highestPrice = Math.max(...product.prices.map((p) => p.price));
-  const priceDifference = highestPrice - lowestPrice;
-  const savingsPercentage = Math.round((priceDifference / highestPrice) * 100);
-
-  const isWishlisted = isInWishlist(product.id);
-
-  const handleWishClick = (e: React.MouseEvent) => {
-    e.preventDefault();
-    toggleWishlist(product);
-  };
-
-  const handleBuyClick = () => {
-    const price = product.prices[0];
-    const targetUrl = price.link || `https://www.${price.store.toLowerCase().replace(/\s+/g, "")}.com`;
-    trackStoreClick(price.store, targetUrl, product.name);
-    window.open(targetUrl, "_blank");
-  };
-
-  // Mobile content for drawer
-  const MobileContent = () => (
-    <div className="px-4 pb-6">
-      {/* Header with close and wishlist */}
-      <div className="flex items-start justify-between mb-3">
-        <DrawerTitle className="text-lg font-bold pr-16 break-words">
-          {product.name}
-        </DrawerTitle>
-        <div className="flex items-center gap-2 flex-shrink-0">
-          <button
-            onClick={handleWishClick}
-            className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
-            type="button"
-          >
-            <Heart
-              size={20}
-              className={
-                isWishlisted
-                  ? "fill-red-500 text-red-500"
-                  : "text-gray-500 hover:text-red-500 transition-colors"
-              }
-            />
-          </button>
-          <DrawerClose className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors">
-            <X className="h-5 w-5" />
-          </DrawerClose>
-        </div>
-      </div>
-
-      {isSingleProduct ? (
-        // Single product mobile layout
-        <>
-          <div className="flex gap-3 mb-4">
-            <div className="w-24 h-24 flex-shrink-0 overflow-hidden rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-100 dark:bg-gray-800">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={imageError ? "/medicine-placeholder.svg" : product.image}
-                alt={product.name}
-                className="h-full w-full object-contain"
-                onError={() => setImageError(true)}
-              />
-            </div>
-            <div className="flex-1 flex flex-col justify-center">
-              <p className="text-orange-600 dark:text-orange-400 font-medium text-sm mb-1">
-                {product.prices[0].store}
-              </p>
-              <p className="text-2xl font-bold text-health-primary dark:text-green-400">
-                {formatPrice(lowestPrice)}
-              </p>
-            </div>
-          </div>
-          <Button
-            onClick={handleBuyClick}
-            className="w-full bg-health-primary hover:bg-health-secondary text-white"
-          >
-            <ExternalLink size={16} className="mr-2" />
-            Kupi
-          </Button>
-          <NearestPharmacyButton
-            vendorId={product.prices[0].vendorId}
-            vendorName={product.prices[0].store}
-            productName={product.name}
-            price={product.prices[0].price}
-            className="mt-2"
-          />
-        </>
-      ) : (
-        // Multiple products mobile layout
-        <>
-          <div className="flex gap-3 mb-3">
-            <div className="w-20 h-20 flex-shrink-0 overflow-hidden rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-100 dark:bg-gray-800">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={imageError ? "/medicine-placeholder.svg" : product.image}
-                alt={product.name}
-                className="h-full w-full object-contain"
-                onError={() => setImageError(true)}
-              />
-            </div>
-            <div className="flex-1 bg-gray-100 dark:bg-gray-700 rounded-xl p-3 border border-gray-200 dark:border-gray-700">
-              <div className="flex justify-between items-center gap-2 h-full">
-                <div className="min-w-0">
-                  <p className="text-xs text-gray-500 dark:text-gray-300">Raspon cena</p>
-                  <div className="text-base font-bold text-health-primary dark:text-green-400">
-                    {formatPrice(lowestPrice)} - {formatPrice(highestPrice)}
-                  </div>
-                </div>
-                {savingsPercentage > 0 && (
-                  <div className="flex items-center bg-gray-200 dark:bg-gray-800 px-2 py-1 rounded-lg flex-shrink-0">
-                    <Percent size={12} className="mr-1 text-red-500" />
-                    <span className="text-base font-bold text-red-500">{savingsPercentage}%</span>
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-          <div className="bg-gray-50 dark:bg-gray-800 p-3 rounded-xl border border-gray-200 dark:border-gray-700 max-h-[50vh] overflow-y-auto">
-            <PriceComparison
-              prices={product.prices}
-              isInCard={false}
-              productName={product.name}
-            />
-          </div>
-        </>
-      )}
-    </div>
-  );
-
-  // Mobile: use Drawer
-  if (!isDesktop) {
-    return (
-      <Drawer open={isOpen} onOpenChange={(open) => !open && onClose()}>
-        <DrawerContent className="bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-700">
-          <DrawerHeader className="sr-only">
-            <DrawerTitle>{product.name}</DrawerTitle>
-          </DrawerHeader>
-          <MobileContent />
-        </DrawerContent>
-      </Drawer>
-    );
-  }
-
-  // Desktop: use Dialog
-  // Single product desktop
-  if (isSingleProduct) {
-    const singlePrice = product.prices[0];
-    return (
-      <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-        <DialogContent className="max-w-xl w-[95vw] max-h-[90vh] overflow-y-auto bg-white dark:bg-gray-900 shadow-2xl rounded-2xl border border-gray-300 dark:border-gray-700 p-6">
-          <div className="absolute right-4 top-4 flex items-center space-x-2">
-            <button
-              onClick={handleWishClick}
-              className="p-2 bg-white/80 dark:bg-gray-800/80 rounded-full hover:bg-white dark:hover:bg-gray-800 transition-colors"
-              type="button"
-            >
-              <Heart
-                size={20}
-                className={
-                  isWishlisted
-                    ? "fill-red-500 text-red-500"
-                    : "text-gray-500 hover:text-red-500 transition-colors"
-                }
-              />
-            </button>
-            <DialogClose className="rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100">
-              <X className="h-4 w-4" />
-              <span className="sr-only">Close</span>
-            </DialogClose>
-          </div>
-
-          <DialogHeader className="pr-16">
-            <DialogTitle className="text-xl font-bold break-words">
-              {product.name}
-            </DialogTitle>
-          </DialogHeader>
-
-          <div className="flex flex-row gap-5 mt-4">
-            <div className="w-48 h-48 flex-shrink-0 overflow-hidden rounded-lg border border-gray-200 dark:border-gray-700 bg-white">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={imageError ? "/medicine-placeholder.svg" : product.image}
-                alt={product.name}
-                className="h-full w-full object-contain"
-                onError={() => setImageError(true)}
-              />
-            </div>
-
-            <div className="flex-1 flex flex-col">
-              <DialogDescription className="text-sm text-gray-600 dark:text-gray-300 mb-4">
-                {product.description}
-              </DialogDescription>
-
-              <div className="space-y-2 text-sm text-gray-600 dark:text-gray-400 mb-4">
-                {product.category && (
-                  <div className="flex items-center gap-2">
-                    <span className="text-gray-500">Kategorija:</span>
-                    <span className="text-gray-800 dark:text-gray-200">{product.category}</span>
-                  </div>
-                )}
-                <div className="flex items-center gap-2">
-                  <span className="text-gray-500">Prodavac:</span>
-                  <span className="text-orange-600 dark:text-orange-400 font-medium">{singlePrice.store}</span>
-                </div>
-              </div>
-
-              <div className="mt-auto pt-4 border-t border-gray-200 dark:border-gray-700">
-                <div className="flex items-center justify-between mb-3">
-                  <span className="text-gray-500 dark:text-gray-400 text-sm">Cena:</span>
-                  <span className="text-2xl font-bold text-health-primary dark:text-green-400">
-                    {formatPrice(singlePrice.price)}
-                  </span>
-                </div>
-
-                <Button
-                  onClick={handleBuyClick}
-                  className="w-full bg-health-primary hover:bg-health-secondary text-white"
-                >
-                  <ExternalLink size={16} className="mr-2" />
-                  Kupi na {singlePrice.store}
-                </Button>
-                <NearestPharmacyButton
-                  vendorId={singlePrice.vendorId}
-                  vendorName={singlePrice.store}
-                  productName={product.name}
-                  price={singlePrice.price}
-                  className="mt-2"
-                />
-              </div>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
-    );
-  }
-
-  // Multiple products desktop
-  return (
-    <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-w-6xl w-[95vw] max-h-[90vh] overflow-y-auto bg-white dark:bg-gray-900 shadow-2xl drop-shadow-xl rounded-2xl border border-gray-300 dark:border-gray-700 ring-1 ring-black/10 p-6">
-        <div className="absolute right-4 top-4 flex items-center space-x-2">
-          <button
-            onClick={handleWishClick}
-            className="p-2 bg-white/80 dark:bg-gray-800/80 rounded-full hover:bg-white dark:hover:bg-gray-800 transition-colors"
-            type="button"
-          >
-            <Heart
-              size={20}
-              className={
-                isWishlisted
-                  ? "fill-red-500 text-red-500"
-                  : "text-gray-500 hover:text-red-500 transition-colors"
-              }
-            />
-          </button>
-          <DialogClose className="rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100">
-            <X className="h-4 w-4" />
-            <span className="sr-only">Close</span>
-          </DialogClose>
-        </div>
-
-        <DialogHeader>
-          <DialogTitle className="text-2xl font-bold pr-24 break-words">
-            {product.name}
-          </DialogTitle>
-          <div className="mt-2">
-            <span className="inline-block bg-health-light dark:bg-gray-700 text-health-primary dark:text-green-400 text-sm py-1 px-3 rounded-full">
-              {product.category}
-            </span>
-          </div>
-          <DialogDescription className="text-base text-gray-600 dark:text-gray-300 mt-2">
-            {product.description}
-          </DialogDescription>
-        </DialogHeader>
-
-        <div className="pt-2">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div className="flex flex-col space-y-4">
-              <div className="aspect-square w-full overflow-hidden rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={imageError ? "/medicine-placeholder.svg" : product.image}
-                  alt={product.name}
-                  className="h-full w-full object-cover"
-                  onError={() => setImageError(true)}
-                />
-              </div>
-
-              <div className="bg-health-light dark:bg-gray-700 rounded-xl p-4 border border-gray-200 dark:border-gray-700 shadow-sm">
-                <div className="flex justify-between items-center gap-2">
-                  <div className="min-w-0">
-                    <p className="text-sm text-gray-500 dark:text-gray-300">Raspon cena</p>
-                    <div className="text-xl font-bold text-health-primary dark:text-green-400">
-                      {formatPrice(lowestPrice)} - {formatPrice(highestPrice)}
-                    </div>
-                  </div>
-                  {savingsPercentage > 0 && (
-                    <div className="flex flex-col items-center bg-white dark:bg-gray-800 px-4 py-2 rounded-lg shadow-sm flex-shrink-0">
-                      <div className="text-sm text-gray-500 dark:text-gray-300 flex items-center">
-                        <Percent size={14} className="mr-1 text-red-500" />
-                        Uštedi
-                      </div>
-                      <div className="text-xl font-bold text-red-500">
-                        {savingsPercentage}%
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              <div className="bg-gray-100 dark:bg-gray-800 rounded-xl p-4 flex items-center justify-center space-x-2 border border-gray-200 dark:border-gray-700 shadow-sm">
-                <Store className="text-health-secondary" size={20} />
-                <span className="text-gray-600 dark:text-gray-300">
-                  Dostupno u {formatVendorCount(product.vendorCount || product.prices.length)}
-                </span>
-              </div>
-            </div>
-
-            <div className="flex flex-col">
-              <DialogTabs
-                value={activeTab}
-                onValueChange={(value) => setActiveTab(value as "comparison" | "history")}
-                className="w-full flex flex-col"
-              >
-                <DialogTabList className="grid w-full grid-cols-2">
-                  <DialogTabTrigger value="comparison">Trenutne cene</DialogTabTrigger>
-                  <DialogTabTrigger value="history">Istorija cena</DialogTabTrigger>
-                </DialogTabList>
-                <DialogTabContent value="comparison">
-                  <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded-xl shadow-md border border-gray-200 dark:border-gray-700">
-                    <PriceComparison
-                      prices={product.prices}
-                      isInCard={false}
-                      productName={product.name}
-                    />
-                  </div>
-                </DialogTabContent>
-                <DialogTabContent value="history">
-                  <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded-xl shadow-md border border-gray-200 dark:border-gray-700">
-                    {activeTab === "history" && (
-                      <PriceHistoryChart groupKey={product.historyGroupKey || product.id} isInCard={false} />
-                    )}
-                  </div>
-                </DialogTabContent>
-              </DialogTabs>
-            </div>
-          </div>
-        </div>
-      </DialogContent>
-    </Dialog>
-  );
-};
-
-export default ProductDetailModal;
+function ProductDetails({ product, loading, error, retry }: { product: Product; loading: boolean; error?: string; retry: () => void }) {
+  const { isWatched, toggleWatch } = useAuth(); const [all, setAll] = useState(false); const key = product.historyGroupKey || product.id;
+  const prices = all && product.sourceOffers?.length ? product.sourceOffers : product.prices;
+  return <div className="p-4 sm:p-6 space-y-5">
+    <div className="flex items-start justify-between gap-4 pr-5"><div><h2 className="text-xl font-bold">{product.name}</h2><p className="text-sm text-gray-500 mt-1">{product.comparable ? "Ponude za potvrđeno isti proizvod i pakovanje." : "Zaseban izvorni listing. Istovetnost sa drugim proizvodima nije potvrđena."}</p></div><Button type="button" variant="outline" aria-pressed={isWatched(key)} onClick={() => toggleWatch({ groupKey: key, displayName: product.name, thumbnail: product.image })}><Heart size={18} className={isWatched(key) ? "fill-red-500 text-red-500" : ""} /><span className="sr-only sm:not-sr-only">{isWatched(key) ? "Pratite cenu" : "Prati cenu"}</span></Button></div>
+    <Link href={productPath(key)} className="inline-block text-sm underline text-health-primary dark:text-green-300">Otvori stranicu proizvoda</Link>
+    {loading && <p role="status" className="flex items-center gap-2 text-sm"><Loader2 className="animate-spin" size={16} />Učitavam sve aktuelne ponude…</p>}
+    {error && <p role="alert" className="text-sm">Nije moguće učitati sve ponude. <button type="button" className="underline" onClick={retry}>Pokušaj ponovo</button></p>}
+    <Tabs defaultValue="comparison"><TabsList className="grid grid-cols-2 w-full"><TabsTrigger value="comparison">Trenutne ponude</TabsTrigger><TabsTrigger value="history">Istorija cena</TabsTrigger></TabsList><TabsContent value="comparison">
+      {product.sourceOffers && product.sourceOffers.length > product.prices.length && <label className="flex gap-2 items-center text-sm mt-4"><input type="checkbox" checked={all} onChange={event => setAll(event.target.checked)} />Prikaži sve listinge istog prodavca</label>}
+      {prices.length ? <PriceComparison prices={prices} productName={product.name} searchContext={product.searchContext} unitLabel={product.unitLabel} /> : <p className="py-6 text-gray-500">Trenutno nema svežih online ponuda.</p>}
+    </TabsContent><TabsContent value="history"><PriceHistoryChart groupKey={key} /></TabsContent></Tabs>
+  </div>;
+}

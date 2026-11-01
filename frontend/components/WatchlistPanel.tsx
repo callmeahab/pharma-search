@@ -9,6 +9,8 @@ import { Input } from "@/components/ui/input";
 import { useAuth } from "@/contexts/AuthContext";
 import { Watch, watchApi, PricePoint } from "@/lib/auth";
 import { toast } from "@/hooks/use-toast";
+import LegacySavedProducts from "./LegacySavedProducts";
+import { productPath } from "@/lib/catalog";
 
 function formatRsd(v: number | null | undefined): string {
   if (v == null) return "—";
@@ -24,6 +26,7 @@ export default function WatchlistPanel() {
 
   return (
     <div className="space-y-8">
+      <LegacySavedProducts />
       {alerts.length > 0 && (
         <div className="space-y-3">
           <h3 className="flex items-center gap-2 text-lg font-semibold text-gray-900 dark:text-white">
@@ -34,7 +37,7 @@ export default function WatchlistPanel() {
             {alerts.slice(0, 10).map((a, i) => (
               <Link
                 key={i}
-                href={`/?q=${encodeURIComponent(a.display_name)}`}
+                href={a.group_key?.startsWith("sku:v2:") || a.group_key?.startsWith("offer:v2:") ? productPath(a.group_key) : `/?q=${encodeURIComponent(a.display_name)}`}
                 className="flex items-center gap-3 rounded-md bg-green-50 dark:bg-green-900/20 px-4 py-3 text-sm hover:bg-green-100 dark:hover:bg-green-900/30 transition-colors"
               >
                 <TrendingDown size={18} className="text-green-600 dark:text-green-400 shrink-0" />
@@ -113,29 +116,31 @@ function WatchRow({
       </div>
       <div className="flex-grow min-w-0">
         <Link
-          href={`/?q=${encodeURIComponent(watch.display_name)}`}
+          href={watch.needs_review ? `/?q=${encodeURIComponent(watch.display_name)}` : productPath(watch.group_key)}
           className="block font-medium text-gray-900 dark:text-white truncate hover:text-health-primary dark:hover:text-health-accent"
         >
           {watch.display_name || "Proizvod"}
         </Link>
-        <p className="text-sm text-gray-500 dark:text-gray-400">
-          Trenutno najjeftinije: <span className="font-semibold text-gray-700 dark:text-gray-200">{formatRsd(watch.last_price)}</span>
+        {watch.needs_review ? <p className="text-sm text-amber-700 dark:text-amber-400">{watch.review_reason || "Izaberite tačan proizvod i pakovanje. Obaveštenja su pauzirana."}</p> : <p className="text-sm text-gray-500 dark:text-gray-400">
+          Poslednja zabeležena cena: <span className="font-semibold text-gray-700 dark:text-gray-200">{formatRsd(watch.last_price)}</span>
           {watch.last_vendor ? ` · ${watch.last_vendor}` : ""}
-        </p>
-        <PriceSparkline groupKey={watch.group_key} />
+        </p>}
+        {!watch.needs_review && <PriceSparkline groupKey={watch.group_key} />}
       </div>
       <div className="flex items-center gap-2 shrink-0">
         <div className="flex flex-col">
           <label className="text-[11px] text-gray-400 mb-0.5">Ciljna cena</label>
           <div className="flex items-center gap-1">
             <Input
+              disabled={watch.needs_review}
+              aria-label="Ciljna cena"
               type="number"
               value={target}
               onChange={(e) => setTargetVal(e.target.value)}
               placeholder="—"
               className="w-24 h-9"
             />
-            <Button size="sm" variant="outline" onClick={saveTarget} disabled={saving} className="h-9">
+            <Button size="sm" variant="outline" onClick={saveTarget} disabled={saving || watch.needs_review} className="h-9">
               {saving ? "..." : "OK"}
             </Button>
           </div>

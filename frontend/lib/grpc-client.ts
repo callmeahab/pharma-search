@@ -38,6 +38,10 @@ function convertPbProductToBackend(p: PbProduct): BackendProduct {
     quantity: p.quantity,
     rank: p.rank,
     price_updated_at: p.priceUpdatedAt || undefined,
+    availability: p.availability === "available" || p.availability === "unavailable" ? p.availability : "unknown",
+    unit_price: p.unitPrice || undefined,
+    volume_value: p.volumeValue || undefined,
+    volume_unit: p.volumeUnit || undefined,
   };
 }
 
@@ -56,6 +60,11 @@ function convertPbGroupToProductGroup(g: PbProductGroup, index: number): Product
     product_count: g.productCount,
     dosage_value: g.dosageValue,
     dosage_unit: g.dosageUnit,
+    offers: g.offers.map(convertPbProductToBackend),
+    details_complete: g.detailsComplete,
+    comparable: g.comparable,
+    family_id: g.familyId,
+    match_method: g.matchMethod,
   };
 }
 
@@ -95,9 +104,7 @@ function getClient() {
 
   if (!transport) {
     const baseUrl =
-      process.env.NODE_ENV === "production"
-        ? window.location.origin
-        : "http://localhost:50051";
+      window.location.origin;
 
     transport = createConnectTransport({
       baseUrl: baseUrl,

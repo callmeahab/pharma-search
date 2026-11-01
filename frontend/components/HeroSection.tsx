@@ -9,13 +9,15 @@ const HeroSection = () => {
   return (
     <div className="relative mb-10">
       <AspectRatio ratio={isMobile ? 16 / 9 : 3 / 1} className="bg-muted overflow-hidden rounded-lg">
-        <Image 
-          src="/lovable-uploads/dc9443f8-c0b9-4cef-b371-25aa23f36278.png" 
-          alt="" 
-          layout="fill" 
-          objectFit="cover" 
-          className="object-cover w-full h-full brightness-[0.8]"
+        <Image
+          src="/images/pharmacy-hero.png"
+          alt=""
+          fill
+          priority
+          sizes="100vw"
+          className="object-cover"
         />
+        <div className="absolute inset-0 bg-slate-950/55" aria-hidden="true" />
         <div className="absolute inset-0 flex flex-col justify-center items-center text-center p-4 md:p-10">
           <div className="p-4 md:p-6 rounded-lg max-w-4xl">
             <h1 className="text-2xl md:text-4xl font-bold mb-2 md:mb-3">

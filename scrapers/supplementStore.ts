@@ -29,22 +29,23 @@ async function scrapePage(page: Page, url: string): Promise<Product[]> {
     const products = await page.$$eval('.product-thumb', (elements) => {
       return elements
         .map((element) => {
-          const title = element.querySelector('h4')?.textContent?.trim() || '';
+          const title = element.querySelector('.name a, h4')?.textContent?.trim() || '';
           const offStockElement = element.querySelector('.label.label-danger');
 
-          if (offStockElement) {
+          if (!title || offStockElement) {
             return null;
           }
 
           // First try to get price-new, if not found get regular price
           const priceElement =
             element.querySelector('.price-new') ||
+            element.querySelector('.price-normal') ||
             element.querySelector('.price:not(:has(.price-old))');
           const price = priceElement?.textContent?.trim() || '';
           const link =
             element.querySelector('.image > a')?.getAttribute('href') || '';
           const img =
-            element.querySelector('.image > a > img')?.getAttribute('src') ||
+            element.querySelector('.image img')?.getAttribute('src') ||
             '';
 
           return { title, price, link, img };

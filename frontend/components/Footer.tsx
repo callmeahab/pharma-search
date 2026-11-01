@@ -1,4 +1,5 @@
 import React from "react";
+import CookieSettingsButton from "./CookieSettingsButton";
 import { Instagram, Facebook, Share2 } from "lucide-react";
 import Link from "next/link";
 import { Copyright } from "lucide-react";
@@ -111,9 +112,10 @@ const Footer = () => {
 
         <div className="border-t border-gray-200 mt-8 pt-6 text-center text-gray-500 dark:text-gray-400 text-sm dark:border-gray-700">
           <p className="flex items-center justify-center gap-1">
-            <Copyright size={16} /> Copyright {new Date().getFullYear()}{" "}
+            <Copyright size={16} /> Copyright 2025{" "}
             Apošteka. Sva prava zadržana.
           </p>
+          <CookieSettingsButton />
         </div>
       </div>
     </footer>

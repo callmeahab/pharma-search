@@ -24,9 +24,7 @@ export type { ProductGroup, SearchResult, BackendProduct as Product };
 
 function jsonApiBase(): string {
   if (typeof window === "undefined") return "";
-  return process.env.NODE_ENV === "production"
-    ? window.location.origin
-    : "http://localhost:50051";
+  return window.location.origin;
 }
 
 export interface AutocompleteResult {

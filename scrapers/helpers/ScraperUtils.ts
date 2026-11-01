@@ -2,6 +2,7 @@ import { HTTPRequest, Page } from 'puppeteer';
 import { createWorker } from 'tesseract.js';
 import puppeteer from 'puppeteer-extra';
 import { resolveChromeExecutable } from './chrome';
+import { assertUsableHtml, ScraperFailure } from './http';
 
 export class ScraperUtils {
   private static worker: Awaited<ReturnType<typeof createWorker>>;
@@ -27,20 +28,12 @@ export class ScraperUtils {
     height: 1080,
   };
 
-  // Full, current Chrome UAs (the old truncated strings were an obvious bot tell
-  // and weren't paired with client hints — see configurePage).
-  static readonly USER_AGENTS = [
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-  ];
   private static readonly BLOCKED_RESOURCE_TYPES = new Set([
     'eventsource',
     'font',
     'manifest',
     'media',
     'ping',
-    'preflight',
     'websocket',
   ]);
   private static readonly BLOCKED_URL_PATTERNS = [
@@ -94,19 +87,14 @@ export class ScraperUtils {
   }
 
   static async configurePage(page: Page): Promise<string[]> {
-    const userAgent =
-      this.USER_AGENTS[Math.floor(Math.random() * this.USER_AGENTS.length)];
+    // Keep the browser/stealth plugin's current UA and client hints together.
+    // Advertising Chrome 120/Windows while running another version/OS causes
+    // avoidable bot challenges and can break catalog API CORS preflights.
     await page.setExtraHTTPHeaders({
       'Accept-Language': 'sr-RS,sr;q=0.9,en-US;q=0.8,en;q=0.7',
       DNT: '1',
       'Upgrade-Insecure-Requests': '1',
-      'User-Agent': userAgent,
-      // Client hints matching the Chrome 120 UA above (their absence is a bot tell).
-      'sec-ch-ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
-      'sec-ch-ua-mobile': '?0',
-      'sec-ch-ua-platform': '"Windows"',
     });
-    await page.setUserAgent(userAgent);
     await page.setDefaultNavigationTimeout(this.NAVIGATION_TIMEOUT_MS);
     await page.setDefaultTimeout(this.DEFAULT_TIMEOUT_MS);
     await page.setBypassServiceWorker(true);
@@ -161,10 +149,14 @@ export class ScraperUtils {
       waitUntil?: 'domcontentloaded' | 'load' | 'networkidle0' | 'networkidle2';
     } = {},
   ) {
-    await page.goto(url, {
+    const response = await page.goto(url, {
       waitUntil: options.waitUntil || 'domcontentloaded',
       timeout: options.timeout || this.NAVIGATION_TIMEOUT_MS,
     });
+    if (response && response.status() >= 400 && response.status() !== 404) {
+      throw new ScraperFailure(`${url}: HTTP ${response.status()}`,
+        [401, 403].includes(response.status()) ? 'blocked' : 'unavailable', response.status());
+    }
 
     const settleMs = options.settleMs ?? this.DEFAULT_SETTLE_MS;
     if (settleMs > 0) {
@@ -243,6 +235,12 @@ export class ScraperUtils {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
+  static shouldAbortScrape(error: unknown): boolean {
+    if (error instanceof ScraperFailure) return true;
+    const message=error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+    return /Navigating frame was detached|Attempted to use detached Frame|Target closed|Session closed|browser has disconnected|Connection closed/i.test(message);
+  }
+
   static async autoScroll(page: Page): Promise<void> {
     await page.evaluate(async () => {
       await new Promise<void>((resolve) => {
@@ -277,6 +275,7 @@ export class ScraperUtils {
       ),
     }));
     const blob = `${info.title}\n${info.body}`.toLowerCase();
+    assertUsableHtml(`<title>${info.title}</title>${info.body}`, page.url());
     const markers = [
       'just a moment',
       'checking your browser',
@@ -287,9 +286,7 @@ export class ScraperUtils {
       'cf-mitigated',
     ];
     if (info.challenge || markers.some((m) => blob.includes(m))) {
-      throw new Error(
-        `${label} blocked by an anti-bot challenge (Cloudflare?) — title="${info.title.slice(0, 80)}". Needs a scraping proxy / CF solver.`,
-      );
+      throw new ScraperFailure(`${label}: source requires a browser challenge (title="${info.title.slice(0, 80)}")`, 'blocked');
     }
   }
 }

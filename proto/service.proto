@@ -30,7 +30,7 @@ message HealthResponse { string status = 1; }
 
 message AutocompleteRequest { string q = 1; int32 limit = 2; }
 message AutocompleteSuggestion { string id = 1; string title = 2; double price = 3; string vendor_name = 4; }
-message AutocompleteResponse { repeated AutocompleteSuggestion suggestions = 1; string query = 2; int32 limit = 3; }
+message AutocompleteResponse { repeated AutocompleteSuggestion suggestions = 1; string query = 2; int32 limit = 3; string corrected_query = 4; }
 
 message SearchRequest {
   string q = 1;
@@ -50,6 +50,18 @@ message SearchGroupsRequest {
   int32 offset = 3;
   repeated string brand_names = 4;
   repeated string categories = 5;
+  repeated string vendor_names = 6;
+  repeated string forms = 7;
+  repeated int32 quantities = 8;
+  repeated string dosages = 9;
+  double min_price = 10;
+  double max_price = 11;
+  string sort = 12;
+  string cursor = 13;
+  string family_id = 14;
+  string sku_id = 15;
+  bool include_all_offers = 16;
+  bool in_stock_only = 17;
 }
 message FacetsRequest {}
 message PriceComparisonRequest { string q = 1; }
@@ -76,6 +88,15 @@ message ProductGroup {
   int32 product_count = 6;
   double dosage_value = 7;
   string dosage_unit = 8;
+  repeated Product offers = 9;
+  string family_id = 10;
+  bool comparable = 11;
+  string match_method = 12;
+  double unit_price_min = 13;
+  string unit_label = 14;
+  bool details_complete = 15;
+  string category = 16;
+  string brand = 17;
 }
 
 message Product {
@@ -95,6 +116,10 @@ message Product {
   int32 rank = 14;
   string price_updated_at = 15;  // when this offer's price was last retrieved (ISO 8601)
   string category = 16;          // canonical product category (for display/debug)
+  string availability = 17;      // available, unavailable, or unknown (not inferred from price)
+  double volume_value = 18;
+  string volume_unit = 19;
+  double unit_price = 20;
 }
 
 message PriceRange {
@@ -108,6 +133,15 @@ message SearchMetadata {
   int32 total_groups = 2;
   string search_type_used = 3;
   map<string, FacetValues> facets = 4;
+  string corrected_query = 5;
+  string original_query = 6;
+  string next_cursor = 7;
+  string catalog_version = 8;
+  double price_min = 9;
+  double price_max = 10;
+  string facet_grain = 11;
+  string request_id = 12;
+  double processing_time_ms = 13;
 }
 
 message FacetValues {

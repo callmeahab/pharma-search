@@ -1,7 +1,9 @@
 import { spawn } from 'node:child_process';
-import { appendFile, mkdir, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, mkdtemp, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { resolveChromeExecutable } from './helpers/chrome';
+import { parseCSVRecords, validSnapshot } from './helpers/csv';
+import type { ChildProcess } from 'node:child_process';
 
 const allScrapers = [
   'ananas1.ts',
@@ -92,7 +94,7 @@ const allScrapers = [
 ] as const;
 
 const CONCURRENCY = parsePositiveInt(process.env.SCRAPER_CONCURRENCY, 6);
-const MAX_RETRIES = parsePositiveInt(process.env.SCRAPER_RETRIES, 1);
+const MAX_RETRIES = Math.max(0, Number.parseInt(process.env.SCRAPER_RETRIES || '1', 10) || 0);
 const SCRAPER_TIMEOUT_MS = parsePositiveInt(
   process.env.SCRAPER_TIMEOUT_MS,
   60 * 60 * 1000,
@@ -104,7 +106,9 @@ const SCRAPER_FILTER = process.env.SCRAPER_FILTER?.trim().toLowerCase() || '';
 const FAILURE_ALERT_RATIO = parseFloat(process.env.SCRAPER_FAILURE_ALERT_RATIO || '0.1');
 const ALERT_WEBHOOK = process.env.SCRAPER_ALERT_WEBHOOK?.trim() || '';
 
-type ScraperStatus = 'ok' | 'empty' | 'error' | 'timeout';
+type ScraperStatus = 'ok' | 'empty' | 'error' | 'timeout' | 'blocked' | 'unavailable' | 'incomplete';
+const ownedChildren = new Set<ChildProcess>();
+let shutdownSignal: NodeJS.Signals | undefined;
 
 interface ScraperResult {
   scraper: string;
@@ -138,13 +142,15 @@ function killGroup(proc: { pid?: number; kill: (s: NodeJS.Signals) => void }, si
   }
 }
 
-// Safety net after a run: reap any orphaned headless Chromium left by crashes.
-async function killOrphanChrome() {
-  await new Promise<void>((resolve) => {
-    const p = spawn('pkill', ['-f', 'chrome.*--headless'], { stdio: 'ignore' });
-    p.on('error', () => resolve());
-    p.on('close', () => resolve());
-  });
+function stopOwnedScrapers(signal: NodeJS.Signals) {
+  if (shutdownSignal) return;
+  shutdownSignal = signal;
+  const children = [...ownedChildren];
+  for (const child of children) killGroup(child, 'SIGTERM');
+  setTimeout(() => {
+    for (const child of children) killGroup(child, 'SIGKILL');
+    process.exit(signal === 'SIGINT' ? 130 : 143);
+  }, 5000).unref();
 }
 
 // Best-effort failure alert (Slack-style webhook). No-op if SCRAPER_ALERT_WEBHOOK unset.
@@ -164,12 +170,12 @@ async function sendAlert(summary: string, failures: ScraperResult[]) {
   }
 }
 
-function getSelectedScrapers() {
-  if (!SCRAPER_FILTER) {
+export function getSelectedScrapers(selection = SCRAPER_FILTER) {
+  if (!selection) {
     return [...allScrapers];
   }
 
-  const filters = SCRAPER_FILTER
+  const filters = selection.toLowerCase()
     .split(',')
     .map((value) => value.trim())
     .filter(Boolean);
@@ -177,7 +183,7 @@ function getSelectedScrapers() {
   return allScrapers.filter((scraper) =>
     filters.some(
       (filter) =>
-        scraper.toLowerCase().includes(filter) ||
+        (filter.endsWith('.ts') ? scraper.toLowerCase() === filter : scraper.toLowerCase().includes(filter)) ||
         scraper.replace(/\.ts$/, '').toLowerCase() === filter,
     ),
   );
@@ -218,26 +224,30 @@ function extractProductCount(output: string) {
   return 0;
 }
 
-function runBunScript(
+export function runBunScript(
   script: string,
   label: string,
   timeoutMs = SCRAPER_TIMEOUT_MS,
+  environment: Record<string, string> = {},
 ): Promise<CleanupResult & { products: number; timedOut: boolean }> {
   return new Promise((resolve) => {
     // detached:true puts the scraper (and the Chromium it launches) in its own
     // process group so we can kill the WHOLE group on timeout — otherwise only
     // bun dies and Chromium is orphaned (memory leak, runs exceeding the cap).
-    const proc = spawn('bun', [`./${script}`], {
+    const proc = spawn('bun', [path.resolve(script)], {
       cwd: process.cwd(),
       stdio: ['ignore', 'pipe', 'pipe'],
       detached: true,
+      env: { ...process.env, SCRAPER_EXIT_ON_CLOSE: '1', ...environment },
     });
+    ownedChildren.add(proc);
 
     let output = '';
     let timedOut = false;
     let timeoutHandle: NodeJS.Timeout | undefined;
 
     const finish = (exitCode: number | null) => {
+      ownedChildren.delete(proc);
       if (timeoutHandle) {
         clearTimeout(timeoutHandle);
       }
@@ -256,10 +266,8 @@ function runBunScript(
         console.error(`⏰ ${label} exceeded ${formatDuration(timeoutMs)}. Stopping...`);
         killGroup(proc, 'SIGTERM');
         setTimeout(() => {
-          if (proc.exitCode === null && proc.signalCode === null) {
-            killGroup(proc, 'SIGKILL');
-          }
-        }, 5000);
+          if (ownedChildren.has(proc)) killGroup(proc, 'SIGKILL');
+        }, 5000).unref();
       }, timeoutMs);
     }
 
@@ -283,23 +291,83 @@ function runBunScript(
     proc.on('close', (code) => {
       finish(code);
     });
+    // A browser child can keep inherited output pipes open after Bun exits.
+    // Reap this scraper's process group, never unrelated headless browsers.
+    proc.on('exit', () => {
+      killGroup(proc, 'SIGTERM');
+      setTimeout(() => {
+        if (ownedChildren.has(proc)) killGroup(proc, 'SIGKILL');
+      }, 1000).unref();
+    });
   });
 }
 
-async function runScraper(scraper: string, attempt: number): Promise<ScraperResult> {
+export function classifyScraperResult(result: { output: string; exitCode: number; products: number; timedOut: boolean }): ScraperStatus {
+  if (result.timedOut) return 'timeout';
+  const failures = [...result.output.matchAll(/^SCRAPER_FAILURE (.+)$/gm)];
+  for (const match of failures.reverse()) {
+    try {
+      const status = JSON.parse(match[1]).status;
+      if (['blocked', 'unavailable', 'incomplete', 'error'].includes(status)) return status;
+    } catch { /* an unstructured error still follows the normal exit-code path */ }
+  }
+  if (/Navigating frame was detached|Attempted to use detached Frame|Target closed|Session closed|browser has disconnected|Connection closed/i.test(result.output)) return 'incomplete';
+  if (result.exitCode !== 0) return 'error';
+  return result.products > 0 ? 'ok' : 'empty';
+}
+
+export async function runScraper(scraper: string, attempt: number): Promise<ScraperResult> {
   const startTime = new Date();
   console.log(`🚀 Starting: ${scraper} (attempt ${attempt}/${MAX_RETRIES + 1})`);
-  const result = await runBunScript(scraper, scraper);
+  const outputDir = path.resolve(process.env.SCRAPER_OUTPUT_DIR || 'output');
+  const pendingRoot = path.join(outputDir, '.pending');
+  await mkdir(pendingRoot, { recursive: true });
+  const pendingDir = await mkdtemp(path.join(pendingRoot, `${path.basename(scraper, '.ts')}-`));
+  const result = await runBunScript(scraper, scraper, SCRAPER_TIMEOUT_MS, { SCRAPER_OUTPUT_DIR: pendingDir });
   const duration = Date.now() - startTime.getTime();
 
   // Distinguish the failure modes — they need different handling:
   //   timeout → likely repeats, don't retry; empty → deterministic (broken
   //   selector / block), don't retry; error → may be transient, retry once.
-  let status: ScraperStatus;
-  if (result.timedOut) status = 'timeout';
-  else if (result.exitCode !== 0) status = 'error';
-  else if (result.products === 0) status = 'empty';
-  else status = 'ok';
+  let status = classifyScraperResult(result);
+  if (status === 'ok') {
+    const files = (await readdir(pendingDir)).filter(file => file.endsWith('.csv'));
+    let rows = 0;
+    let pricedRows = 0;
+    for (const file of files) {
+      const records = parseCSVRecords(await readFile(path.join(pendingDir, file), 'utf8'));
+      if (!validSnapshot(records)) {
+        status = 'incomplete';
+        break;
+      }
+      rows += records.length - 1;
+      pricedRows += records.slice(1).filter(record => Number(record[1]) > 0 && /^https?:\/\//.test(record[3])).length;
+    }
+    if (!files.length || rows !== result.products || !pricedRows) status = 'incomplete';
+    if (status === 'ok') {
+      for (const file of files) await rename(path.join(pendingDir, file), path.join(outputDir, file));
+      await rm(pendingDir, { recursive: true });
+    } else {
+      console.error(`${scraper}: snapshot validation failed; previous CSV retained`);
+    }
+  }
+  // Persist structured status even when the source is blocked. Never store raw logs.
+  const vendors = new Set<string>();
+  for (const file of (await readdir(pendingDir).catch(() => [] as string[])).filter(file => file.endsWith('.csv'))) {
+    const records = parseCSVRecords(await readFile(path.join(pendingDir, file), 'utf8'));
+    for (const row of records.slice(1)) if (row[6]) vendors.add(row[6]);
+  }
+  // Successful files have moved to outputDir; recover their vendor from this run.
+  if (status === 'ok') for (const file of (await readdir(outputDir)).filter(file => file.endsWith('.csv') && file.toLowerCase().includes(`_${path.basename(scraper, '.ts').toLowerCase()}_`))) {
+    const records = parseCSVRecords(await readFile(path.join(outputDir, file), 'utf8'));
+    for (const row of records.slice(1)) if (row[6]) vendors.add(row[6]);
+  }
+  const runsDir = path.join(outputDir, '.runs');
+  await mkdir(runsDir, { recursive: true });
+  await writeFile(path.join(runsDir, `${startTime.getTime()}-${path.basename(scraper)}-${attempt}.json`), JSON.stringify({
+    id: `${startTime.getTime()}-${scraper}-${attempt}`, scraper, vendorNames: [...vendors],
+    startedAt: startTime.toISOString(), finishedAt: new Date().toISOString(), status, products: result.products, attempt,
+  }));
   const exitCode = status === 'ok' ? 0 : 1;
 
   if (status === 'ok') {
@@ -325,8 +393,8 @@ async function runQueue(scrapers: string[]) {
   const running = new Set<Promise<void>>();
   const finalResults = new Map<string, ScraperResult>();
 
-  while (queue.length > 0 || running.size > 0) {
-    while (running.size < CONCURRENCY && queue.length > 0) {
+  while ((!shutdownSignal && queue.length > 0) || running.size > 0) {
+    while (!shutdownSignal && running.size < CONCURRENCY && queue.length > 0) {
       const next = queue.shift()!;
       const runPromise = runScraper(next.scraper, next.attempt).then((result) => {
         running.delete(runPromise);
@@ -335,7 +403,7 @@ async function runQueue(scrapers: string[]) {
         // Retry only transient process errors. Timeouts repeat and empty results
         // are deterministic (broken selector / block) — retrying them just wastes
         // ~15 min each, so flag them for a code fix instead.
-        if (result.status === 'error' && next.attempt <= MAX_RETRIES) {
+        if (!shutdownSignal && result.status === 'error' && next.attempt <= MAX_RETRIES) {
           queue.push({ scraper: result.scraper, attempt: next.attempt + 1 });
         }
       });
@@ -475,6 +543,10 @@ async function main() {
 
   const startMemory = process.memoryUsage();
   const results = await runQueue(scrapers);
+  if (shutdownSignal) {
+    process.exitCode = shutdownSignal === 'SIGINT' ? 130 : 143;
+    return;
+  }
   const totalRuntime = Date.now() - globalStartTime;
   const totalProducts = results
     .filter((result) => result.exitCode === 0)
@@ -496,9 +568,6 @@ async function main() {
     );
   }
 
-  // Reap any orphaned headless Chromium from crashes/timeouts.
-  await killOrphanChrome();
-
   // Alert + signal the scheduler when too many scrapers fail (so a silent outage
   // can't go unnoticed for months again).
   const failureRate = results.length > 0 ? failures.length / results.length : 0;
@@ -519,12 +588,19 @@ async function main() {
   });
 }
 
-main()
-  .then(() => {
-    console.log('\n✅ All scrapers completed');
-    process.exit(process.exitCode ?? 0);
-  })
-  .catch((error) => {
-    console.error('❌ Error running scrapers:', error);
-    process.exit(1);
+if (import.meta.main) {
+  process.once('SIGINT', () => stopOwnedScrapers('SIGINT'));
+  process.once('SIGTERM', () => stopOwnedScrapers('SIGTERM'));
+  process.once('exit', () => {
+    for (const child of ownedChildren) killGroup(child, 'SIGKILL');
   });
+  main()
+    .then(() => {
+      console.log('\n✅ All scrapers completed');
+      process.exit(process.exitCode ?? 0);
+    })
+    .catch((error) => {
+      console.error('❌ Error running scrapers:', error);
+      process.exit(1);
+    });
+}

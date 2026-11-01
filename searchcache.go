@@ -14,6 +14,7 @@ import (
 // cachedSearchResult is a fully grouped + filtered search result, ready to paginate.
 // The same entry is shared (read-only) by the unary and streaming handlers.
 type cachedSearchResult struct {
+	catalog   *catalogPage
 	groups    []map[string]any
 	facets    map[string]*pb.FacetValues
 	totalHits int
@@ -96,7 +97,7 @@ func (c *searchResultCache) put(key string, res *cachedSearchResult) {
 		c.items[key] = el
 		c.curProducts += res.products
 	}
-	for c.curProducts > c.maxProducts && c.ll.Len() > 1 {
+	for (c.curProducts > c.maxProducts || c.ll.Len() > 256) && c.ll.Len() > 1 {
 		c.removeElement(c.ll.Back())
 	}
 }
@@ -127,7 +128,7 @@ func (c *searchResultCache) sweepExpired() {
 }
 
 type cacheStats struct {
-	hits, misses     uint64
+	hits, misses      uint64
 	entries, products int
 }
 
@@ -153,12 +154,12 @@ func getEnvInt(key string, def int) int {
 // keyed by the normalized query makes the common case instant. Entries are tiny (≤N
 // suggestions), so this is bounded by entry count rather than a product budget.
 type autocompleteCache struct {
-	mu    sync.Mutex
-	ll    *list.List
-	items map[string]*list.Element
-	max   int
-	ttl   time.Duration
-	hits  atomic.Uint64
+	mu     sync.Mutex
+	ll     *list.List
+	items  map[string]*list.Element
+	max    int
+	ttl    time.Duration
+	hits   atomic.Uint64
 	misses atomic.Uint64
 }
 

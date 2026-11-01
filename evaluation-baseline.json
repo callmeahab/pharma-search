@@ -1,0 +1,1941 @@
+{
+  "evaluated_at": "2026-11-01T15:59:32.217814+00:00",
+  "grain": "Vendor source offer; not a distinct SKU",
+  "catalog": {
+    "products": 225617,
+    "tokens": 225531,
+    "core": 216311,
+    "canonical": 5571,
+    "brand": 167091,
+    "form": 84579,
+    "quantity": 50096,
+    "category": 171960,
+    "no_thumbnail": 2754,
+    "older_7_days": 2079,
+    "older_30_days": 2079,
+    "scraped_today": 223538,
+    "invalid_prices": 0
+  },
+  "local_queries": [
+    {
+      "query": "fervex",
+      "required_tokens": [
+        "fervex"
+      ],
+      "retrieved_offers": 17,
+      "groups": 10,
+      "retrieval_ms": 21.474084,
+      "grouping_ms": 0.79325,
+      "top_groups": [
+        {
+          "key": "core::fervex phyto",
+          "display": "Fervex Phyto",
+          "vendors": 3,
+          "raw_offers": 3,
+          "price_range": {
+            "avg": 587.3333333333334,
+            "max": 650,
+            "min": 543
+          }
+        },
+        {
+          "key": "core::fervex phyto::30ml::form:sprej",
+          "display": "Fervex Phyto 30 ML Sprej",
+          "vendors": 3,
+          "raw_offers": 3,
+          "price_range": {
+            "avg": 749.3333333333334,
+            "max": 829,
+            "min": 693
+          }
+        },
+        {
+          "key": "core::fervex phyto::120ml::form:sirup",
+          "display": "Fervex Phyto 120 ML Sirup",
+          "vendors": 2,
+          "raw_offers": 2,
+          "price_range": {
+            "avg": 716,
+            "max": 780,
+            "min": 652
+          }
+        }
+      ]
+    },
+    {
+      "query": "ferveks",
+      "required_tokens": [
+        "ferveks"
+      ],
+      "retrieved_offers": 21,
+      "groups": 12,
+      "retrieval_ms": 26.925125,
+      "grouping_ms": 0.49775,
+      "top_groups": [
+        {
+          "key": "core::fervex phyto::30ml::form:sprej",
+          "display": "Fervex Phyto 30 ML Sprej",
+          "vendors": 3,
+          "raw_offers": 3,
+          "price_range": {
+            "avg": 749.3333333333334,
+            "max": 829,
+            "min": 693
+          }
+        },
+        {
+          "key": "core::fervex phyto",
+          "display": "Fervex Phyto",
+          "vendors": 3,
+          "raw_offers": 3,
+          "price_range": {
+            "avg": 587.3333333333334,
+            "max": 650,
+            "min": 543
+          }
+        },
+        {
+          "key": "ing:kurkuma::form:kapsule",
+          "display": "Kurkuma kapsule",
+          "vendors": 3,
+          "raw_offers": 3,
+          "price_range": {
+            "avg": 3798,
+            "max": 4009,
+            "min": 3640
+          }
+        }
+      ]
+    },
+    {
+      "query": "fervex za decu",
+      "required_tokens": [
+        "babycare",
+        "fervex"
+      ],
+      "retrieved_offers": 0,
+      "groups": 0,
+      "retrieval_ms": 4.365125,
+      "grouping_ms": 0,
+      "top_groups": []
+    },
+    {
+      "query": "fervex deca",
+      "required_tokens": [
+        "babycare",
+        "fervex"
+      ],
+      "retrieved_offers": 0,
+      "groups": 0,
+      "retrieval_ms": 1.7409999999999999,
+      "grouping_ms": 0,
+      "top_groups": []
+    },
+    {
+      "query": "magnezijum",
+      "required_tokens": [
+        "magnezijum"
+      ],
+      "retrieved_offers": 2026,
+      "groups": 266,
+      "retrieval_ms": 37.763166,
+      "grouping_ms": 18.957958,
+      "top_groups": [
+        {
+          "key": "ing:magnezijum::form:kapsule",
+          "display": "Magnezijum",
+          "vendors": 63,
+          "raw_offers": 484,
+          "price_range": {
+            "avg": 938.2857142857143,
+            "max": 3300,
+            "min": 20
+          }
+        },
+        {
+          "key": "ing:magnezijum::form:tablete",
+          "display": "Magnezijum tablete",
+          "vendors": 39,
+          "raw_offers": 150,
+          "price_range": {
+            "avg": 1179.2564102564102,
+            "max": 4700,
+            "min": 180
+          }
+        },
+        {
+          "key": "ing:magnezijum::250mg::form:tablete",
+          "display": "Magnezijum 250 MG",
+          "vendors": 31,
+          "raw_offers": 39,
+          "price_range": {
+            "avg": 1413.3225806451612,
+            "max": 1649,
+            "min": 180
+          }
+        }
+      ]
+    },
+    {
+      "query": "magnesijum",
+      "required_tokens": [
+        "magnezijum"
+      ],
+      "retrieved_offers": 2024,
+      "groups": 264,
+      "retrieval_ms": 30.922959,
+      "grouping_ms": 24.130499999999998,
+      "top_groups": [
+        {
+          "key": "ing:magnezijum::form:kapsule",
+          "display": "Magnezijum",
+          "vendors": 63,
+          "raw_offers": 484,
+          "price_range": {
+            "avg": 938.2857142857143,
+            "max": 3300,
+            "min": 20
+          }
+        },
+        {
+          "key": "ing:magnezijum::form:tablete",
+          "display": "Magnezijum tablete",
+          "vendors": 39,
+          "raw_offers": 150,
+          "price_range": {
+            "avg": 1179.2564102564102,
+            "max": 4700,
+            "min": 180
+          }
+        },
+        {
+          "key": "ing:magnezijum::250mg::form:tablete",
+          "display": "Magnezijum 250 MG",
+          "vendors": 31,
+          "raw_offers": 39,
+          "price_range": {
+            "avg": 1413.3225806451612,
+            "max": 1649,
+            "min": 180
+          }
+        }
+      ]
+    },
+    {
+      "query": "magnezijum citrat",
+      "required_tokens": [
+        "magnezijum"
+      ],
+      "retrieved_offers": 2024,
+      "groups": 264,
+      "retrieval_ms": 35.557375,
+      "grouping_ms": 15.989209,
+      "top_groups": [
+        {
+          "key": "ing:magnezijum::form:kapsule",
+          "display": "Magnezijum",
+          "vendors": 63,
+          "raw_offers": 484,
+          "price_range": {
+            "avg": 938.2857142857143,
+            "max": 3300,
+            "min": 20
+          }
+        },
+        {
+          "key": "ing:magnezijum::form:tablete",
+          "display": "Magnezijum tablete",
+          "vendors": 39,
+          "raw_offers": 150,
+          "price_range": {
+            "avg": 1179.2564102564102,
+            "max": 4700,
+            "min": 180
+          }
+        },
+        {
+          "key": "ing:magnezijum::250mg::form:tablete",
+          "display": "Magnezijum 250 MG",
+          "vendors": 31,
+          "raw_offers": 39,
+          "price_range": {
+            "avg": 1413.3225806451612,
+            "max": 1649,
+            "min": 180
+          }
+        }
+      ]
+    },
+    {
+      "query": "magnezijum bisglicinat",
+      "required_tokens": [
+        "magnezijum"
+      ],
+      "retrieved_offers": 2024,
+      "groups": 264,
+      "retrieval_ms": 38.859291999999996,
+      "grouping_ms": 16.120041,
+      "top_groups": [
+        {
+          "key": "ing:magnezijum::form:kapsule",
+          "display": "Magnezijum",
+          "vendors": 63,
+          "raw_offers": 484,
+          "price_range": {
+            "avg": 938.2857142857143,
+            "max": 3300,
+            "min": 20
+          }
+        },
+        {
+          "key": "ing:magnezijum::form:tablete",
+          "display": "Magnezijum tablete",
+          "vendors": 39,
+          "raw_offers": 150,
+          "price_range": {
+            "avg": 1179.2564102564102,
+            "max": 4700,
+            "min": 180
+          }
+        },
+        {
+          "key": "ing:magnezijum::250mg::form:tablete",
+          "display": "Magnezijum 250 MG",
+          "vendors": 31,
+          "raw_offers": 39,
+          "price_range": {
+            "avg": 1413.3225806451612,
+            "max": 1649,
+            "min": 180
+          }
+        }
+      ]
+    },
+    {
+      "query": "магнезијум",
+      "required_tokens": [
+        "magnezijum"
+      ],
+      "retrieved_offers": 2024,
+      "groups": 264,
+      "retrieval_ms": 30.753249999999998,
+      "grouping_ms": 16.102333,
+      "top_groups": [
+        {
+          "key": "ing:magnezijum::form:kapsule",
+          "display": "Magnezijum",
+          "vendors": 63,
+          "raw_offers": 484,
+          "price_range": {
+            "avg": 938.2857142857143,
+            "max": 3300,
+            "min": 20
+          }
+        },
+        {
+          "key": "ing:magnezijum::form:tablete",
+          "display": "Magnezijum tablete",
+          "vendors": 39,
+          "raw_offers": 150,
+          "price_range": {
+            "avg": 1179.2564102564102,
+            "max": 4700,
+            "min": 180
+          }
+        },
+        {
+          "key": "ing:magnezijum::250mg::form:tablete",
+          "display": "Magnezijum 250 MG",
+          "vendors": 31,
+          "raw_offers": 39,
+          "price_range": {
+            "avg": 1413.3225806451612,
+            "max": 1649,
+            "min": 180
+          }
+        }
+      ]
+    },
+    {
+      "query": "vitamin d",
+      "required_tokens": [
+        "vitamind3"
+      ],
+      "retrieved_offers": 2327,
+      "groups": 199,
+      "retrieval_ms": 48.530542000000004,
+      "grouping_ms": 14.570625,
+      "top_groups": [
+        {
+          "key": "ing:vitamin d3::form:kapsule",
+          "display": "Vitamin D3 kapsule",
+          "vendors": 54,
+          "raw_offers": 245,
+          "price_range": {
+            "avg": 864.8518518518518,
+            "max": 4560,
+            "min": 197
+          }
+        },
+        {
+          "key": "ing:vitamin d3::1000iu::form:kapsule",
+          "display": "Vitamin D3 1000 IU kapsule",
+          "vendors": 41,
+          "raw_offers": 128,
+          "price_range": {
+            "avg": 827.8780487804878,
+            "max": 2300,
+            "min": 124
+          }
+        },
+        {
+          "key": "ing:vitamin d3::2000iu::form:tablete",
+          "display": "Vitamin D3 2000 IU tablete",
+          "vendors": 34,
+          "raw_offers": 126,
+          "price_range": {
+            "avg": 819.6470588235294,
+            "max": 1768,
+            "min": 320
+          }
+        }
+      ]
+    },
+    {
+      "query": "vitamin d3 2000",
+      "required_tokens": [
+        "2000",
+        "vitamind3"
+      ],
+      "retrieved_offers": 452,
+      "groups": 22,
+      "retrieval_ms": 11.280667,
+      "grouping_ms": 2.492834,
+      "top_groups": [
+        {
+          "key": "ing:vitamin d3::2000iu::form:tablete",
+          "display": "Vitamin D3 2000 IU tablete",
+          "vendors": 34,
+          "raw_offers": 126,
+          "price_range": {
+            "avg": 819.6470588235294,
+            "max": 1768,
+            "min": 320
+          }
+        },
+        {
+          "key": "ing:vitamin d3::2000iu::form:mikrotableta",
+          "display": "Vitamin D3 2000 IU mikrotableta",
+          "vendors": 9,
+          "raw_offers": 12,
+          "price_range": {
+            "avg": 746.7777777777778,
+            "max": 880,
+            "min": 605
+          }
+        },
+        {
+          "key": "ing:vitamin d3::2000iu::form:kapi",
+          "display": "Vitamin D3 2000 IU kapi",
+          "vendors": 9,
+          "raw_offers": 9,
+          "price_range": {
+            "avg": 826.1111111111111,
+            "max": 1380,
+            "min": 514
+          }
+        }
+      ]
+    },
+    {
+      "query": "vitamin d3 4000",
+      "required_tokens": [
+        "4000",
+        "vitamind3"
+      ],
+      "retrieved_offers": 120,
+      "groups": 9,
+      "retrieval_ms": 5.669208,
+      "grouping_ms": 0.825292,
+      "top_groups": [
+        {
+          "key": "ing:vitamin d3::4000iu::form:tablete",
+          "display": "Vitamin D3 4000 IU",
+          "vendors": 34,
+          "raw_offers": 54,
+          "price_range": {
+            "avg": 1400.6176470588234,
+            "max": 2210,
+            "min": 499
+          }
+        },
+        {
+          "key": "ing:vitamin d3::4000iu::form:kapsule",
+          "display": "Vitamin D3 4000 IU kapsule",
+          "vendors": 23,
+          "raw_offers": 53,
+          "price_range": {
+            "avg": 959.5652173913044,
+            "max": 2190,
+            "min": 195
+          }
+        },
+        {
+          "key": "ing:vitamin d3::4000iu::form:sprej",
+          "display": "Vitamin D3 4000 IU sprej",
+          "vendors": 3,
+          "raw_offers": 3,
+          "price_range": {
+            "avg": 2397.3333333333335,
+            "max": 2907,
+            "min": 1823
+          }
+        }
+      ]
+    },
+    {
+      "query": "solgar vitamin d3 2000 60",
+      "required_tokens": [
+        "2000",
+        "60",
+        "solgar",
+        "vitamind3"
+      ],
+      "retrieved_offers": 0,
+      "groups": 0,
+      "retrieval_ms": 7.368792,
+      "grouping_ms": 0.000167,
+      "top_groups": []
+    },
+    {
+      "query": "solgar vitamin d3 2000",
+      "required_tokens": [
+        "2000",
+        "solgar",
+        "vitamind3"
+      ],
+      "retrieved_offers": 0,
+      "groups": 0,
+      "retrieval_ms": 7.2775419999999995,
+      "grouping_ms": 4.2e-05,
+      "top_groups": []
+    },
+    {
+      "query": "solgar d3 2000",
+      "required_tokens": [
+        "2000",
+        "solgar",
+        "vitamind3"
+      ],
+      "retrieved_offers": 0,
+      "groups": 0,
+      "retrieval_ms": 3.005125,
+      "grouping_ms": 4.2e-05,
+      "top_groups": []
+    },
+    {
+      "query": "vitamin d3 solgar",
+      "required_tokens": [
+        "solgar",
+        "vitamind3"
+      ],
+      "retrieved_offers": 85,
+      "groups": 7,
+      "retrieval_ms": 7.102291,
+      "grouping_ms": 0.5754999999999999,
+      "top_groups": [
+        {
+          "key": "ing:vitamin d3::400iu::form:kapsule",
+          "display": "Vitamin D3 400 IU kapsule",
+          "vendors": 19,
+          "raw_offers": 23,
+          "price_range": {
+            "avg": 1518.842105263158,
+            "max": 1850,
+            "min": 1100
+          }
+        },
+        {
+          "key": "ing:vitamin d3::2500iu::form:rastvor",
+          "display": "Vitamin D3 2500 IU rastvor",
+          "vendors": 16,
+          "raw_offers": 18,
+          "price_range": {
+            "avg": 2926.125,
+            "max": 3490,
+            "min": 2100
+          }
+        },
+        {
+          "key": "ing:vitamin d3::form:kapsule",
+          "display": "Vitamin D3 kapsule",
+          "vendors": 7,
+          "raw_offers": 7,
+          "price_range": {
+            "avg": 1596.5714285714287,
+            "max": 1842,
+            "min": 1262
+          }
+        }
+      ]
+    },
+    {
+      "query": "cink solgar",
+      "required_tokens": [
+        "cink",
+        "solgar"
+      ],
+      "retrieved_offers": 88,
+      "groups": 7,
+      "retrieval_ms": 4.330959,
+      "grouping_ms": 0.521917,
+      "top_groups": [
+        {
+          "key": "ing:cink::form:tablete",
+          "display": "Cink tablete",
+          "vendors": 29,
+          "raw_offers": 47,
+          "price_range": {
+            "avg": 2252.6206896551726,
+            "max": 2632,
+            "min": 1600
+          }
+        },
+        {
+          "key": "ing:cink+kalcijum+magnezijum::form:tablete",
+          "display": "Cink + Kalcijum + Magnezijum tablete",
+          "vendors": 19,
+          "raw_offers": 19,
+          "price_range": {
+            "avg": 1914.2105263157894,
+            "max": 2256,
+            "min": 1450
+          }
+        },
+        {
+          "key": "ing:cink+kalcijum::form:tablete",
+          "display": "Cink + Kalcijum",
+          "vendors": 7,
+          "raw_offers": 7,
+          "price_range": {
+            "avg": 1967.2857142857142,
+            "max": 2250,
+            "min": 1750
+          }
+        }
+      ]
+    },
+    {
+      "query": "solgar cink",
+      "required_tokens": [
+        "cink",
+        "solgar"
+      ],
+      "retrieved_offers": 88,
+      "groups": 7,
+      "retrieval_ms": 3.44325,
+      "grouping_ms": 0.477084,
+      "top_groups": [
+        {
+          "key": "ing:cink::form:tablete",
+          "display": "Cink tablete",
+          "vendors": 29,
+          "raw_offers": 47,
+          "price_range": {
+            "avg": 2252.6206896551726,
+            "max": 2632,
+            "min": 1600
+          }
+        },
+        {
+          "key": "ing:cink+kalcijum+magnezijum::form:tablete",
+          "display": "Cink + Kalcijum + Magnezijum tablete",
+          "vendors": 19,
+          "raw_offers": 19,
+          "price_range": {
+            "avg": 1914.2105263157894,
+            "max": 2256,
+            "min": 1450
+          }
+        },
+        {
+          "key": "ing:cink+kalcijum::form:tablete",
+          "display": "Cink + Kalcijum",
+          "vendors": 7,
+          "raw_offers": 7,
+          "price_range": {
+            "avg": 1967.2857142857142,
+            "max": 2250,
+            "min": 1750
+          }
+        }
+      ]
+    },
+    {
+      "query": "brufen 400",
+      "required_tokens": [
+        "400",
+        "brufen"
+      ],
+      "retrieved_offers": 4,
+      "groups": 4,
+      "retrieval_ms": 1.535541,
+      "grouping_ms": 0.197667,
+      "top_groups": [
+        {
+          "key": "core::brufen::400mg",
+          "display": "Brufen 400 MG",
+          "vendors": 1,
+          "raw_offers": 1,
+          "price_range": {
+            "avg": 424,
+            "max": 424,
+            "min": 424
+          }
+        },
+        {
+          "key": "core::brufen::400mg::form:tablete",
+          "display": "Brufen 400 MG Tablete",
+          "vendors": 1,
+          "raw_offers": 1,
+          "price_range": {
+            "avg": 368,
+            "max": 368,
+            "min": 368
+          }
+        },
+        {
+          "key": "prod::brufen vivo::400mg::form:tablete",
+          "display": "Brufen Vivo 400 MG tablete",
+          "vendors": 1,
+          "raw_offers": 1,
+          "price_range": {
+            "avg": 353,
+            "max": 353,
+            "min": 353
+          }
+        }
+      ]
+    },
+    {
+      "query": "paracetamol 500",
+      "required_tokens": [
+        "500",
+        "paracetamol"
+      ],
+      "retrieved_offers": 1,
+      "groups": 1,
+      "retrieval_ms": 3.506458,
+      "grouping_ms": 0.025415999999999998,
+      "top_groups": [
+        {
+          "key": "ing:paracetamol::500mg::form:tablete",
+          "display": "Paracetamol 500 MG tablete",
+          "vendors": 1,
+          "raw_offers": 1,
+          "price_range": {
+            "avg": 320,
+            "max": 320,
+            "min": 320
+          }
+        }
+      ]
+    },
+    {
+      "query": "eucerin urea 10 250ml",
+      "required_tokens": [
+        "10",
+        "250ml",
+        "eucerin",
+        "urea"
+      ],
+      "retrieved_offers": 22,
+      "groups": 5,
+      "retrieval_ms": 5.946542,
+      "grouping_ms": 0.280291,
+      "top_groups": [
+        {
+          "key": "sku::eucerin::urea::250ml::form:losion",
+          "display": "Eucerin Urea 250 ML losion",
+          "vendors": 3,
+          "raw_offers": 3,
+          "price_range": {
+            "avg": 1942.3333333333333,
+            "max": 2083,
+            "min": 1661
+          }
+        },
+        {
+          "key": "sku::eucerin::plus urea urearepair::250ml::form:losion",
+          "display": "Eucerin Plus Urea Urearepair 250 ML losion",
+          "vendors": 14,
+          "raw_offers": 14,
+          "price_range": {
+            "avg": 1900.857142857143,
+            "max": 2251,
+            "min": 1318
+          }
+        },
+        {
+          "key": "sku::eucerin::plus repair urea::250ml::form:losion",
+          "display": "Eucerin Plus Repair Urea 250 ML losion",
+          "vendors": 2,
+          "raw_offers": 2,
+          "price_range": {
+            "avg": 2156,
+            "max": 2174,
+            "min": 2138
+          }
+        }
+      ]
+    },
+    {
+      "query": "eucerin urea",
+      "required_tokens": [
+        "eucerin",
+        "urea"
+      ],
+      "retrieved_offers": 300,
+      "groups": 77,
+      "retrieval_ms": 7.741542,
+      "grouping_ms": 3.303833,
+      "top_groups": [
+        {
+          "key": "sku::eucerin::urea::150ml",
+          "display": "Eucerin Urea 150 ML",
+          "vendors": 2,
+          "raw_offers": 2,
+          "price_range": {
+            "avg": 1327.5,
+            "max": 1355,
+            "min": 1300
+          }
+        },
+        {
+          "key": "sku::eucerin::urea::50ml::form:krema",
+          "display": "Eucerin Urea 50 ML krema",
+          "vendors": 14,
+          "raw_offers": 26,
+          "price_range": {
+            "avg": 1892.857142857143,
+            "max": 2246,
+            "min": 1633
+          }
+        },
+        {
+          "key": "sku::eucerin::urea::form:krema",
+          "display": "Eucerin Urea krema",
+          "vendors": 4,
+          "raw_offers": 5,
+          "price_range": {
+            "avg": 1482.25,
+            "max": 1750,
+            "min": 1236
+          }
+        }
+      ]
+    },
+    {
+      "query": "la roche posay effaclar duo",
+      "required_tokens": [
+        "duo",
+        "effaclar",
+        "la",
+        "posay",
+        "roche"
+      ],
+      "retrieved_offers": 123,
+      "groups": 27,
+      "retrieval_ms": 9.872541,
+      "grouping_ms": 1.623125,
+      "top_groups": [
+        {
+          "key": "sku::la roche posay::duo effaclar::40ml",
+          "display": "La Roche Posay Duo Effaclar 40 ML",
+          "vendors": 18,
+          "raw_offers": 32,
+          "price_range": {
+            "avg": 2267.5555555555557,
+            "max": 2591,
+            "min": 1720
+          }
+        },
+        {
+          "key": "sku::la roche posay::duo effaclar",
+          "display": "La Roche Posay Duo Effaclar",
+          "vendors": 10,
+          "raw_offers": 10,
+          "price_range": {
+            "avg": 1158.7,
+            "max": 3180,
+            "min": 760
+          }
+        },
+        {
+          "key": "sku::la roche posay::duo effaclar::200ml",
+          "display": "La Roche Posay Duo Effaclar 200 ML",
+          "vendors": 2,
+          "raw_offers": 2,
+          "price_range": {
+            "avg": 1752.5,
+            "max": 1775,
+            "min": 1730
+          }
+        }
+      ]
+    },
+    {
+      "query": "pampers premium care 4",
+      "required_tokens": [
+        "care",
+        "diapers",
+        "premium"
+      ],
+      "retrieved_offers": 103,
+      "groups": 42,
+      "retrieval_ms": 6.378082999999999,
+      "grouping_ms": 2.276625,
+      "top_groups": [
+        {
+          "key": "core::pampers pelene",
+          "display": "Pampers Pelene",
+          "vendors": 7,
+          "raw_offers": 35,
+          "price_range": {
+            "avg": 1158,
+            "max": 2321,
+            "min": 29
+          }
+        },
+        {
+          "key": "core::pampers pelene kg",
+          "display": "Pampers Pelene Kg",
+          "vendors": 4,
+          "raw_offers": 6,
+          "price_range": {
+            "avg": 1937.25,
+            "max": 2266,
+            "min": 1799
+          }
+        },
+        {
+          "key": "core::pampers pelene::14000g",
+          "display": "Pampers Pelene 14000 G",
+          "vendors": 3,
+          "raw_offers": 3,
+          "price_range": {
+            "avg": 1960,
+            "max": 2196,
+            "min": 1799
+          }
+        }
+      ]
+    },
+    {
+      "query": "omega 3",
+      "required_tokens": [
+        "omega3"
+      ],
+      "retrieved_offers": 1334,
+      "groups": 185,
+      "retrieval_ms": 24.022333,
+      "grouping_ms": 8.527750000000001,
+      "top_groups": [
+        {
+          "key": "ing:omega 3::form:kapsule",
+          "display": "Omega 3",
+          "vendors": 64,
+          "raw_offers": 612,
+          "price_range": {
+            "avg": 1025.828125,
+            "max": 4390,
+            "min": 350
+          }
+        },
+        {
+          "key": "ing:omega 3::1000mg::form:kapsule",
+          "display": "Omega 3 1000 MG kapsule",
+          "vendors": 44,
+          "raw_offers": 157,
+          "price_range": {
+            "avg": 1472.159090909091,
+            "max": 2937,
+            "min": 552
+          }
+        },
+        {
+          "key": "sku::jekogal::omega::100ml",
+          "display": "Jekogal Omega 100 ML",
+          "vendors": 12,
+          "raw_offers": 30,
+          "price_range": {
+            "avg": 638.5833333333334,
+            "max": 790,
+            "min": 537
+          }
+        }
+      ]
+    },
+    {
+      "query": "omega 3 1000mg",
+      "required_tokens": [
+        "1000mg",
+        "omega3"
+      ],
+      "retrieved_offers": 176,
+      "groups": 11,
+      "retrieval_ms": 5.528291,
+      "grouping_ms": 0.999333,
+      "top_groups": [
+        {
+          "key": "ing:omega 3::1000mg::form:kapsule",
+          "display": "Omega 3 1000 MG kapsule",
+          "vendors": 44,
+          "raw_offers": 156,
+          "price_range": {
+            "avg": 1522.9772727272727,
+            "max": 3661,
+            "min": 552
+          }
+        },
+        {
+          "key": "ing:omega 3::1000mg::form:tablete",
+          "display": "Omega 3 1000 MG tablete",
+          "vendors": 3,
+          "raw_offers": 3,
+          "price_range": {
+            "avg": 1947.3333333333333,
+            "max": 2178,
+            "min": 1799
+          }
+        },
+        {
+          "key": "sku::ostrovit::omega::1000mg::form:gel",
+          "display": "Ostrovit Omega 1000 MG gel",
+          "vendors": 2,
+          "raw_offers": 3,
+          "price_range": {
+            "avg": 689.5,
+            "max": 789,
+            "min": 590
+          }
+        }
+      ]
+    },
+    {
+      "query": "probiotik",
+      "required_tokens": [
+        "probiotik"
+      ],
+      "retrieved_offers": 828,
+      "groups": 390,
+      "retrieval_ms": 14.51075,
+      "grouping_ms": 10.694708,
+      "top_groups": [
+        {
+          "key": "core::probiotik",
+          "display": "Probiotik",
+          "vendors": 7,
+          "raw_offers": 7,
+          "price_range": {
+            "avg": 2027.4285714285713,
+            "max": 5798,
+            "min": 299
+          }
+        },
+        {
+          "key": "core::enterobiotik::form:kapsule",
+          "display": "Enterobiotik Kapsule",
+          "vendors": 21,
+          "raw_offers": 21,
+          "price_range": {
+            "avg": 498.1904761904762,
+            "max": 706,
+            "min": 279
+          }
+        },
+        {
+          "key": "core::probiotik::form:kapsule",
+          "display": "Probiotik Kapsule",
+          "vendors": 20,
+          "raw_offers": 38,
+          "price_range": {
+            "avg": 796.95,
+            "max": 3500,
+            "min": 169
+          }
+        }
+      ]
+    },
+    {
+      "query": "protein",
+      "required_tokens": [
+        "protein"
+      ],
+      "retrieved_offers": 3002,
+      "groups": 2070,
+      "retrieval_ms": 45.99275,
+      "grouping_ms": 75.05725000000001,
+      "top_groups": [
+        {
+          "key": "core::qnt protein wafer bar::35g",
+          "display": "QNT Protein Wafer Bar 35 G",
+          "vendors": 8,
+          "raw_offers": 9,
+          "price_range": {
+            "avg": 187.5,
+            "max": 190,
+            "min": 180
+          }
+        },
+        {
+          "key": "ing:brusnica",
+          "display": "Brusnica",
+          "vendors": 6,
+          "raw_offers": 6,
+          "price_range": {
+            "avg": 166.66666666666666,
+            "max": 250,
+            "min": 100
+          }
+        },
+        {
+          "key": "ing:bcaa",
+          "display": "Bcaa",
+          "vendors": 4,
+          "raw_offers": 14,
+          "price_range": {
+            "avg": 1107.5,
+            "max": 1890,
+            "min": 100
+          }
+        }
+      ]
+    },
+    {
+      "query": "whey 2kg",
+      "required_tokens": [
+        "2kg",
+        "whey"
+      ],
+      "retrieved_offers": 125,
+      "groups": 81,
+      "retrieval_ms": 3.545958,
+      "grouping_ms": 3.3627499999999997,
+      "top_groups": [
+        {
+          "key": "core::basic supplements iso pro whey::2000g",
+          "display": "Basic Supplements Iso-Pro Whey 2000 G",
+          "vendors": 4,
+          "raw_offers": 6,
+          "price_range": {
+            "avg": 10440.5,
+            "max": 10990,
+            "min": 8792
+          }
+        },
+        {
+          "key": "core::applied nutrition critical whey::2000g",
+          "display": "Applied Nutrition Critical Whey 2000 G",
+          "vendors": 3,
+          "raw_offers": 3,
+          "price_range": {
+            "avg": 7746.666666666667,
+            "max": 7790,
+            "min": 7700
+          }
+        },
+        {
+          "key": "core::biotech::2000g",
+          "display": "Biotech 2000 G",
+          "vendors": 2,
+          "raw_offers": 3,
+          "price_range": {
+            "avg": 7240,
+            "max": 7490,
+            "min": 6990
+          }
+        }
+      ]
+    },
+    {
+      "query": "vitamin c 1000 mg 30 tableta",
+      "required_tokens": [
+        "1000",
+        "30",
+        "mg",
+        "tableta",
+        "vitaminc"
+      ],
+      "retrieved_offers": 23,
+      "groups": 2,
+      "retrieval_ms": 11.50275,
+      "grouping_ms": 0.24649999999999997,
+      "top_groups": [
+        {
+          "key": "ing:vitamin c::1000mg::form:tablete",
+          "display": "Vitamin C 1000 MG tablete",
+          "vendors": 15,
+          "raw_offers": 21,
+          "price_range": {
+            "avg": 791.1333333333333,
+            "max": 1149,
+            "min": 549
+          }
+        },
+        {
+          "key": "ing:vitamin c+vitamin d3::form:tablete",
+          "display": "Vitamin C + Vitamin D3 tablete",
+          "vendors": 2,
+          "raw_offers": 2,
+          "price_range": {
+            "avg": 1056.5,
+            "max": 1063,
+            "min": 1050
+          }
+        }
+      ]
+    },
+    {
+      "query": "zzzxqv987654",
+      "required_tokens": [
+        "zzzxqv987654"
+      ],
+      "retrieved_offers": 0,
+      "groups": 0,
+      "retrieval_ms": 2.9472500000000004,
+      "grouping_ms": 0,
+      "top_groups": []
+    }
+  ],
+  "live_cases": [
+    {
+      "query": "fervex",
+      "filters": {},
+      "groups": 10,
+      "top": [
+        {
+          "key": "core::fervex phyto",
+          "display": "Fervex Phyto",
+          "vendors": 3,
+          "price_range": {
+            "avg": 587.3333333333334,
+            "max": 650,
+            "min": 543
+          }
+        },
+        {
+          "key": "core::fervex phyto::30ml::form:sprej",
+          "display": "Fervex Phyto 30 ML Sprej",
+          "vendors": 3,
+          "price_range": {
+            "avg": 749.3333333333334,
+            "max": 829,
+            "min": 693
+          }
+        },
+        {
+          "key": "core::fervex phyto::120ml::form:sirup",
+          "display": "Fervex Phyto 120 ML Sirup",
+          "vendors": 2,
+          "price_range": {
+            "avg": 716,
+            "max": 780,
+            "min": 652
+          }
+        }
+      ]
+    },
+    {
+      "query": "ferveks",
+      "filters": {},
+      "groups": 15,
+      "top": [
+        {
+          "key": "core::salvit fervit::30ml::form:kapi",
+          "display": "Salvit Fervit 30 ML Kapi",
+          "vendors": 7,
+          "price_range": {
+            "avg": 1611.4285714285713,
+            "max": 1928,
+            "min": 1050
+          }
+        },
+        {
+          "key": "core::fervex phyto::30ml::form:sprej",
+          "display": "Fervex Phyto 30 ML Sprej",
+          "vendors": 3,
+          "price_range": {
+            "avg": 749.3333333333334,
+            "max": 829,
+            "min": 693
+          }
+        },
+        {
+          "key": "ing:kurkuma::form:kapsule",
+          "display": "Kurkuma kapsule",
+          "vendors": 3,
+          "price_range": {
+            "avg": 3798,
+            "max": 4009,
+            "min": 3640
+          }
+        }
+      ]
+    },
+    {
+      "query": "fervex za decu",
+      "filters": {},
+      "groups": 0,
+      "top": []
+    },
+    {
+      "query": "magnezijum",
+      "filters": {},
+      "groups": 266,
+      "top": [
+        {
+          "key": "ing:magnezijum::form:kapsule",
+          "display": "Magnezijum",
+          "vendors": 63,
+          "price_range": {
+            "avg": 938.2857142857143,
+            "max": 3300,
+            "min": 20
+          }
+        },
+        {
+          "key": "ing:magnezijum::form:tablete",
+          "display": "Magnezijum tablete",
+          "vendors": 39,
+          "price_range": {
+            "avg": 1179.2564102564102,
+            "max": 4700,
+            "min": 180
+          }
+        },
+        {
+          "key": "ing:magnezijum::250mg::form:tablete",
+          "display": "Magnezijum 250 MG",
+          "vendors": 31,
+          "price_range": {
+            "avg": 1413.3225806451612,
+            "max": 1649,
+            "min": 180
+          }
+        }
+      ]
+    },
+    {
+      "query": "magnesijum",
+      "filters": {},
+      "groups": 264,
+      "top": [
+        {
+          "key": "ing:magnezijum::form:kapsule",
+          "display": "Magnezijum",
+          "vendors": 63,
+          "price_range": {
+            "avg": 938.2857142857143,
+            "max": 3300,
+            "min": 20
+          }
+        },
+        {
+          "key": "ing:magnezijum::form:tablete",
+          "display": "Magnezijum tablete",
+          "vendors": 39,
+          "price_range": {
+            "avg": 1179.2564102564102,
+            "max": 4700,
+            "min": 180
+          }
+        },
+        {
+          "key": "ing:magnezijum::250mg::form:tablete",
+          "display": "Magnezijum 250 MG",
+          "vendors": 31,
+          "price_range": {
+            "avg": 1413.3225806451612,
+            "max": 1649,
+            "min": 180
+          }
+        }
+      ]
+    },
+    {
+      "query": "magnezijum citrat",
+      "filters": {},
+      "groups": 264,
+      "top": [
+        {
+          "key": "ing:magnezijum::form:kapsule",
+          "display": "Magnezijum",
+          "vendors": 63,
+          "price_range": {
+            "avg": 938.2857142857143,
+            "max": 3300,
+            "min": 20
+          }
+        },
+        {
+          "key": "ing:magnezijum::form:tablete",
+          "display": "Magnezijum tablete",
+          "vendors": 39,
+          "price_range": {
+            "avg": 1179.2564102564102,
+            "max": 4700,
+            "min": 180
+          }
+        },
+        {
+          "key": "ing:magnezijum::250mg::form:tablete",
+          "display": "Magnezijum 250 MG",
+          "vendors": 31,
+          "price_range": {
+            "avg": 1413.3225806451612,
+            "max": 1649,
+            "min": 180
+          }
+        }
+      ]
+    },
+    {
+      "query": "magnezijum bisglicinat",
+      "filters": {},
+      "groups": 264,
+      "top": [
+        {
+          "key": "ing:magnezijum::form:kapsule",
+          "display": "Magnezijum",
+          "vendors": 63,
+          "price_range": {
+            "avg": 938.2857142857143,
+            "max": 3300,
+            "min": 20
+          }
+        },
+        {
+          "key": "ing:magnezijum::form:tablete",
+          "display": "Magnezijum tablete",
+          "vendors": 39,
+          "price_range": {
+            "avg": 1179.2564102564102,
+            "max": 4700,
+            "min": 180
+          }
+        },
+        {
+          "key": "ing:magnezijum::250mg::form:tablete",
+          "display": "Magnezijum 250 MG",
+          "vendors": 31,
+          "price_range": {
+            "avg": 1413.3225806451612,
+            "max": 1649,
+            "min": 180
+          }
+        }
+      ]
+    },
+    {
+      "query": "магнезијум",
+      "filters": {},
+      "groups": 266,
+      "top": [
+        {
+          "key": "ing:magnezijum::form:kapsule",
+          "display": "Magnezijum",
+          "vendors": 63,
+          "price_range": {
+            "avg": 938.2857142857143,
+            "max": 3300,
+            "min": 20
+          }
+        },
+        {
+          "key": "ing:magnezijum::form:tablete",
+          "display": "Magnezijum tablete",
+          "vendors": 39,
+          "price_range": {
+            "avg": 1179.2564102564102,
+            "max": 4700,
+            "min": 180
+          }
+        },
+        {
+          "key": "ing:magnezijum::250mg::form:tablete",
+          "display": "Magnezijum 250 MG",
+          "vendors": 31,
+          "price_range": {
+            "avg": 1413.3225806451612,
+            "max": 1649,
+            "min": 180
+          }
+        }
+      ]
+    },
+    {
+      "query": "vitamin d3 2000",
+      "filters": {},
+      "groups": 22,
+      "top": [
+        {
+          "key": "ing:vitamin d3::2000iu::form:tablete",
+          "display": "Vitamin D3 2000 IU tablete",
+          "vendors": 34,
+          "price_range": {
+            "avg": 819.6470588235294,
+            "max": 1768,
+            "min": 320
+          }
+        },
+        {
+          "key": "ing:vitamin d3::2000iu::form:mikrotableta",
+          "display": "Vitamin D3 2000 IU mikrotableta",
+          "vendors": 9,
+          "price_range": {
+            "avg": 746.7777777777778,
+            "max": 880,
+            "min": 605
+          }
+        },
+        {
+          "key": "ing:vitamin d3::2000iu::form:kapi",
+          "display": "Vitamin D3 2000 IU kapi",
+          "vendors": 9,
+          "price_range": {
+            "avg": 826.1111111111111,
+            "max": 1380,
+            "min": 514
+          }
+        }
+      ]
+    },
+    {
+      "query": "solgar vitamin d3 2000 60",
+      "filters": {},
+      "groups": 0,
+      "top": []
+    },
+    {
+      "query": "brufen 400",
+      "filters": {},
+      "groups": 4,
+      "top": [
+        {
+          "key": "core::brufen::400mg",
+          "display": "Brufen 400 MG",
+          "vendors": 1,
+          "price_range": {
+            "avg": 424,
+            "max": 424,
+            "min": 424
+          }
+        },
+        {
+          "key": "core::brufen::400mg::form:tablete",
+          "display": "Brufen 400 MG Tablete",
+          "vendors": 1,
+          "price_range": {
+            "avg": 368,
+            "max": 368,
+            "min": 368
+          }
+        },
+        {
+          "key": "prod::brufen vivo::400mg::form:tablete",
+          "display": "Brufen Vivo 400 MG tablete",
+          "vendors": 1,
+          "price_range": {
+            "avg": 353,
+            "max": 353,
+            "min": 353
+          }
+        }
+      ]
+    },
+    {
+      "query": "paracetamol 500",
+      "filters": {},
+      "groups": 1,
+      "top": [
+        {
+          "key": "ing:paracetamol::500mg::form:tablete",
+          "display": "Paracetamol 500 MG tablete",
+          "vendors": 1,
+          "price_range": {
+            "avg": 320,
+            "max": 320,
+            "min": 320
+          }
+        }
+      ]
+    },
+    {
+      "query": "eucerin urea 10 250ml",
+      "filters": {},
+      "groups": 5,
+      "top": [
+        {
+          "key": "sku::eucerin::urea::250ml::form:losion",
+          "display": "Eucerin Urea 250 ML losion",
+          "vendors": 3,
+          "price_range": {
+            "avg": 1942.3333333333333,
+            "max": 2083,
+            "min": 1661
+          }
+        },
+        {
+          "key": "sku::eucerin::plus urea urearepair::250ml::form:losion",
+          "display": "Eucerin Plus Urea Urearepair 250 ML losion",
+          "vendors": 14,
+          "price_range": {
+            "avg": 1900.857142857143,
+            "max": 2251,
+            "min": 1318
+          }
+        },
+        {
+          "key": "sku::eucerin::plus repair urea::250ml::form:losion",
+          "display": "Eucerin Plus Repair Urea 250 ML losion",
+          "vendors": 2,
+          "price_range": {
+            "avg": 2156,
+            "max": 2174,
+            "min": 2138
+          }
+        }
+      ]
+    },
+    {
+      "query": "la roche posay effaclar duo",
+      "filters": {},
+      "groups": 27,
+      "top": [
+        {
+          "key": "sku::la roche posay::duo effaclar::40ml",
+          "display": "La Roche Posay Duo Effaclar 40 ML",
+          "vendors": 18,
+          "price_range": {
+            "avg": 2267.5555555555557,
+            "max": 2591,
+            "min": 1720
+          }
+        },
+        {
+          "key": "sku::la roche posay::duo effaclar",
+          "display": "La Roche Posay Duo Effaclar",
+          "vendors": 10,
+          "price_range": {
+            "avg": 1158.7,
+            "max": 3180,
+            "min": 760
+          }
+        },
+        {
+          "key": "sku::la roche posay::duo effaclar::200ml",
+          "display": "La Roche Posay Duo Effaclar 200 ML",
+          "vendors": 2,
+          "price_range": {
+            "avg": 1752.5,
+            "max": 1775,
+            "min": 1730
+          }
+        }
+      ]
+    },
+    {
+      "query": "pampers premium care 4",
+      "filters": {},
+      "groups": 42,
+      "top": [
+        {
+          "key": "core::pampers pelene",
+          "display": "Pampers Pelene",
+          "vendors": 7,
+          "price_range": {
+            "avg": 1158,
+            "max": 2321,
+            "min": 29
+          }
+        },
+        {
+          "key": "core::pampers pelene kg",
+          "display": "Pampers Pelene Kg",
+          "vendors": 4,
+          "price_range": {
+            "avg": 1937.25,
+            "max": 2266,
+            "min": 1799
+          }
+        },
+        {
+          "key": "core::pampers pelene::14000g",
+          "display": "Pampers Pelene 14000 G",
+          "vendors": 3,
+          "price_range": {
+            "avg": 1960,
+            "max": 2196,
+            "min": 1799
+          }
+        }
+      ]
+    },
+    {
+      "query": "zzzxqv987654",
+      "filters": {},
+      "groups": 0,
+      "top": []
+    },
+    {
+      "query": "magnezijum",
+      "filters": {
+        "brandNames": [
+          "Solgar"
+        ]
+      },
+      "groups": 8,
+      "top": [
+        {
+          "key": "ing:magnezijum::form:tablete",
+          "display": "Magnezijum tablete",
+          "vendors": 39,
+          "price_range": {
+            "avg": 1179.2564102564102,
+            "max": 4700,
+            "min": 180
+          }
+        },
+        {
+          "key": "ing:magnezijum::200mg::form:tablete",
+          "display": "Magnezijum 200 MG tablete",
+          "vendors": 30,
+          "price_range": {
+            "avg": 1961.8,
+            "max": 2950,
+            "min": 220
+          }
+        },
+        {
+          "key": "ing:magnezijum::100mg::form:tablete",
+          "display": "Magnezijum 100 MG",
+          "vendors": 17,
+          "price_range": {
+            "avg": 1547.8235294117646,
+            "max": 2790,
+            "min": 1218
+          }
+        }
+      ]
+    },
+    {
+      "query": "vitamin d3 2000",
+      "filters": {
+        "brandNames": [
+          "Solgar"
+        ]
+      },
+      "groups": 0,
+      "top": []
+    },
+    {
+      "query": "",
+      "filters": {
+        "categories": [
+          "Cosmetics & Skincare"
+        ]
+      },
+      "groups": 1167,
+      "top": [
+        {
+          "key": "prod::hijaluronska kiselina",
+          "display": "Multiactiv Hijaluronska Kiselina 7.5 ML",
+          "vendors": 35,
+          "price_range": {
+            "avg": 1088.7714285714285,
+            "max": 3980,
+            "min": 127
+          }
+        },
+        {
+          "key": "sku::eucerin::atopicontrol::400ml",
+          "display": "Eucerin Atopicontrol 400 ML",
+          "vendors": 25,
+          "price_range": {
+            "avg": 2230.96,
+            "max": 4100,
+            "min": 1629
+          }
+        },
+        {
+          "key": "sku::la roche posay::effaclar::200ml::form:gel",
+          "display": "La Roche Posay Effaclar 200 ML gel",
+          "vendors": 24,
+          "price_range": {
+            "avg": 1551.125,
+            "max": 2290,
+            "min": 1190
+          }
+        }
+      ]
+    }
+  ],
+  "production_plans_ms": {
+    "precise-magnezijum": 70.654,
+    "precise-protein": 93.292,
+    "fuzzy-ferveks": 32.032,
+    "autocomplete-vit": 305.753
+  },
+  "watch_key_checks": [
+    {
+      "query": "magnezijum",
+      "groups": 266,
+      "keys_missing_from_global_snapshot": [],
+      "different_minima_count": 0,
+      "examples": []
+    },
+    {
+      "query": "magnezijum citrat",
+      "groups": 264,
+      "keys_missing_from_global_snapshot": [],
+      "different_minima_count": 0,
+      "examples": []
+    },
+    {
+      "query": "vitamin d3 solgar",
+      "groups": 7,
+      "keys_missing_from_global_snapshot": [
+        "ing:magnezijum+vitamin d3"
+      ],
+      "different_minima_count": 5,
+      "examples": [
+        {
+          "key": "ing:vitamin d3::400iu::form:kapsule",
+          "search_min": 1100,
+          "watch_min": 198
+        },
+        {
+          "key": "ing:vitamin d3::form:kapsule",
+          "search_min": 1262,
+          "watch_min": 197
+        }
+      ]
+    },
+    {
+      "query": "cink solgar",
+      "groups": 7,
+      "keys_missing_from_global_snapshot": [],
+      "different_minima_count": 6,
+      "examples": [
+        {
+          "key": "ing:cink::form:tablete",
+          "search_min": 1600,
+          "watch_min": 89
+        },
+        {
+          "key": "ing:cink+kalcijum+magnezijum::form:tablete",
+          "search_min": 1450,
+          "watch_min": 380
+        }
+      ]
+    },
+    {
+      "query": "probiotik",
+      "groups": 390,
+      "keys_missing_from_global_snapshot": [
+        "ing:kolagen"
+      ],
+      "different_minima_count": 38,
+      "examples": [
+        {
+          "key": "core::imunolak::form:kapsule",
+          "search_min": 1990,
+          "watch_min": 1699
+        },
+        {
+          "key": "core::femmabiotic::form:kapsule",
+          "search_min": 960,
+          "watch_min": 913
+        }
+      ]
+    },
+    {
+      "query": "protein",
+      "groups": 2070,
+      "keys_missing_from_global_snapshot": [
+        "ing:brusnica",
+        "ing:bcaa",
+        "ing:glutamin",
+        "ing:cink+vitamin c",
+        "ing:omega 3+vitamin e",
+        "ing:magnezijum+vitamin b6+vitamin d3",
+        "ing:cink+kalcijum+magnezijum+vitamin d3",
+        "ing:cink+magnezijum",
+        "ing:taurin",
+        "ing:kolagen+vitamin c",
+        "ing:5 htp::50mg",
+        "ing:bcaa+glutamin",
+        "ing:arginin",
+        "ing:eaa",
+        "ing:kalcijum",
+        "ing:maca"
+      ],
+      "different_minima_count": 162,
+      "examples": [
+        {
+          "key": "core::isolate whey protein 100::750g",
+          "search_min": 3900,
+          "watch_min": 2700
+        },
+        {
+          "key": "core::pancake",
+          "search_min": 2290,
+          "watch_min": 490
+        }
+      ]
+    },
+    {
+      "query": "pampers premium care 4",
+      "groups": 42,
+      "keys_missing_from_global_snapshot": [],
+      "different_minima_count": 12,
+      "examples": [
+        {
+          "key": "core::pampers pelene",
+          "search_min": 29,
+          "watch_min": 22
+        },
+        {
+          "key": "core::pampers pelene mini",
+          "search_min": 1493,
+          "watch_min": 554
+        }
+      ]
+    },
+    {
+      "query": "eucerin urea",
+      "groups": 77,
+      "keys_missing_from_global_snapshot": [],
+      "different_minima_count": 0,
+      "examples": []
+    }
+  ],
+  "checks": {
+    "go_tests": "pass",
+    "go_vet": "pass",
+    "frontend_typescript": "pass",
+    "frontend_eslint": {
+      "errors": 8,
+      "warnings": 2
+    },
+    "negative_unary_limit_panics": true,
+    "browser_flows": "unverified: no browser available"
+  },
+  "limits": [
+    "Synthetic query sample, not user traffic or a load test.",
+    "Base grouping dump precedes result-dependent folding.",
+    "Full source records and executable harness are retained under cache/app-evaluation/.",
+    "No runtime behavior was changed or deployed."
+  ]
+}

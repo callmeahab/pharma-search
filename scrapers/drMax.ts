@@ -3,6 +3,7 @@ import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import { insertData, Product, initializeDatabase, closeDatabase } from './helpers/database';
 import { Page } from 'puppeteer';
 import { ScraperUtils } from './helpers/ScraperUtils';
+import { reportScraperFailure } from './helpers/http';
 
 puppeteer.use(StealthPlugin());
 
@@ -103,6 +104,7 @@ async function scrapePage(
 
     return allProducts;
   } catch (error) {
+    if (ScraperUtils.shouldAbortScrape(error)) throw error;
     console.error(`Error scraping ${url}: ${(error as Error).message}`);
     return [];
   }
@@ -137,6 +139,7 @@ async function scrapeMultipleBaseUrls(): Promise<Product[]> {
             products = await scrapePage(page, pageUrl, category);
             if (products.length > 0) break;
           } catch (error) {
+            if (ScraperUtils.shouldAbortScrape(error)) throw error;
             console.error(`Error on attempt ${retryCount + 1}:`, error);
           }
           retryCount++;
@@ -180,6 +183,7 @@ async function main() {
       console.log('No products found.');
     }
   } catch (error) {
+    reportScraperFailure(error);
     console.error('Scraper failed:', error);
     process.exit(1);
   } finally {

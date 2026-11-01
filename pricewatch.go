@@ -1,13 +1,14 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
+	"html"
 	"log"
 	"net/url"
 	"os"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/callmeahab/pharma-search/internal/matching"
@@ -20,189 +21,33 @@ type groupSnapshot struct {
 	OfferCount int
 }
 
-// liteOffer is the MINIMAL per-product state the snapshot needs. The whole catalog
-// (~184k rows) is held at once, so this must stay lean: the old map[string]interface{}
-// representation spiked RSS to ~855MB and crash-looped the backend on the 2GB box.
-// Only the fields that the folding passes and the cheapest-offer reduction read are
-// kept; everything else (title, brand, dosage, …) is consumed when the key is computed
-// and then dropped. vendorID/vendorName/method are interned (≤80 vendors, ~5 methods).
-type liteOffer struct {
-	price      float64
-	vendorID   string
-	vendorName string
-	key        string
-	method     string
-	residual   string
-	hasMeasure bool
-}
-
-// computeGroupSnapshots groups the whole catalog the same way the search API does
-// (matching.BuildGroupKey + the sizeless/formless folding passes) and reduces each
-// group to its current cheapest offer. The keys it produces are identical to what the
-// frontend stored as a watch's groupKey — including canonicalIdentity, which the search
-// path uses, so canonicalIdentity-grouped products (protein/probiotik lines) match too.
+// computeGroupSnapshots prices the same persisted SKU identities and current
+// offers as search. No query-dependent folding or legacy ingredient grouping.
 func computeGroupSnapshots(db *sql.DB) (map[string]groupSnapshot, error) {
-	rows, err := db.Query(`
-		SELECT p.price, p."vendorId", v.name, p.title,
-		       COALESCE(p."extractedBrand",''), COALESCE(p."coreProductIdentity",''),
-		       COALESCE(p."canonicalIdentity",''),
-		       p."dosageValue", COALESCE(p."dosageUnit",''),
-		       p."volumeValue", COALESCE(p."volumeUnit",''),
-		       COALESCE(p.form,''), p."quantityValue", p.id
-		FROM "Product" p JOIN "Vendor" v ON v.id = p."vendorId"
-		WHERE p.price > 0`)
+	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+	defer cancel()
+	rows, err := db.QueryContext(ctx, `SELECT p.sku_id,p.price,v.name FROM "CatalogOffer" p JOIN "CatalogSku" s ON s.id=p.sku_id JOIN "Vendor" v ON v.id=p."vendorId"
+ WHERE p.price>0 AND p.availability<>'unavailable' AND p."priceScrapedAt">=$1 AND s.identity_version=$2 ORDER BY p.sku_id,p.price,p.id`, time.Now().Add(-currentOfferMaxAge()), matching.CatalogIdentityVersion)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-
-	pool := map[string]string{}
-	intern := func(s string) string {
-		if v, ok := pool[s]; ok {
-			return v
-		}
-		pool[s] = s
-		return s
-	}
-
-	offers := make([]liteOffer, 0, 200000)
+	snap := map[string]groupSnapshot{}
 	for rows.Next() {
-		var price, dosageValue, volumeValue sql.NullFloat64
-		var quantityValue sql.NullInt64
-		var vendorID, vendorName, title, brand, core, canonical, dosageUnit, volumeUnit, form, id string
-		if err := rows.Scan(&price, &vendorID, &vendorName, &title, &brand, &core, &canonical,
-			&dosageValue, &dosageUnit, &volumeValue, &volumeUnit, &form, &quantityValue, &id); err != nil {
+		var key, vendor string
+		var price float64
+		if err = rows.Scan(&key, &price, &vendor); err != nil {
 			return nil, err
 		}
-		gk := matching.BuildGroupKey(matching.GroupKeyInput{
-			Core:              core,
-			CanonicalIdentity: canonical,
-			Brand:             brand,
-			Title:             title,
-			ProductID:         strings.ReplaceAll(id, "product_", ""),
-			DosageValue:       dosageValue.Float64,
-			DosageUnit:        dosageUnit,
-			VolumeValue:       volumeValue.Float64,
-			VolumeUnit:        volumeUnit,
-			Quantity:          float64(quantityValue.Int64),
-			Form:              form,
-		})
-		offers = append(offers, liteOffer{
-			price:      price.Float64,
-			vendorID:   intern(vendorID),
-			vendorName: intern(vendorName),
-			key:        gk.Key,
-			method:     intern(gk.Method),
-			residual:   gk.Residual,
-			hasMeasure: gk.HasMeasure,
-		})
+		value := snap[key]
+		if value.OfferCount == 0 {
+			value.MinPrice = price
+			value.Vendor = vendor
+		}
+		value.OfferCount++
+		snap[key] = value
 	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	foldSizelessToLines(offers)
-	foldFormlessToDominantForm(offers)
-
-	snap := make(map[string]groupSnapshot, len(offers)/2)
-	for i := range offers {
-		o := &offers[i]
-		if o.key == "" || o.price <= 0 {
-			continue
-		}
-		cur, ok := snap[o.key]
-		if !ok {
-			snap[o.key] = groupSnapshot{MinPrice: o.price, Vendor: o.vendorName, OfferCount: 1}
-			continue
-		}
-		cur.OfferCount++
-		if o.price < cur.MinPrice {
-			cur.MinPrice = o.price
-			cur.Vendor = o.vendorName
-		}
-		snap[o.key] = cur
-	}
-	return snap, nil
-}
-
-// foldSizelessToLines is the lean-struct twin of attachSizelessToLines (main.go): a
-// sizeless brand-sku/single offer whose 2+-token residual matches a brand-LINE residual
-// folds into that line's brand-independent prod:: key.
-func foldSizelessToLines(offers []liteOffer) {
-	lineResiduals := map[string]bool{}
-	for i := range offers {
-		if offers[i].method == "brand-line" && offers[i].residual != "" {
-			lineResiduals[offers[i].residual] = true
-		}
-	}
-	if len(lineResiduals) == 0 {
-		return
-	}
-	for i := range offers {
-		m := offers[i].method
-		if m != "brand-sku" && m != "single" {
-			continue
-		}
-		if offers[i].hasMeasure {
-			continue // has a size/strength of its own — keep it
-		}
-		r := offers[i].residual
-		if r == "" || !lineResiduals[r] || len(strings.Fields(r)) < 2 {
-			continue
-		}
-		offers[i].key = "prod::" + r
-	}
-}
-
-// foldFormlessToDominantForm is the lean-struct twin of attachFormlessToDominantForm
-// (main.go): a form-unknown ingredient group folds into the most-stocked form variant
-// of the same ingredient+strength.
-func foldFormlessToDominantForm(offers []liteOffer) {
-	const sep = "::form:"
-	baseForms := map[string]map[string]map[string]struct{}{}
-	for i := range offers {
-		if offers[i].method != "ingredient" {
-			continue
-		}
-		k := offers[i].key
-		idx := strings.Index(k, sep)
-		if idx < 0 {
-			continue // formless — counted as a target only, not a form variant
-		}
-		base := k[:idx]
-		if baseForms[base] == nil {
-			baseForms[base] = map[string]map[string]struct{}{}
-		}
-		if baseForms[base][k] == nil {
-			baseForms[base][k] = map[string]struct{}{}
-		}
-		baseForms[base][k][offers[i].vendorID] = struct{}{}
-	}
-	if len(baseForms) == 0 {
-		return
-	}
-	dominant := make(map[string]string, len(baseForms))
-	for base, forms := range baseForms {
-		bestKey, bestN := "", -1
-		for fk, vendors := range forms {
-			if n := len(vendors); n > bestN || (n == bestN && fk < bestKey) {
-				bestN, bestKey = n, fk
-			}
-		}
-		dominant[base] = bestKey
-	}
-	for i := range offers {
-		if offers[i].method != "ingredient" {
-			continue
-		}
-		k := offers[i].key
-		if strings.Contains(k, sep) {
-			continue // already has a form
-		}
-		if dk, ok := dominant[k]; ok {
-			offers[i].key = dk
-		}
-	}
+	return snap, rows.Err()
 }
 
 type watchRow struct {
@@ -228,7 +73,7 @@ func (s *server) runPriceWatch() error {
 	rows, err := s.db.Query(`
 		SELECT w.id, w."userId", u.email, COALESCE(w."displayName",''), w."groupKey",
 		       w."targetPrice", w."lastPrice"
-		FROM "Watch" w JOIN "User" u ON u.id = w."userId"`)
+		FROM "Watch" w JOIN "User" u ON u.id = w."userId" WHERE NOT w.needs_review`)
 	if err != nil {
 		return err
 	}
@@ -253,7 +98,6 @@ func (s *server) runPriceWatch() error {
 		return fmt.Errorf("snapshot: %w", err)
 	}
 
-	historyDone := map[string]bool{}
 	alerts := 0
 	for _, wr := range watches {
 		gs, ok := snap[wr.groupKey]
@@ -261,13 +105,7 @@ func (s *server) runPriceWatch() error {
 			continue // group no longer present (out of stock / re-extracted)
 		}
 
-		// One history point per distinct watched group per run.
-		if !historyDone[wr.groupKey] {
-			historyDone[wr.groupKey] = true
-			_, _ = s.db.Exec(
-				`INSERT INTO "GroupPriceHistory" ("groupKey","minPrice","offerCount") VALUES ($1,$2,$3)`,
-				wr.groupKey, gs.MinPrice, gs.OfferCount)
-		}
+		// Catalog-wide immutable observations are recorded by ingestion, not by the number of watchers.
 
 		newPrice := gs.MinPrice
 		var oldPrice *float64
@@ -317,15 +155,15 @@ func (s *server) sendPriceAlertEmail(wr watchRow, kind string, oldPrice *float64
 	if name == "" {
 		name = "praćeni proizvod"
 	}
-	intro := fmt.Sprintf("Cena za <strong>%s</strong> je pala!", name)
+	intro := fmt.Sprintf("Cena za <strong>%s</strong> je pala!", html.EscapeString(name))
 	if kind == "target" {
-		intro = fmt.Sprintf("Cena za <strong>%s</strong> je dostigla vašu ciljnu cenu!", name)
+		intro = fmt.Sprintf("Cena za <strong>%s</strong> je dostigla vašu ciljnu cenu!", html.EscapeString(name))
 	}
 	oldStr := "—"
 	if oldPrice != nil {
 		oldStr = formatRSD(*oldPrice)
 	}
-	link := appURL() + "/?q=" + url.QueryEscape(name)
+	link := appURL() + "/proizvod/" + url.PathEscape(wr.groupKey)
 	subject := "Apošteka: cena je pala — " + name
 	body := fmt.Sprintf(`<div style="font-family:Arial,sans-serif;max-width:480px;margin:0 auto">
   <p style="font-size:16px;color:#111">%s</p>
@@ -346,7 +184,7 @@ func vendorSuffix(vendor string) string {
 	if vendor == "" {
 		return ""
 	}
-	return " (" + vendor + ")"
+	return " (" + html.EscapeString(vendor) + ")"
 }
 
 // formatRSD renders a price as "1.234 RSD" with a dot thousands separator.

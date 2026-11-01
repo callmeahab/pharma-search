@@ -1,199 +1,105 @@
-#!/bin/bash
-
-# Pharma Search Data Sync Script
-# Syncs PostgreSQL data to remote server
-# Usage: ./sync-data.sh [--skip-schema]
-
-set -e
-
-# Configuration
-SERVER="${1:-pharma}"
-LOCAL_DB_URL="${DATABASE_URL:-postgres://postgres:docker@localhost:5432/pharma_search}"
-REMOTE_DB="pharma_search"
-REMOTE_DB_USER="root"
-REMOTE_DB_PASS="pharma_secure_password_2025"
-REMOTE_DB_URL="postgresql://${REMOTE_DB_USER}:${REMOTE_DB_PASS}@localhost:5432/${REMOTE_DB}"
-APP_DIR="/var/www/pharma-search"
-DUMP_FILE="/tmp/pharma_data_$(date +%Y%m%d_%H%M%S).sql"
-
-# Parse options
-SKIP_SCHEMA=false
+#!/usr/bin/env bash
+# Atomic publication of catalog tables; append observations and preserve accounts.
+# Additive migrations must already be installed by deploy.sh or cmd/migrate.
+set -euo pipefail
+SERVER=pharma
 for arg in "$@"; do
-    case $arg in
-        --skip-schema) SKIP_SCHEMA=true ;;
-        pharma|root@*) SERVER="$arg" ;;
-    esac
+  case "$arg" in --skip-schema) ;; --*) echo "Unknown option: $arg" >&2; exit 1;; *) SERVER="$arg";; esac
 done
-
-echo "========================================"
-echo "  Pharma Search Data Sync"
-echo "========================================"
-echo ""
-echo "Server: $SERVER"
-echo ""
-
-# ============================================
-# STEP 1: RECREATE SCHEMA FROM LOCAL DB
-# ============================================
-if [[ "$SKIP_SCHEMA" == false ]]; then
-    echo "[1/4] Recreating database schema on server from local DB..."
-
-    # Dump local schema (not data)
-    SCHEMA_FILE="/tmp/pharma_schema_$(date +%Y%m%d_%H%M%S).sql"
-    pg_dump "$LOCAL_DB_URL" \
-        --schema-only \
-        --no-owner \
-        --no-privileges \
-        --table='"Vendor"' \
-        --table='"VendorPlace"' \
-        --table='"Product"' \
-        --table='"ProductStandardization"' \
-        -f "$SCHEMA_FILE"
-
-    # Strip directives the older server PG (PG15) can't parse:
-    #   - PG17:  SET transaction_timeout
-    #   - PG18:  \restrict / \unrestrict  psql markers emitted by pg_dump 18
-    sed -i.bak -e '/^SET transaction_timeout/d' -e '/^\\restrict/d' -e '/^\\unrestrict/d' "$SCHEMA_FILE"
-    rm -f "${SCHEMA_FILE}.bak"
-
-    echo "  Schema dumped from local DB"
-
-    # Upload schema
-    scp -q "$SCHEMA_FILE" "$SERVER:/tmp/pharma_schema.sql"
-    rm -f "$SCHEMA_FILE"
-
-    ssh "$SERVER" << 'ENDSSH'
-set -e
-
-# Drop ONLY the catalog tables. The account/watchlist tables (User, Session,
-# AuthToken, Watch, GroupPriceHistory, AlertEvent — migration 009) have NO FK into
-# the catalog, so they survive a data reload. NEVER drop the whole schema here:
-# that would wipe every registered user, watchlist and price-history record.
-echo "  Dropping catalog tables (preserving accounts/watchlists)..."
-sudo -u postgres psql -d pharma_search -c '
-DROP TABLE IF EXISTS "VendorPlace" CASCADE;
-DROP TABLE IF EXISTS "ProductStandardization" CASCADE;
-DROP TABLE IF EXISTS "Product" CASCADE;
-DROP TABLE IF EXISTS "Vendor" CASCADE;
-' 2>/dev/null || true
-
-# Ensure required extensions exist (idempotent).
-echo "  Ensuring extensions..."
-sudo -u postgres psql -d pharma_search -c "
-CREATE EXTENSION IF NOT EXISTS pg_trgm;
-CREATE EXTENSION IF NOT EXISTS unaccent;
-CREATE EXTENSION IF NOT EXISTS pgcrypto;
-CREATE EXTENSION IF NOT EXISTS fuzzystrmatch;
-"
-
-# Apply schema from local dump
-echo "  Applying schema..."
-sudo -u postgres psql -d pharma_search -f /tmp/pharma_schema.sql 2>&1 | grep -cE "^(CREATE|ALTER)" || true
-
-# Apply functions and triggers from migrations (these aren't in table dumps)
-cd /var/www/pharma-search
-if [ -d "migrations" ]; then
-    for migration in migrations/002_functions.sql migrations/004_triggers.sql; do
-        if [ -f "$migration" ]; then
-            echo "    Applying $(basename $migration)"
-            sudo -u postgres psql -d pharma_search -f "$migration" 2>&1 | grep -v "NOTICE" | grep -v "^$" || true
-        fi
-    done
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+if [[ -z "${DATABASE_URL:-}" && -f "$REPO_ROOT/.env" ]]; then
+ set -a; source "$REPO_ROOT/.env"; set +a
 fi
+LOCAL_DB_URL="${DATABASE_URL:?DATABASE_URL is required}"
+WORK_DIR="$(mktemp -d /tmp/pharma-sync.XXXXXX)"
+REMOTE_DIR=""
+cleanup() {
+  if [[ -n "$REMOTE_DIR" ]]; then ssh -o BatchMode=yes "$SERVER" "rm -rf -- '$REMOTE_DIR'" || true; fi
+  rm -rf -- "$WORK_DIR"
+}
+trap cleanup EXIT
+CORE=(Vendor VendorPlace ProductStandardization CatalogSku Product CatalogLexeme CatalogSuggestion CatalogOffer CatalogPublication)
+HISTORY=(CatalogRun ScraperRun OfferPriceObservation CatalogPriceHistory CatalogIdentityAlias OfferLifecycle)
+DUMP_ARGS=()
+for table in "${CORE[@]}"; do DUMP_ARGS+=(--table="public.\"$table\""); done
+psql "$LOCAL_DB_URL" -X -v ON_ERROR_STOP=1 -c 'DO $$ BEGIN IF NOT EXISTS(SELECT 1 FROM "CatalogPublication") OR NOT EXISTS(SELECT 1 FROM "CatalogOffer") THEN RAISE EXCEPTION '\''No published catalog'\''; END IF; END $$;' >/dev/null
+pg_dump "$LOCAL_DB_URL" --data-only --no-owner --no-privileges "${DUMP_ARGS[@]}" -f "$WORK_DIR/data.sql"
+sed -i.bak -e '/^SET transaction_timeout/d' -e '/^SET statement_timeout/d' -e '/^SET lock_timeout/d' -e '/^\\restrict/d' -e '/^\\unrestrict/d' "$WORK_DIR/data.sql"
+rm "$WORK_DIR/data.sql.bak"
+cat > "$WORK_DIR/prepare.sql" <<'SQL'
+SET LOCAL lock_timeout = '15s';
+SET LOCAL statement_timeout = '10min';
+SELECT pg_advisory_xact_lock(hashtext('pharma-catalog-rebuild'));
+CREATE TEMP TABLE preserved_account_counts AS SELECT
+ (SELECT count(*) FROM "User") users,(SELECT count(*) FROM "Watch") watches,
+ (SELECT count(*) FROM "GroupPriceHistory") legacy_history;
+-- MVCC deletes let readers keep the previous publication until commit.
+DELETE FROM "VendorPlace";
+DELETE FROM "ProductStandardization";
+DELETE FROM "Product";
+DELETE FROM "CatalogOffer";
+DELETE FROM "CatalogSku";
+DELETE FROM "CatalogLexeme";
+DELETE FROM "CatalogSuggestion";
+DELETE FROM "CatalogPublication";
+DELETE FROM "Vendor";
+SQL
+echo 'SET LOCAL search_path=public,pg_catalog;' > "$WORK_DIR/history.sql"
+for table in "${HISTORY[@]}"; do
+  # Serial observation IDs belong to each DB; merge by natural unique keys.
+  columns=$(psql "$LOCAL_DB_URL" -XAt -v ON_ERROR_STOP=1 -c "SELECT string_agg(quote_ident(column_name),',' ORDER BY ordinal_position) FROM information_schema.columns WHERE table_schema='public' AND table_name='$table' AND COALESCE(column_default,'') NOT LIKE 'nextval%'")
+  [[ -n "$columns" ]] || { echo "Missing schema: $table" >&2; exit 1; }
+  psql "$LOCAL_DB_URL" -X -v ON_ERROR_STOP=1 -c "\copy (SELECT $columns FROM \"$table\") TO '$WORK_DIR/$table.csv' CSV" >/dev/null
+  printf 'CREATE TEMP TABLE sync_%s (LIKE "%s" INCLUDING DEFAULTS);\n' "$table" "$table" >> "$WORK_DIR/history.sql"
+  printf '\\copy sync_%s (%s) FROM '\''%s.csv'\'' CSV\n' "$table" "$columns" "$table" >> "$WORK_DIR/history.sql"
+  if [[ "$table" == CatalogIdentityAlias ]]; then
+    printf 'INSERT INTO "%s" (%s) SELECT %s FROM sync_%s WHERE true ON CONFLICT(legacy_key) DO UPDATE SET sku_id=EXCLUDED.sku_id,candidate_count=EXCLUDED.candidate_count,reviewed_at=EXCLUDED.reviewed_at WHERE EXCLUDED.reviewed_at>="CatalogIdentityAlias".reviewed_at;\n' "$table" "$columns" "$columns" "$table" >> "$WORK_DIR/history.sql"
+  else
+    printf 'INSERT INTO "%s" (%s) SELECT %s FROM sync_%s WHERE true ON CONFLICT DO NOTHING;\n' "$table" "$columns" "$columns" "$table" >> "$WORK_DIR/history.sql"
+  fi
+done
+cat > "$WORK_DIR/validate.sql" <<'SQL'
+-- Migrate only unique legacy identities; retain ambiguous watches for review.
+UPDATE "Watch" w SET "groupKey"=a.sku_id,"lastPrice"=NULL,needs_review=false,review_reason=NULL
+FROM "CatalogIdentityAlias" a WHERE w."groupKey"=a.legacy_key AND a.candidate_count=1 AND a.sku_id IS NOT NULL
 
-# Grant permissions to app user
-echo "  Granting permissions..."
-sudo -u postgres psql -d pharma_search -c "
-GRANT ALL ON ALL TABLES IN SCHEMA public TO root;
-GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO root;
-GRANT USAGE ON SCHEMA public TO root;
-"
-
-rm -f /tmp/pharma_schema.sql
-echo "  Schema ready"
-ENDSSH
-
-    echo "  Schema recreated from local DB"
-else
-    echo "[1/4] Skipping schema recreation (--skip-schema)"
+AND w.id=(SELECT min(candidate.id) FROM "Watch" candidate JOIN "CatalogIdentityAlias" ca ON ca.legacy_key=candidate."groupKey" WHERE candidate."userId"=w."userId" AND ca.sku_id=a.sku_id AND ca.candidate_count=1)
+AND NOT EXISTS(SELECT 1 FROM "Watch" o WHERE o."userId"=w."userId" AND o."groupKey"=a.sku_id AND o.id<>w.id);
+UPDATE "Watch" SET needs_review=true,review_reason='Izaberite tačan proizvod i pakovanje da biste nastavili praćenje.'
+WHERE "groupKey" NOT LIKE 'sku:v2:%' AND "groupKey" NOT LIKE 'offer:v2:%';
+DO $$ BEGIN
+ IF EXISTS(SELECT 1 FROM preserved_account_counts p WHERE p.users<>(SELECT count(*) FROM "User") OR p.watches<>(SELECT count(*) FROM "Watch") OR p.legacy_history<>(SELECT count(*) FROM "GroupPriceHistory")) THEN RAISE EXCEPTION 'Account/history count changed'; END IF;
+ IF EXISTS(SELECT 1 FROM "CatalogOffer" p LEFT JOIN "CatalogSku" s ON s.id=p.sku_id LEFT JOIN "Vendor" v ON v.id=p."vendorId" WHERE s.id IS NULL OR v.id IS NULL) THEN RAISE EXCEPTION 'Orphaned offers'; END IF;
+ IF NOT EXISTS(SELECT 1 FROM "CatalogPublication" p JOIN "CatalogRun" r ON r.id=p.run_id WHERE r.status='ok') THEN RAISE EXCEPTION 'Invalid publication'; END IF;
+END $$;
+SQL
+for table in "${CORE[@]}"; do
+ count=$(psql "$LOCAL_DB_URL" -XAt -v ON_ERROR_STOP=1 -c "SELECT count(*) FROM \"$table\"")
+ printf 'DO $$ BEGIN IF (SELECT count(*) FROM "%s")<>%s THEN RAISE EXCEPTION '\''%s count mismatch'\''; END IF; END $$;\n' "$table" "$count" "$table" >> "$WORK_DIR/validate.sql"
+done
+if [[ -n "${SYNC_EXPORT_DIR:-}" ]]; then
+ mkdir -p "$SYNC_EXPORT_DIR"
+ cp "$WORK_DIR/"*.sql "$WORK_DIR/"*.csv "$SYNC_EXPORT_DIR/"
+ echo "Exported reviewable sync transaction to $SYNC_EXPORT_DIR"
+ exit 0
 fi
-
-# ============================================
-# STEP 2: DUMP LOCAL DATA
-# ============================================
-echo "[2/4] Dumping local database..."
-
-# Dump with COPY format (fast) and --disable-triggers (adds ALTER TABLE DISABLE/ENABLE TRIGGER)
-# Include Vendor to preserve IDs that match Product.vendorId and VendorPlace.vendorId
-pg_dump "$LOCAL_DB_URL" \
-    --data-only \
-    --no-owner \
-    --no-privileges \
-    --disable-triggers \
-    --table='"Vendor"' \
-    --table='"VendorPlace"' \
-    --table='"Product"' \
-    --table='"ProductStandardization"' \
-    -f "$DUMP_FILE"
-
-DUMP_SIZE=$(du -h "$DUMP_FILE" | cut -f1)
-echo "  Dump created: $DUMP_FILE ($DUMP_SIZE)"
-
-# ============================================
-# STEP 3: UPLOAD DUMP
-# ============================================
-echo "[3/4] Uploading to server..."
-
-scp -q "$DUMP_FILE" "$SERVER:/tmp/pharma_data.sql"
-echo "  Upload complete"
-
-# ============================================
-# STEP 4: RESTORE DATA
-# ============================================
-echo "[4/4] Restoring data on server..."
-
-ssh "$SERVER" << 'ENDSSH'
-set -e
-
-echo "  Importing data with triggers/FK disabled (this may take a while)..."
-# Strip directives the older server PG (PG15) can't parse:
-#   - PG17:  SET transaction_timeout
-#   - PG18:  \restrict / \unrestrict  psql markers emitted by pg_dump 18
-sed -i -e '/^SET transaction_timeout/d' -e '/^\\restrict/d' -e '/^\\unrestrict/d' /tmp/pharma_data.sql
-# Pipe SET + dump + RESET into a single psql session
-# COPY FROM stdin requires the data to come through stdin, not via \i
-sudo -u postgres bash -c '(echo "SET session_replication_role = replica;" ; cat /tmp/pharma_data.sql ; echo "SET session_replication_role = DEFAULT;") | psql -d pharma_search 2>&1 | tail -20'
-echo "  Import finished"
-
-# Show counts
-echo ""
-echo "  Table counts:"
-sudo -u postgres psql -d pharma_search -t -c "
-SELECT 'Vendor: ' || COUNT(*) FROM \"Vendor\"
-UNION ALL
-SELECT 'VendorPlace: ' || COUNT(*) FROM \"VendorPlace\"
-UNION ALL
-SELECT 'Product: ' || COUNT(*) FROM \"Product\"
-UNION ALL
-SELECT 'ProductStandardization: ' || COUNT(*) FROM \"ProductStandardization\";
-"
-
-# Cleanup
-rm -f /tmp/pharma_data.sql
+REMOTE_DIR=$(ssh -o BatchMode=yes "$SERVER" 'mktemp -d /tmp/pharma-sync.XXXXXX')
+[[ "$REMOTE_DIR" =~ ^/tmp/pharma-sync\.[a-zA-Z0-9]+$ ]] || { REMOTE_DIR=""; exit 1; }
+scp -Cq "$WORK_DIR/"*.sql "$WORK_DIR/"*.csv "$SERVER:$REMOTE_DIR/"
+ssh -o BatchMode=yes "$SERVER" bash -s -- "$REMOTE_DIR" <<'ENDSSH'
+set -euo pipefail
+work_dir=$1
+chmod 755 "$work_dir"
+chmod 644 "$work_dir/"*
+backup_dir=/var/backups/pharma-search
+install -d -m 700 -o postgres -g postgres "$backup_dir"
+backup_file="$backup_dir/before-catalog-$(date +%Y%m%d-%H%M%S)-$$.dump"
+# Full backup provides an inspectable rollback point; normal sync never copies accounts.
+sudo -u postgres pg_dump -d pharma_search -Fc -f "$backup_file"
+echo "Production backup: $backup_file"
+cd "$work_dir"
+sudo -u postgres psql -d pharma_search -X -v ON_ERROR_STOP=1 --single-transaction \
+ -f prepare.sql -f data.sql -f history.sql -f validate.sql
+sudo -u postgres psql -d pharma_search -X -v ON_ERROR_STOP=1 -c 'ANALYZE "CatalogSku"; ANALYZE "CatalogOffer"; ANALYZE "CatalogLexeme"; ANALYZE "Product";'
 ENDSSH
-
-# Local cleanup
-rm -f "$DUMP_FILE"
-
-echo "  Data restored"
-
-# ============================================
-# DONE
-# ============================================
-echo ""
-echo "========================================"
-echo "  Data Sync Complete!"
-echo "========================================"
-echo ""
-echo "Options:"
-echo "  --skip-schema  Skip dropping/recreating tables"
+echo "Catalog published; account and legacy history counts verified."

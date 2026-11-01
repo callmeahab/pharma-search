@@ -104,7 +104,7 @@ export default function PharmacyMap({
       map.remove();
       mapRef.current = null;
     };
-  }, []);
+  }, [theme]);
 
   useEffect(() => {
     const map = mapRef.current;

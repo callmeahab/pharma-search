@@ -25,9 +25,7 @@ export default function PrivacyPage() {
             <p>
               Vaša privatnost nam je važna, a naš cilj je da osiguramo da su
               vaši podaci bezbedni i da se koriste isključivo u skladu sa
-              zakonskim regulativama i ovom Politikom privatnosti. Korišćenjem
-              naše aplikacije, potvrđujete da ste saglasni sa uslovima navedene
-              politike.
+              zakonskim regulativama i ovom Politikom privatnosti. Ova stranica objašnjava koje podatke obrađujemo i kako možete promeniti svoj izbor. Analitika je opciona.
             </p>
 
             <h2 className="text-2xl font-semibold text-health-primary dark:text-health-light mt-8 mb-4">
@@ -43,13 +41,11 @@ export default function PrivacyPage() {
                 lozinka).
               </li>
               <li>
-                Podatke o pretragama i ponašanju korisnika radi analize i
-                unapređenja aplikacije.
+                Samo uz prihvatanje analitike: broj rezultata, trajanje pretrage, broj filtera i poziciju kliknute ponude. Tekst pretrage, nazive proizvoda i linkove prodavaca ne šaljemo u analitičke događaje.
               </li>
             </ul>
             <p>
-              Podaci se prikupljaju isključivo uz vašu saglasnost, osim u
-              slučajevima kada je to zakonom obavezno.
+              Podatke naloga i praćenih proizvoda obrađujemo da bismo pružili funkcije koje ste izabrali. Tehnički zahtevi za pretragu sadrže upit potreban serveru da vrati rezultate. Tehnički dnevnici servera mogu sadržati podatke o zahtevima. Analitičke događaje šaljemo samo nakon vašeg izbora „Prihvati analitiku“. Izbor „Samo neophodno“ omogućava korišćenje pretrage bez analitike.
             </p>
 
             <h2 className="text-2xl font-semibold text-health-primary dark:text-health-light mt-8 mb-4">
@@ -65,8 +61,7 @@ export default function PrivacyPage() {
                 aplikacije.
               </li>
               <li>
-                Komunikacija sa korisnicima u vezi sa tehničkom podrškom,
-                novostima i ažuriranjima.
+                Prikaz praćenih proizvoda i obaveštenja o njihovim cenama, kada uključite tu funkciju.
               </li>
             </ul>
             <p>
@@ -83,6 +78,7 @@ export default function PrivacyPage() {
             </p>
             <ul className="list-disc pl-6 space-y-2 my-4">
               <li>Kada je to zakonom obavezno.</li>
+              <li>Opcionu analitiku prikuplja samo naš server kao ograničene događaje bez teksta upita, naziva proizvoda i linkova. Ova verzija aplikacije ne učitava Google Analytics.</li>
               <li>
                 Kada je neophodno za tehničku podršku aplikacije, pri čemu se
                 osigurava da treća strana poštuje odgovarajuće mere zaštite
@@ -115,7 +111,7 @@ export default function PrivacyPage() {
             <p>Korisnici imaju pravo da:</p>
             <ul className="list-disc pl-6 space-y-2 my-4">
               <li>Pristupe, izmene ili obrišu svoje lične podatke.</li>
-              <li>Povuku saglasnost za obradu podataka u bilo kom trenutku.</li>
+              <li>Promene izbor analitike u bilo kom trenutku preko dugmeta „Podešavanja kolačića“ u podnožju. Povlačenje zaustavlja dalje analitičke događaje i uklanja dostupne analitičke kolačiće ovog sajta.</li>
               <li>
                 Podnesu pritužbu nadležnom organu u slučaju kršenja prava na
                 privatnost.
@@ -216,7 +212,7 @@ export default function PrivacyPage() {
             </p>
 
             <p className="mt-8 text-sm text-gray-600 dark:text-gray-400">
-              Poslednje ažuriranje: 13. maja 2025.
+              Poslednje ažuriranje: 1. novembra 2026.
             </p>
           </div>
         </div>

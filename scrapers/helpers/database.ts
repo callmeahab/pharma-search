@@ -6,6 +6,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { cleanTitle } from './hygiene';
+import { sourceProductID, CSV_HEADER_V2 } from './csv';
 
 export interface Product {
   title: string;
@@ -14,9 +15,12 @@ export interface Product {
   link: string;
   thumbnail: string;
   photos: string;
+  availability?: 'unknown' | 'available' | 'unavailable';
+  sourceProductId?: string;
+  gtin?: string;
 }
 
-const OUTPUT_DIR = path.join(process.cwd(), 'output');
+const OUTPUT_DIR = path.resolve(process.env.SCRAPER_OUTPUT_DIR || path.join(process.cwd(), 'output'));
 
 /**
  * Escape a value for CSV format
@@ -43,10 +47,13 @@ function productToCSVRow(product: Product, parsedPrice: number, vendor: string):
     escapeCSV(product.photos),
     escapeCSV(vendor),
     new Date().toISOString(),
+    product.availability || 'unknown',
+    escapeCSV(product.sourceProductId || sourceProductID(product.link)),
+    escapeCSV(product.gtin || ''),
   ].join(',');
 }
 
-const CSV_HEADER = 'title,price,category,link,thumbnail,photos,vendor,scrapedAt';
+const CSV_HEADER = CSV_HEADER_V2;
 
 /**
  * Parse price string and convert to number
@@ -145,7 +152,8 @@ export async function insertData(allProducts: Product[], shopName: string): Prom
     let errorCount = 0;
 
     // Use write stream to avoid accumulating all rows in memory
-    const writeStream = fs.createWriteStream(csvPath, { encoding: 'utf-8' });
+    const temporaryPath = `${csvPath}.${process.pid}.tmp`;
+    const writeStream = fs.createWriteStream(temporaryPath, { encoding: 'utf-8' });
 
     await new Promise<void>((resolve, reject) => {
       writeStream.on('error', reject);
@@ -167,6 +175,9 @@ export async function insertData(allProducts: Product[], shopName: string): Prom
 
       writeStream.end(() => resolve());
     });
+
+    // Readers only see completed snapshots, even if a run is interrupted.
+    fs.renameSync(temporaryPath, csvPath);
 
     console.log(
       `Successfully wrote ${successCount} products to ${csvPath}, ${errorCount} errors.`
@@ -196,4 +207,10 @@ export async function initializeDatabase(): Promise<void> {
  */
 export async function closeDatabase(): Promise<void> {
   console.log('CSV writer closed');
+  // Browser libraries can leave handles alive after a scrape has completed.
+  // The worker opts into exiting after this final CSV lifecycle hook; direct
+  // callers retain the normal library behavior.
+  if (process.env.SCRAPER_EXIT_ON_CLOSE === '1') {
+    setImmediate(() => process.exit(process.exitCode ?? 0));
+  }
 }

@@ -12,9 +12,10 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { createDbPool, loadVendors } from './helpers/db';
 import { parsePrice } from './helpers/database';
+import { parseCSVRecords, sourceProductID, validSnapshot } from './helpers/csv';
 import { cleanTitle, isLikelyProduct, isResolvableProductLink } from './helpers/hygiene';
 
-const OUTPUT_DIR = path.join(process.cwd(), 'output');
+const OUTPUT_DIR = path.resolve(process.env.SCRAPER_OUTPUT_DIR || path.join(process.cwd(), 'output'));
 
 // If a fresh snapshot has fewer than this fraction of the vendor's currently
 // stored products, we skip delisting (likely a broken/partial scrape) and only
@@ -30,54 +31,19 @@ interface ProductRow {
   photos: string;
   vendor: string;
   scrapedAt: string;
+  availability: string;
+  sourceProductId: string;
+  gtin: string;
 }
 
 // Robust CSV parser: handles quoted fields containing commas, escaped quotes
 // ("") and NEWLINES inside quotes (the old line-split parser corrupted any
 // multi-line quoted title).
-function parseCSVRecords(content: string): string[][] {
-  const records: string[][] = [];
-  let field = '';
-  let record: string[] = [];
-  let inQuotes = false;
 
-  for (let i = 0; i < content.length; i++) {
-    const c = content[i];
-    if (inQuotes) {
-      if (c === '"') {
-        if (content[i + 1] === '"') {
-          field += '"';
-          i++;
-        } else {
-          inQuotes = false;
-        }
-      } else {
-        field += c;
-      }
-    } else if (c === '"') {
-      inQuotes = true;
-    } else if (c === ',') {
-      record.push(field);
-      field = '';
-    } else if (c === '\n') {
-      record.push(field);
-      field = '';
-      records.push(record);
-      record = [];
-    } else if (c !== '\r') {
-      field += c;
-    }
-  }
-  if (field.length > 0 || record.length > 0) {
-    record.push(field);
-    records.push(record);
-  }
-  return records;
-}
-
-function parseCSV(content: string): ProductRow[] {
+export function parseCSV(content: string): ProductRow[] {
   const records = parseCSVRecords(content);
   if (records.length < 2) return [];
+  if (!validSnapshot(records)) throw new Error("Invalid catalog CSV schema");
 
   const rows: ProductRow[] = [];
   // Skip header (record 0)
@@ -102,6 +68,9 @@ function parseCSV(content: string): ProductRow[] {
         photos: values[5],
         vendor: values[6],
         scrapedAt: values[7],
+        availability: ['available', 'unavailable'].includes(values[8]) ? values[8] : 'unknown',
+        sourceProductId: values[9] || sourceProductID(values[3]),
+        gtin: values[10] || '',
       });
     }
   }
@@ -172,14 +141,11 @@ async function importCSVFiles() {
     let totalErrors = 0;
 
     for (const [vendorId, { vendorName, rows }] of perVendor) {
-      // Dedupe within the vendor's combined snapshot by CASE-INSENSITIVE title, keeping
-      // the LOWEST price. The DB unique constraint is (title, vendorId) and case-sensitive,
-      // so "...10ml" and "...10ML" would otherwise both insert as separate rows for the
-      // same product (inflating that vendor's coverage count and showing two prices).
+      // Mutable titles cannot identify a source listing. Keep distinct variants.
       const deduped = Array.from(
         rows
           .reduce((map, p) => {
-            const key = p.title.trim().toLowerCase();
+            const key = p.sourceProductId;
             const prev = map.get(key);
             if (!prev || p.price < prev.price) map.set(key, p);
             return map;
@@ -206,18 +172,25 @@ async function importCSVFiles() {
           const values: Array<string | number | null> = [];
           const placeholders = batch
             .map((p, index) => {
-              const b = index * 8;
+              const b = index * 11;
               // scrapedAt = when the price was actually scraped (preserved per row);
               // updatedAt = now() each run (delist watermark, see below).
-              values.push(p.title, p.price, p.category, p.link, p.thumbnail, p.photos, vendorId, p.scrapedAt || null);
-              return `($${b + 1}, $${b + 2}, $${b + 3}, $${b + 4}, $${b + 5}, $${b + 6}, $${b + 7}, $${b + 8}::timestamptz, now(), now())`;
+              values.push(p.title, p.price, p.category, p.link, p.thumbnail, p.photos, vendorId, p.scrapedAt || null, p.availability, p.sourceProductId, p.gtin || '');
+              return `($${b + 1}, $${b + 2}, $${b + 3}, $${b + 4}, $${b + 5}, $${b + 6}, $${b + 7}, $${b + 8}::timestamptz, $${b + 9}, $${b + 10}, $${b + 11}, now(), now())`;
             })
             .join(', ');
 
           await client.query(
-            `INSERT INTO "Product" (title, price, category, link, thumbnail, photos, "vendorId", "priceScrapedAt", "createdAt", "updatedAt")
+            `INSERT INTO "Product" (title, price, category, link, thumbnail, photos, "vendorId", "priceScrapedAt", availability, source_product_id, gtin, "createdAt", "updatedAt")
              VALUES ${placeholders}
-             ON CONFLICT (title, "vendorId") DO UPDATE SET
+             ON CONFLICT ("vendorId", source_product_id) WHERE source_product_id IS NOT NULL DO UPDATE SET
+               title = EXCLUDED.title,
+               "processedAt" = CASE WHEN "Product".title IS DISTINCT FROM EXCLUDED.title THEN NULL ELSE "Product"."processedAt" END,
+               "extractedBrand" = CASE WHEN "Product".title IS DISTINCT FROM EXCLUDED.title THEN NULL ELSE "Product"."extractedBrand" END,
+               "canonicalIdentity" = CASE WHEN "Product".title IS DISTINCT FROM EXCLUDED.title THEN NULL ELSE "Product"."canonicalIdentity" END,
+               "canonicalCategory" = CASE WHEN "Product".title IS DISTINCT FROM EXCLUDED.title THEN NULL ELSE "Product"."canonicalCategory" END,
+               availability = EXCLUDED.availability,
+               gtin = EXCLUDED.gtin,
                price = EXCLUDED.price,
                category = EXCLUDED.category,
                link = EXCLUDED.link,
@@ -235,6 +208,9 @@ async function importCSVFiles() {
         let delisted = 0;
         const ratio = existing === 0 ? 1 : deduped.length / existing;
         if (ratio >= DELIST_MIN_RATIO) {
+          await client.query(`INSERT INTO "OfferLifecycle"(source_key,sku_id,vendor_id,title,link,kind,observed_at)
+            SELECT "vendorId"||'|'||COALESCE(source_product_id,link),sku_id,"vendorId",title,link,'not_seen_in_complete_snapshot',$2::timestamptz
+            FROM "Product" WHERE "vendorId"=$1 AND "updatedAt"<$2 ON CONFLICT DO NOTHING`, [vendorId, watermark]);
           const del = await client.query(
             'DELETE FROM "Product" WHERE "vendorId" = $1 AND "updatedAt" < $2',
             [vendorId, watermark],
@@ -275,4 +251,4 @@ async function importCSVFiles() {
   if (hadError) process.exit(1);
 }
 
-importCSVFiles();
+if (import.meta.main) importCSVFiles();

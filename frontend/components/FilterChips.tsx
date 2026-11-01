@@ -38,7 +38,7 @@ export const FilterChips: React.FC<FilterChipsProps> = ({
     onFiltersChange({
       ...filters,
       minPrice: 0,
-      maxPrice: 50000,
+      maxPrice: 0,
     });
   };
 
@@ -70,11 +70,11 @@ export const FilterChips: React.FC<FilterChipsProps> = ({
 
   const activeChips: { label: string; onRemove: () => void }[] = [];
 
-  if (filters.minPrice > 0 || filters.maxPrice < 50000) {
+  if (filters.minPrice > 0 || filters.maxPrice > 0) {
     const formatPrice = (p: number) =>
       new Intl.NumberFormat("sr-RS").format(p);
     activeChips.push({
-      label: `${formatPrice(filters.minPrice)} - ${formatPrice(filters.maxPrice)} RSD`,
+      label: `${formatPrice(filters.minPrice)} - ${filters.maxPrice ? formatPrice(filters.maxPrice) + " RSD" : "bez ograničenja"}`,
       onRemove: clearPriceFilter,
     });
   }

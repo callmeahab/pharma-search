@@ -1,21 +1,3 @@
-"use client";
-
-import { useEffect } from "react";
-import { usePathname } from "next/navigation";
-import { initGA, trackPageView } from "@/utils/analytics";
-
-export function Analytics() {
-  const pathname = usePathname();
-
-  useEffect(() => {
-    initGA();
-  }, []);
-
-  useEffect(() => {
-    if (pathname) {
-      trackPageView(pathname);
-    }
-  }, [pathname]);
-
-  return null;
-}
+// Collection is attached to completed catalog requests and explicit clicks.
+// Keeping this layout slot avoids collecting URLs, referrers or page titles.
+export function Analytics() { return null; }

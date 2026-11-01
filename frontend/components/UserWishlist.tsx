@@ -4,6 +4,7 @@ import React from "react";
 import { Heart, ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import Link from "next/link";
+import { productPath } from "@/lib/catalog";
 import { useWishlist } from "@/contexts/WishlistContext";
 import { formatPrice } from "@/lib/utils";
 
@@ -81,7 +82,7 @@ const UserWishlist = () => {
                   Ukloni
                 </Button>
 
-                <Link href={`/?search=${encodeURIComponent(product.name)}`}>
+                <Link href={product.id.startsWith("sku:v2:") || product.id.startsWith("offer:v2:") ? productPath(product.id) : `/?q=${encodeURIComponent(product.name)}`}>
                   <Button
                     size="sm"
                     className="bg-health-primary hover:bg-health-secondary text-white"

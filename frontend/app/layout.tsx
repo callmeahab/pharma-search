@@ -12,6 +12,7 @@ import "./globals.css";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
+  metadataBase: new URL("https://aposteka.rs"),
   title: "Apošteka",
   description:
     "Pronađite najbolje cene za zdravstvene suplemente, vitamine i farmaceutske proizvode u više prodavnica.",
@@ -27,6 +28,7 @@ export const metadata: Metadata = {
     apple: "/icon.png",
   },
   openGraph: {
+    locale: "sr_RS",
     title: "Apošteka - Uporedi cene lekova i suplemenata",
     description:
       "Pronađite najbolje cene za zdravstvene suplemente, vitamine i farmaceutske proizvode u više prodavnica.",
@@ -40,7 +42,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="sr-Latn" suppressHydrationWarning>
       <body className="min-h-screen flex flex-col dark:bg-gray-900 dark:text-gray-100 transition-colors duration-200">
         <Providers>
           <ThemeProvider>

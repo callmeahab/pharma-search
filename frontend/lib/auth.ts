@@ -6,9 +6,7 @@ const TOKEN_KEY = "authToken";
 
 function apiBase(): string {
   if (typeof window === "undefined") return "";
-  return process.env.NODE_ENV === "production"
-    ? window.location.origin
-    : "http://localhost:50051";
+  return window.location.origin;
 }
 
 export function getToken(): string | null {
@@ -79,6 +77,8 @@ export const authApi = {
 
 // ---- watchlist ----
 export interface Watch {
+  needs_review?: boolean;
+  review_reason?: string;
   id: string;
   group_key: string;
   display_name: string;

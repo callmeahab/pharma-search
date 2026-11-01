@@ -254,6 +254,10 @@ type GroupKeyInput struct {
 	Brand       string
 	Title       string
 	ProductID   string
+	SourceID    string
+	VendorID    string
+	GTIN        string
+	Category    string
 	DosageValue float64
 	DosageUnit  string
 	VolumeValue float64
@@ -303,6 +307,13 @@ func appendDisplaySuffix(base string, in GroupKeyInput) string {
 //	  like CoQ10 capsules vs Q10 face cream) never merge.
 //	Singleton: no brand or no descriptor -> per-offer key, never merges.
 func BuildGroupKey(in GroupKeyInput) GroupKey {
+	sku := BuildSKUIdentity(in)
+	return GroupKey{Key: sku.ID, DisplayName: sku.Display, Method: sku.Method, Residual: sku.FamilyID, HasMeasure: sku.Quantity > 0 || sku.Volume > 0}
+}
+
+// BuildLegacyGroupKey exists only to retain and review historical references.
+// Ingredient families from this policy must never establish price equivalence.
+func BuildLegacyGroupKey(in GroupKeyInput) GroupKey {
 	core := strings.TrimSpace(in.Core)
 	if core == "" {
 		core = ExtractCoreFromTitle(in.Title)

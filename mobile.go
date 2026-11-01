@@ -1,11 +1,9 @@
 package main
 
 import (
-	"context"
 	"net/http"
 	"strconv"
 	"strings"
-	"time"
 
 	pb "github.com/callmeahab/pharma-search/gen"
 )
@@ -54,164 +52,78 @@ func mobileFacetsJSON(facets map[string]*pb.FacetValues) map[string]map[string]i
 
 func (s *server) handleMobileSearchGroups(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
+		writeErr(w, 405, "method not allowed")
 		return
 	}
-
-	query := strings.TrimSpace(r.URL.Query().Get("q"))
-	offset := mobileOffset(r)
-	limit := mobileLimit(r, 24, 60)
-	brands := mobileQueryList(r, "brand")
-	categories := mobileQueryList(r, "category")
-
-	cached, err := s.cachedGroupedSearch(query, brands, categories)
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "could not search products")
+	request := catalogRequestFromURL(r)
+	request.AllOffers = true
+	request.Limit = mobileLimit(r, 24, 60)
+	page, e := s.catalogSearch(r.Context(), request)
+	if e != nil {
+		catalogHTTPError(w, e)
 		return
 	}
-
-	totalGroups := len(cached.groups)
-	start := min(offset, totalGroups)
-	end := min(start+limit, totalGroups)
-
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"groups":           cached.groups[start:end],
-		"total_products":   cached.totalHits,
-		"total_groups":     totalGroups,
-		"offset":           offset,
-		"limit":            limit,
-		"search_type_used": "postgresql",
-		"facets":           mobileFacetsJSON(cached.facets),
-	})
+	writeJSON(w, 200, page.asMap())
 }
 
 func (s *server) handleMobileFeatured(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
+		writeErr(w, 405, "method not allowed")
 		return
 	}
-
-	limit := mobileLimit(r, 24, 60)
-	groups := s.featuredCache
-	if len(groups) == 0 {
-		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
-		defer cancel()
-		var err error
-		groups, err = s.GetFeaturedProducts(ctx, limit)
-		if err != nil {
-			writeErr(w, http.StatusInternalServerError, "could not load featured products")
-			return
-		}
+	page, e := s.catalogSearch(r.Context(), catalogRequest{Limit: mobileLimit(r, 24, 60), Sort: "coverage", AllOffers: true})
+	if e != nil {
+		catalogHTTPError(w, e)
+		return
 	}
-	if len(groups) > limit {
-		groups = groups[:limit]
-	}
-
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"groups": groups,
-		"total":  len(groups),
-		"offset": 0,
-		"limit":  limit,
-	})
+	writeJSON(w, 200, page.asMap())
 }
 
 func (s *server) handleMobileFacets(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
+		writeErr(w, 405, "method not allowed")
 		return
 	}
-
-	facets := map[string]interface{}{}
-	if vendorRows, err := s.db.Query(`SELECT v.name, COUNT(*) FROM "Product" p JOIN "Vendor" v ON v.id = p."vendorId" GROUP BY v.name ORDER BY COUNT(*) DESC`); err == nil {
-		values := map[string]interface{}{}
-		for vendorRows.Next() {
-			var name string
-			var count int
-			if err := vendorRows.Scan(&name, &count); err == nil {
-				values[name] = count
-			}
-		}
-		vendorRows.Close()
-		facets["vendorName"] = values
+	page, e := s.catalogSearch(r.Context(), catalogRequest{Limit: 1})
+	if e != nil {
+		catalogHTTPError(w, e)
+		return
 	}
-	if brandRows, err := s.db.Query(`SELECT "extractedBrand", COUNT(*) FROM "Product" WHERE "extractedBrand" IS NOT NULL AND "extractedBrand" != '' GROUP BY "extractedBrand" ORDER BY COUNT(*) DESC LIMIT 200`); err == nil {
-		values := map[string]interface{}{}
-		for brandRows.Next() {
-			var name string
-			var count int
-			if err := brandRows.Scan(&name, &count); err == nil {
-				values[name] = count
-			}
-		}
-		brandRows.Close()
-		facets["brand"] = values
-	}
-	if categoryRows, err := s.db.Query(`SELECT "canonicalCategory", COUNT(*) FROM "Product" WHERE "canonicalCategory" IS NOT NULL AND "canonicalCategory" != '' GROUP BY "canonicalCategory" ORDER BY COUNT(*) DESC`); err == nil {
-		values := map[string]interface{}{}
-		for categoryRows.Next() {
-			var name string
-			var count int
-			if err := categoryRows.Scan(&name, &count); err == nil {
-				values[name] = count
-			}
-		}
-		categoryRows.Close()
-		facets["category"] = values
-	}
-
-	writeJSON(w, http.StatusOK, map[string]interface{}{"facets": facets})
+	writeJSON(w, 200, map[string]any{"facets": mobileFacetsJSON(page.Facets)})
 }
 
 func (s *server) handleMobileAutocomplete(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
+		writeErr(w, 405, "method not allowed")
 		return
 	}
-
-	query := strings.TrimSpace(r.URL.Query().Get("q"))
-	limit := mobileLimit(r, 8, 20)
-	if query == "" {
-		writeJSON(w, http.StatusOK, map[string]interface{}{"suggestions": []interface{}{}, "query": query, "limit": limit})
+	response, e := s.catalogAutocomplete(r.Context(), r.URL.Query().Get("q"), mobileLimit(r, 8, 20))
+	if e != nil {
+		catalogHTTPError(w, e)
 		return
 	}
-
-	suggestions, err := autocompleteDB(s.db, query, limit)
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "could not autocomplete products")
-		return
-	}
-
-	writeJSON(w, http.StatusOK, map[string]interface{}{"suggestions": suggestions, "query": query, "limit": limit})
+	writeJSON(w, 200, map[string]any{"suggestions": response.Suggestions, "query": response.Query, "limit": response.Limit, "corrected_query": response.CorrectedQuery})
 }
 
 func (s *server) handleMobilePriceComparison(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
+		writeErr(w, 405, "method not allowed")
 		return
 	}
-
-	query := strings.TrimSpace(r.URL.Query().Get("q"))
-	if query == "" {
-		writeErr(w, http.StatusBadRequest, "q required")
+	request := catalogRequestFromURL(r)
+	request.Limit = 10
+	request.AllOffers = true
+	if strings.HasPrefix(request.Query, "sku:v2:") || strings.HasPrefix(request.Query, "offer:v2:") {
+		request.Filters.SKUID = request.Query
+		request.Query = ""
+		request.Limit = 1
+	}
+	page, e := s.catalogSearch(r.Context(), request)
+	if e != nil {
+		catalogHTTPError(w, e)
 		return
 	}
-
-	hits, err := searchProductsDB(s.db, query, 5000, nil, nil)
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "could not compare prices")
-		return
-	}
-	groups := convertHitsToGroups(hits, query, s.db)
-	totalGroups := len(groups)
-	if len(groups) > 10 {
-		groups = groups[:10]
-	}
-
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"query":        query,
-		"groups":       groups,
-		"total_groups": totalGroups,
-	})
+	writeJSON(w, 200, page.asMap())
 }
 
 func normalizeMobilePlatform(platform string) string {
